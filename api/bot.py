@@ -2497,7 +2497,25 @@ async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:
 
     chat_id_int = int(chat_id)
     ext = ing.get("extracted") or {}
-    missing = [str(c) for c in (ing.get("missing") or [])]
+    # Solo se pregunta lo IMPORTANTE (el extractor de carteles devuelve también cosas como
+    # "inscripcion_hasta", "organizador" u "hora"): día y hora, pueblo, lugar, precio, plazas
+    crudo = {"starts_at" if str(c) in ("hora", "fecha") else str(c) for c in (ing.get("missing") or [])}
+    for c in ("title", "starts_at", "municipio", "location_name", "price"):
+        if not _dato_presente(ext, c):  # vacío -> se pregunta aunque el modelo no lo listara
+            crudo.add(c)
+    # Plazas: si no se dicen, se preguntan (salvo que el usuario ya dijera "sin límite")
+    if not _dato_presente(ext, "max_capacity") and not re.search(
+            r"sin limite|ilimitad|no hay limite|las que quieran", _norm_txt(ing.get("raw_text") or "")) \
+            and not ext.get("_sin_limite"):
+        crudo.add("max_capacity")
+    # Hora: un cartel sin hora deja el día a las 00:00 y marca "hora": hay que preguntarla
+    inicio = _parse_dt(ext.get("starts_at"))
+    sin_hora = "starts_at" in crudo or (
+        inicio is not None and inicio.astimezone(MADRID_TZ).strftime("%H:%M") == "00:00")
+    missing = [c for c in _CAMPOS_A_PREGUNTAR if c in crudo
+               and (not _dato_presente(ext, c) or (c == "starts_at" and sin_hora))]
+    if missing != list(ing.get("missing") or []):
+        sb.table("ingestas").update({"missing": missing}).eq("id", ingesta_id).execute()
     titulo = ext.get("title") or "Tu plan"
     voz = chat_id_int in CHATS_CON_VOZ
     sb.table("ingestas").update({"estado": "esperando_confirmacion"}).eq("id", ingesta_id).execute()
@@ -2567,6 +2585,15 @@ async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:
             + ("Si está bien, pulsa «Sí, publicar»." if publica
                else "Si está bien, pulsa «Sí, enviar al moderador»."))
     return True
+
+
+_CAMPOS_A_PREGUNTAR = ["title", "starts_at", "municipio", "location_name", "price", "max_capacity"]
+
+
+def _dato_presente(ext: dict[str, Any], campo: str) -> bool:
+    """¿Ya está ese dato? (precio 0 = gratis SÍ es un dato)."""
+    v = ext.get(campo)
+    return v is not None and v != ""
 
 
 _NOMBRE_CAMPO = {"title": "el título", "starts_at": "el día y la hora", "municipio": "el pueblo",

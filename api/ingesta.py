@@ -328,6 +328,9 @@ def interpretar_precio(respuesta: str):
     n = ia._norm(respuesta)
     if re.search(r"gratis|gratuit|libre|nada|no se paga|no cuesta|sin coste|^0\b", n):
         return 0
+    if re.search(r"\ba la?s?\b|\bhoras?\b|\d{1,2}:\d{2}|\bmanana\b|\btarde\b|\bnoche\b|\bplazas?\b|"
+                 r"\bpersonas\b|\bdia\b", n) and not re.search(r"€|euro", n):
+        return None  # "a las 10 de la mañana" o "20 plazas" no son un precio
     m = re.search(r"(\d+(?:[.,]\d{1,2})?)", n)
     if m:
         v = float(m.group(1).replace(",", "."))
@@ -365,6 +368,7 @@ def completar_campo(ingesta_id: str, campo: str, respuesta: str) -> list[str]:
         v = interpretar_plazas(respuesta)
         if v == _SIN_LIMITE:
             ex["max_capacity"], entendido = None, True   # null = sin límite
+            ex["_sin_limite"] = True  # ya contestado: no se vuelve a preguntar
         elif v is not None:
             ex["max_capacity"], entendido = v, True
     elif campo == "municipio":
@@ -375,13 +379,25 @@ def completar_campo(ingesta_id: str, campo: str, respuesta: str) -> list[str]:
         ex[campo], entendido = respuesta[:200 if campo != "description" else 500], True
     elif campo in _FECHAS and respuesta:
         # Fechas: aquí sí hace falta IA. Se le da el post original + la respuesta.
-        texto = (f"{ing.get('raw_text') or ''}\n\n"
+        conocido = ""
+        if campo == "starts_at" and ex.get("starts_at"):
+            # Ya se sabía el día (p. ej. del cartel) y solo falta la hora: se le recuerda a la IA
+            try:
+                d = datetime.fromisoformat(str(ex["starts_at"])).astimezone(ia.TZ)
+                conocido = (f"\nEL DÍA YA SE SABE: {ia._DIAS_ES[d.weekday()]} {d.day} de "
+                            f"{ia._MESES_ES[d.month - 1]} de {d.year}. Si el organizador solo "
+                            "dice la hora, es ese día.")
+            except ValueError:
+                pass
+        texto = (f"{ing.get('raw_text') or ''}{conocido}\n\n"
                  f"DATO AÑADIDO POR EL ORGANIZADOR sobre {campo}: {respuesta}")
         nuevo = ia.extraer_evento(texto)
         if nuevo.get(campo):
             ex[campo], entendido = nuevo[campo], True
             if campo == "starts_at" and nuevo.get("ends_at") and not ex.get("ends_at"):
                 ex["ends_at"] = nuevo["ends_at"]
+            if campo == "starts_at":
+                missing = [m for m in missing if m != "hora"]
 
     if entendido and campo in missing:
         missing.remove(campo)
@@ -426,6 +442,12 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
     faltan_datos = [c for c in (ing.get("missing") or ex.get("missing") or [])
                     if c not in ("max_capacity", "inscripcion_hasta", "min_age", "max_age")]
     dudoso = bool(faltan_datos or ex.get("dudas") or float(ex.get("confidence") or 0) < 0.7)
+    if ing.get("origen") == "telegram":
+        # El propio organizador ha completado y confirmado los datos en el cuestionario:
+        # la poca seguridad de la IA con su primer mensaje ya no cuenta, ni lo que el
+        # extractor de carteles marca y no es importante ("organizador", "inscripcion_hasta"...)
+        dudoso = any(c in ("title", "starts_at", "hora", "municipio", "location_name", "price")
+                     for c in (ing.get("missing") or []))
 
     # Quién lo publica y con qué estado:
     #   entidad con auto_approve, moderador o PUBLICADOR (4 puntos de reputación) -> se publica
