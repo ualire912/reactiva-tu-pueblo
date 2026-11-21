@@ -110,6 +110,18 @@ def _format_fecha_es(iso_str: str | None) -> str:
         return str(iso_str)
 
 
+def _format_precio_es(precio_raw: Any) -> str:
+    if precio_raw in (0, "0", 0.0, None, ""):
+        return "Gratis"
+    try:
+        precio_num = float(precio_raw)
+        if precio_num == 0:
+            return "Gratis"
+        return f"{int(precio_num)} €" if precio_num.is_integer() else f"{precio_num:.2f} €"
+    except Exception:
+        return str(precio_raw)
+
+
 def _get_perfil_by_user_id(user_id: str) -> dict[str, Any] | None:
     res = sb.table("profiles").select("*").eq("id", user_id).limit(1).execute()
     rows = res.data or []
@@ -137,12 +149,8 @@ def _get_municipio_nombre(municipio_id: int | None) -> str:
 
 
 def _wants_audio(perfil: dict[str, Any] | None, force_audio: bool = False) -> bool:
-    if force_audio:
-        return True
-    if not perfil:
-        return False
-    prefs = perfil.get("preferencias") or {}
-    return bool(prefs.get("audio", False))
+    # Solo envía audio cuando se recibe una nota de voz o se pide audio explícitamente
+    return bool(force_audio)
 
 
 def _botones_evento(ev_id: str, estado_insc: str | None) -> list[list[tuple[str, str]]]:
@@ -163,6 +171,30 @@ def _botones_evento(ev_id: str, estado_insc: str | None) -> list[list[tuple[str,
             ("🙋 Busco coche", f"coche:busca:{ev_id}"),
         ],
     ]
+
+
+def _render_tarjeta_evento_html(
+    ev: dict[str, Any], estado_insc: str | None = None
+) -> str:
+    titulo = ev.get("title") or "Plan"
+    fecha_es = _format_fecha_es(ev.get("starts_at"))
+    lugar = ev.get("location_name") or ev.get("municipio") or "Por confirmar"
+    precio_txt = _format_precio_es(ev.get("price"))
+
+    if estado_insc == "confirmada":
+        estado_linea = "\n<blockquote>🟢 <b>Ya estás apuntado/a</b></blockquote>"
+    elif estado_insc == "lista_de_espera":
+        estado_linea = "\n<blockquote>🟡 <b>En lista de espera</b></blockquote>"
+    else:
+        estado_linea = ""
+
+    return (
+        f"📌 <b>{escape_html(str(titulo))}</b>\n"
+        f"🕒 {escape_html(fecha_es)}\n"
+        f"📍 {escape_html(str(lugar))}\n"
+        f"💶 {escape_html(precio_txt)}"
+        f"{estado_linea}"
+    )
 
 
 async def _enviar_respuesta(
@@ -235,9 +267,10 @@ async def _cmd_start(chat_id: int, args: str, first_name: str | None) -> None:
                 chat_id,
                 f"✅ Cuenta vinculada, {nombre}. Ya puedes usar el bot para ver planes, apuntarte y recibir avisos.",
                 buttons=[
-                    [("📅 Ver planes", "cmd:agenda"), ("🔊 Prefiero audios", "audio:on")],
+                    [("📅 Ver planes", "cmd:agenda"), ("🔊 Planes en audio", "cmd:agenda_audio")],
                 ],
                 perfil=perfil,
+                force_audio=False,
             )
         else:
             await send_message(
@@ -250,12 +283,64 @@ async def _cmd_start(chat_id: int, args: str, first_name: str | None) -> None:
     nombre = (perfil or {}).get("full_name") or first_name or "vecino/a"
     await _enviar_respuesta(
         chat_id,
-        f"👋 Hola, {nombre}. Soy el asistente de Reactiva tu pueblo. Puedes pedirme planes de los próximos días, apuntarte o mandar una nota de voz.",
+        f"👋 Hola, {nombre}. Soy el asistente de Reactiva tu pueblo. Escríbeme o mándame una nota de voz para ver planes, preguntar o apuntarte.",
         buttons=[
-            [("📅 Ver planes", "cmd:agenda"), ("🔊 Prefiero audios", "audio:on")],
+            [("📅 Ver planes", "cmd:agenda"), ("🔊 Planes en audio", "cmd:agenda_audio")],
         ],
         perfil=perfil,
+        force_audio=False,
     )
+
+
+def _obtener_estados_inscripcion(
+    perfil: dict[str, Any] | None, event_ids: list[str]
+) -> dict[str, str]:
+    inscritos_map: dict[str, str] = {}
+    if perfil and perfil.get("id") and event_ids:
+        insc_rows = (
+            sb.table("inscripciones")
+            .select("event_id,status")
+            .eq("user_id", perfil["id"])
+            .in_("event_id", event_ids)
+            .in_("status", ["confirmada", "lista_de_espera"])
+            .execute()
+            .data
+        ) or []
+        for r in insc_rows:
+            if r.get("event_id") and r.get("status"):
+                inscritos_map[str(r["event_id"])] = str(r["status"])
+    return inscritos_map
+
+
+async def _enviar_tarjetas_eventos(
+    chat_id: int,
+    eventos: list[dict[str, Any]],
+    perfil: dict[str, Any] | None = None,
+    force_audio: bool = False,
+) -> None:
+    event_ids = [str(ev["id"]) for ev in eventos if ev.get("id")]
+    inscritos_map = _obtener_estados_inscripcion(perfil, event_ids)
+
+    for ev in eventos:
+        ev_id = str(ev.get("id") or "")
+        estado_insc = inscritos_map.get(ev_id) if ev_id else None
+        botones = _botones_evento(ev_id, estado_insc) if ev_id else None
+        html_body = _render_tarjeta_evento_html(ev, estado_insc=estado_insc)
+        await send_message(chat_id, html_body, buttons=botones, escape=False)
+
+    if force_audio:
+        resumen_audio = " ".join(
+            f"{ev.get('title') or 'Plan'}, {_format_fecha_es(ev.get('starts_at'))}, en {ev.get('location_name') or ev.get('municipio') or 'el pueblo'}."
+            for ev in eventos
+        )
+        voz_mod = _get_voz_module()
+        if voz_mod and hasattr(voz_mod, "texto_a_voz"):
+            try:
+                mp3 = await _maybe_await(voz_mod.texto_a_voz(f"Estos son los planes: {resumen_audio}"))
+                if mp3:
+                    await send_audio(chat_id, mp3, caption="Escúchalo aquí")
+            except Exception:
+                pass
 
 
 async def _cmd_agenda(
@@ -307,66 +392,7 @@ async def _cmd_agenda(
         )
         return
 
-    inscritos_map: dict[str, str] = {}
-    if perfil and perfil.get("id"):
-        event_ids = [ev["id"] for ev in rows if ev.get("id")]
-        if event_ids:
-            insc_rows = (
-                sb.table("inscripciones")
-                .select("event_id,status")
-                .eq("user_id", perfil["id"])
-                .in_("event_id", event_ids)
-                .in_("status", ["confirmada", "lista_de_espera"])
-                .execute()
-                .data
-            ) or []
-            for r in insc_rows:
-                if r.get("event_id") and r.get("status"):
-                    inscritos_map[str(r["event_id"])] = str(r["status"])
-
-    for ev in rows:
-        ev_id = str(ev["id"])
-        titulo = ev.get("title") or "Plan"
-        fecha_es = _format_fecha_es(ev.get("starts_at"))
-        lugar = ev.get("location_name") or "Por confirmar"
-        precio_raw = ev.get("price") or 0
-        precio_num = float(precio_raw)
-        if precio_num == 0:
-            precio_txt = "Gratis"
-        elif precio_num.is_integer():
-            precio_txt = f"{int(precio_num)} €"
-        else:
-            precio_txt = f"{precio_num:.2f} €"
-
-        estado_insc = inscritos_map.get(ev_id)
-        if estado_insc == "confirmada":
-            estado_linea = "\n<blockquote>🟢 <b>Ya estás apuntado/a</b></blockquote>"
-        elif estado_insc == "lista_de_espera":
-            estado_linea = "\n<blockquote>🟡 <b>En lista de espera</b></blockquote>"
-        else:
-            estado_linea = ""
-
-        botones = _botones_evento(ev_id, estado_insc)
-        html_body = (
-            f"📌 <b>{escape_html(titulo)}</b>\n"
-            f"🕒 {escape_html(fecha_es)}\n"
-            f"📍 {escape_html(lugar)}\n"
-            f"💶 {escape_html(precio_txt)}"
-            f"{estado_linea}"
-        )
-        await send_message(chat_id, html_body, buttons=botones, escape=False)
-
-    if force_audio:
-        resumen_audio = " ".join(
-            f"{ev.get('title') or 'Plan'}, {_format_fecha_es(ev.get('starts_at'))}."
-            for ev in rows
-        )
-        await _enviar_respuesta(
-            chat_id,
-            f"📅 Próximos planes: {resumen_audio}",
-            perfil=perfil,
-            force_audio=True,
-        )
+    await _enviar_tarjetas_eventos(chat_id, rows, perfil=perfil, force_audio=force_audio)
 
 
 async def _cmd_mis_planes(chat_id: int, perfil: dict[str, Any] | None) -> None:
@@ -390,6 +416,7 @@ async def _cmd_mis_planes(chat_id: int, perfil: dict[str, Any] | None) -> None:
             "📋 Aún no estás apuntado/a a ningún plan.",
             buttons=[[("📅 Ver planes", "cmd:agenda")]],
             perfil=perfil,
+            force_audio=False,
         )
         return
 
@@ -398,22 +425,12 @@ async def _cmd_mis_planes(chat_id: int, perfil: dict[str, Any] | None) -> None:
         if not ev:
             continue
         ev_id = str(ev["id"])
-        estado_txt = "Confirmada" if ins.get("status") == "confirmada" else "En lista de espera"
-        fecha_es = _format_fecha_es(ev.get("starts_at"))
-        html_body = (
-            f"🎟️ <b>{escape_html(ev.get('title') or 'Plan')}</b>\n"
-            f"🕒 {escape_html(fecha_es)}\n"
-            f"Estado: {escape_html(estado_txt)}"
-        )
+        estado_insc = str(ins.get("status") or "confirmada")
+        html_body = _render_tarjeta_evento_html(ev, estado_insc=estado_insc)
         await send_message(
             chat_id,
             html_body,
-            buttons=[
-                [
-                    ("❌ Borrarme", f"cancel:{ev_id}"),
-                    ("📅 Calendario", f"ics:{ev_id}"),
-                ]
-            ],
+            buttons=_botones_evento(ev_id, estado_insc),
             escape=False,
         )
 
@@ -437,18 +454,15 @@ async def _toggle_audio(
     if nuevo_estado:
         await _enviar_respuesta(
             chat_id,
-            "🔊 Audio activado. Te responderé en audio cuando me lo pidas o me hables por voz.",
-            buttons=[
-                [("📅 Ver planes en audio", "cmd:agenda_audio"), ("🔇 Desactivar audio", "audio:off")]
-            ],
+            "🔊 Modo voz listo: cuando me envíes una nota de voz te responderé con texto y audio; si me escribes, te responderé solo por texto.",
+            buttons=[[("📅 Escuchar agenda ahora", "cmd:agenda_audio")]],
             perfil=perfil,
             force_audio=True,
         )
     else:
         await send_message(
             chat_id,
-            "🔇 Audio desactivado. Te responderé solo por texto.",
-            buttons=[[("🔊 Activar audio", "audio:on")]],
+            "🔇 Respuestas en audio desactivadas para texto. Si me mandas una nota de voz seguiré respondiendo en voz y texto.",
         )
 
 
@@ -515,6 +529,7 @@ async def _procesar_inscripcion(
                 "⏳ No quedan plazas libres ahora mismo: estás en lista de espera y te avisaremos si se libera una.",
                 buttons=[[("❌ Borrarme", f"cancel:{event_id}")]],
                 perfil=perfil,
+                force_audio=False,
             )
         else:
             await _enviar_respuesta(
@@ -531,6 +546,7 @@ async def _procesar_inscripcion(
                     ],
                 ],
                 perfil=perfil,
+                force_audio=False,
             )
     except Exception as exc:
         msg = str(exc)
@@ -564,6 +580,7 @@ async def _procesar_inscripcion(
                         ]
                     ],
                     perfil=perfil,
+                    force_audio=False,
                 )
             else:
                 if source_message_id:
@@ -655,6 +672,7 @@ async def _guardar_coche(
             chat_id,
             f"🚗 Anotado que llevas {plazas} plaza(s) desde {muni_nombre} ({estado_txt}). Hay {buscan} vecino/a(s) de {muni_nombre} buscando coche para este plan.",
             perfil=perfil,
+            force_audio=False,
         )
     else:
         ofrecidas = sum(
@@ -667,6 +685,7 @@ async def _guardar_coche(
             chat_id,
             f"🙋 Anotado que buscas coche desde {muni_nombre}. Hay {ofrecidas} plaza(s) ofrecida(s) desde {muni_nombre}; también puedes escribir en el chat del evento para coordinar.",
             perfil=perfil,
+            force_audio=False,
         )
 
 
@@ -711,24 +730,29 @@ async def _responder_con_rag(
         )
         return
 
-    respuesta_txt = (res.get("respuesta") or "Aquí tienes la información.").strip()
     eventos_sugeridos = res.get("eventos") or []
-    botones: list[list[tuple[str, str]]] = []
-
+    eventos_validos: list[dict[str, Any]] = []
     if isinstance(eventos_sugeridos, list):
-        for ev in eventos_sugeridos[:3]:
-            if not isinstance(ev, dict):
-                continue
-            ev_id = ev.get("id")
-            titulo = str(ev.get("title") or "Plan")[:40]
-            estado = str(ev.get("status") or "").lower()
-            if ev_id and estado in {"abierto", "completo"}:
-                botones.append([(titulo, f"insc:{ev_id}")])
+        for ev in eventos_sugeridos[:4]:
+            if isinstance(ev, dict):
+                ev_id = ev.get("id")
+                ev_completo = _get_evento(str(ev_id)) if ev_id else None
+                eventos_validos.append(ev_completo or ev)
 
+    if eventos_validos:
+        await _enviar_tarjetas_eventos(
+            chat_id,
+            eventos_validos,
+            perfil=perfil,
+            force_audio=force_audio,
+        )
+        return
+
+    respuesta_txt = (res.get("respuesta") or "Aquí tienes la información.").strip()
     await _enviar_respuesta(
         chat_id,
         respuesta_txt,
-        buttons=botones if botones else None,
+        buttons=[[("📅 Ver planes", "cmd:agenda")]],
         perfil=perfil,
         force_audio=force_audio,
     )
@@ -794,7 +818,7 @@ async def _procesar_texto_o_voz(
         if texto_limpio == "ayuda":
             await send_message(
                 chat_id,
-                "ℹ️ Usa /agenda para ver planes, /mis_planes para tus inscripciones, /proponer para sugerir un plan o /audio para activar audios.",
+                "ℹ️ Usa /agenda para ver planes, /mis_planes para tus inscripciones, /proponer para sugerir un plan o mándame una nota de voz.",
             )
         else:
             await _cmd_agenda(chat_id, perfil=perfil, force_audio=False)
@@ -802,10 +826,12 @@ async def _procesar_texto_o_voz(
 
     ia_mod = _get_ia_module()
     if not ia_mod or not hasattr(ia_mod, "entender_mensaje"):
-        await send_message(
+        await _enviar_respuesta(
             chat_id,
             "🤔 No te he entendido bien, ¿quieres ver la agenda?",
             buttons=[[("📅 Ver planes", "cmd:agenda")]],
+            perfil=perfil,
+            force_audio=es_audio,
         )
         return
 
@@ -1259,7 +1285,7 @@ async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:
     muni = ext.get("municipio") or "Por confirmar"
     lugar = ext.get("location_name") or "Por confirmar"
     precio = ext.get("price")
-    precio_txt = "Gratis" if precio in (0, "0", None) else f"{precio} €"
+    precio_txt = _format_precio_es(precio)
     plazas = ext.get("max_capacity")
     plazas_txt = "Sin límite" if plazas is None else str(plazas)
 
