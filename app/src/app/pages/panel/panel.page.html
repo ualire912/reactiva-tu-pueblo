@@ -1,0 +1,419 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-title>Panel Moderador</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="cargarTodo()" aria-label="Actualizar datos del panel">
+        <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+
+  <ion-toolbar>
+    <ion-segment [(ngModel)]="pestana" scrollable="true">
+      <ion-segment-button value="pendientes">
+        <ion-label>Pendientes ({{ pendientes.length }})</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="ia">
+        <ion-label>IA ({{ ingestas.length }})</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="incidencias">
+        <ion-label>Incidencias ({{ incidencias.length }})</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="publicadores">
+        <ion-label>Publicadores</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="estadisticas">
+        <ion-label>Estadísticas</ion-label>
+      </ion-segment-button>
+      <ion-segment-button value="demo">
+        <ion-label>Demo</ion-label>
+      </ion-segment-button>
+    </ion-segment>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <div *ngIf="cargando" class="ion-text-center ion-padding">
+    <ion-spinner></ion-spinner>
+  </div>
+
+  <!-- 1. PENDIENTES Y GESTIÓN DE EVENTOS -->
+  <div *ngIf="pestana === 'pendientes'">
+    <h3>Propuestas pendientes de revisión ({{ pendientes.length }})</h3>
+
+    <div *ngIf="pendientes.length === 0" class="ion-padding-bottom">
+      <ion-note>No hay eventos pendientes de aprobación ahora mismo.</ion-note>
+    </div>
+
+    <ion-card *ngFor="let ev of pendientes" class="ion-no-margin ion-margin-bottom">
+      <img *ngIf="ev.poster_url" [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" style="width: 100%; max-height: 180px; object-fit: cover;" />
+      <ion-card-header>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <ion-badge color="warning">{{ ev.status }}</ion-badge>
+          <ion-badge color="medium">Origen: {{ ev.origen || 'web' }}</ion-badge>
+          <ion-badge *ngIf="ev.ai_confidence" color="secondary">
+            IA: {{ (ev.ai_confidence * 100) | number:'1.0-0' }}%
+          </ion-badge>
+        </div>
+        <ion-card-title class="ion-margin-top">{{ ev.title }}</ion-card-title>
+        <ion-card-subtitle>
+          {{ ev.municipios?.nombre }} · {{ formatearFecha(ev.starts_at) }} · {{ ev.price === 0 ? 'Gratis' : ev.price + ' €' }}
+        </ion-card-subtitle>
+      </ion-card-header>
+
+      <ion-card-content>
+        <p *ngIf="ev.description">{{ ev.description }}</p>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+          <ion-button color="success" (click)="aprobarEvento(ev)">
+            <ion-icon slot="start" name="checkmark-circle-outline"></ion-icon>
+            Aprobar
+          </ion-button>
+
+          <ion-button color="primary" fill="outline" (click)="editarEventoModal(ev, false)">
+            <ion-icon slot="start" name="create-outline"></ion-icon>
+            Editar
+          </ion-button>
+
+          <ion-button color="danger" fill="outline" (click)="rechazarEvento(ev)">
+            <ion-icon slot="start" name="close-circle-outline"></ion-icon>
+            Rechazar
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <h3 class="ion-margin-top">Eventos publicados (gestionar cambios / avisar)</h3>
+    <ion-card *ngFor="let ev of eventosActivos" class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>{{ ev.title }}</ion-card-title>
+        <ion-card-subtitle>
+          {{ ev.municipios?.nombre }} · {{ formatearFecha(ev.starts_at) }} ·
+          <strong>{{ ev.status | uppercase }}</strong>
+        </ion-card-subtitle>
+      </ion-card-header>
+      <ion-card-content>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <ion-button size="small" (click)="editarEventoModal(ev, true)">
+            <ion-icon slot="start" name="time-outline"></ion-icon>
+            Cambiar hora / lugar
+          </ion-button>
+          <ion-button *ngIf="ev.status === 'pospuesto'" size="small" color="success" fill="outline" (click)="cambiarEstadoManual(ev, 'abierto')">
+            Reabrir
+          </ion-button>
+          <ion-button size="small" color="warning" fill="outline" (click)="cambiarEstadoManual(ev, 'pospuesto')">
+            Posponer
+          </ion-button>
+          <ion-button size="small" color="danger" fill="outline" (click)="cambiarEstadoManual(ev, 'cancelado')">
+            Cancelar y avisar
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+  </div>
+
+  <!-- 2. DETECTADOS POR IA (INGESTAS) -->
+  <div *ngIf="pestana === 'ia'">
+    <h3>Bandeja de entrada de Facebook y Telegram</h3>
+
+    <div *ngIf="ingestas.length === 0">
+      <ion-note>No hay publicaciones detectadas aún. Prueba a lanzar una desde la pestaña Demo.</ion-note>
+    </div>
+
+    <ion-card
+      *ngFor="let ing of ingestas"
+      [color]="ing.estado === 'spam' ? 'light' : undefined"
+      class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <ion-badge [color]="colorEstadoIngesta(ing.estado)">{{ ing.estado | uppercase }}</ion-badge>
+          <ion-badge color="medium">{{ ing.origen }}</ion-badge>
+          <ion-badge *ngIf="ing.spam_score != null" [color]="ing.spam_score >= 0.8 ? 'danger' : 'success'">
+            Spam: {{ (ing.spam_score * 100) | number:'1.0-0' }}%
+          </ion-badge>
+        </div>
+        <ion-card-title class="ion-margin-top">
+          {{ ing.extracted?.title || 'Publicación sin título extraído' }}
+        </ion-card-title>
+        <ion-card-subtitle *ngIf="ing.spam_reason" style="color: var(--ion-color-danger);">
+          Motivo antispam: {{ ing.spam_reason }}
+        </ion-card-subtitle>
+      </ion-card-header>
+
+      <ion-card-content>
+        <p *ngIf="ing.raw_text" style="font-style: italic; background: rgba(0,0,0,0.04); padding: 8px; border-radius: 6px;">
+          "{{ ing.raw_text }}"
+        </p>
+
+        <div *ngIf="ing.missing && ing.missing.length > 0" class="ion-margin-top">
+          <ion-badge color="warning">Faltan datos: {{ ing.missing.join(', ') }}</ion-badge>
+        </div>
+
+        <div *ngIf="ing.estado !== 'confirmada' && ing.estado !== 'descartada'" style="display: flex; gap: 8px; margin-top: 12px;">
+          <ion-button color="success" (click)="rescatarIngesta(ing)">
+            <ion-icon slot="start" name="checkmark-circle-outline"></ion-icon>
+            {{ ing.estado === 'spam' ? 'No es spam, crear evento' : 'Crear evento' }}
+          </ion-button>
+          <ion-button color="medium" fill="outline" (click)="descartarIngesta(ing)">
+            Descartar
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+  </div>
+
+  <!-- 3. INCIDENCIAS -->
+  <div *ngIf="pestana === 'incidencias'">
+    <h3>Incidencias reportadas por vecinos</h3>
+
+    <div *ngIf="incidencias.length === 0">
+      <ion-note>No hay incidencias registradas.</ion-note>
+    </div>
+
+    <ion-card *ngFor="let inc of incidencias" class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <div style="display: flex; justify-content: space-between;">
+          <ion-badge [color]="inc.estado === 'abierta' ? 'danger' : 'success'">
+            {{ inc.estado | uppercase }}
+          </ion-badge>
+        </div>
+        <ion-card-title class="ion-margin-top">{{ inc.eventos?.title || 'Evento' }}</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <p>{{ inc.comentario }}</p>
+        <div style="display: flex; gap: 8px; margin-top: 10px;">
+          <ion-button *ngIf="inc.estado === 'abierta'" color="success" (click)="resolverIncidencia(inc)">
+            Marcar como resuelta
+          </ion-button>
+          <ion-button fill="outline" [routerLink]="['/evento', inc.event_id]">
+            Ver evento
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+  </div>
+
+  <!-- 4. PUBLICADORES, CANDIDATOS IA Y ENTIDADES -->
+  <div *ngIf="pestana === 'publicadores'">
+    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <h3 class="ion-no-margin">Candidatos a Publicador</h3>
+      <ion-button size="small" color="secondary" (click)="revisarCandidatosConIa()" [disabled]="revisandoIa">
+        <ion-icon slot="start" name="sparkles-outline"></ion-icon>
+        {{ revisandoIa ? 'Revisando...' : 'Revisar con IA ahora' }}
+      </ion-button>
+    </div>
+
+    <div *ngIf="candidatos.length === 0" class="ion-margin-top ion-margin-bottom">
+      <ion-note>No hay candidatos pendientes de revisión ahora mismo.</ion-note>
+    </div>
+
+    <ion-card *ngFor="let c of candidatos" color="light" class="ion-no-margin ion-margin-top ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>{{ c.full_name || 'Vecino candidato' }}</ion-card-title>
+        <ion-card-subtitle>
+          Reputación: <strong>{{ c.reputation_score }} pts</strong> ·
+          Telegram: {{ c.telegram_linked ? 'Vinculado' : 'Sin vincular' }}
+        </ion-card-subtitle>
+      </ion-card-header>
+      <ion-card-content>
+        <p style="margin-bottom: 10px;">
+          <strong>Estado IA:</strong>
+          {{ c.promocion_revisada_at ? (c.promocion_motivo || 'Revisado') : 'Pendiente de revisión automática' }}
+        </p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <ion-button color="success" (click)="decidirCandidato(c.id, 'promover')">
+            Hacer Publicador
+          </ion-button>
+          <ion-button color="medium" fill="outline" (click)="decidirCandidato(c.id, 'descartar')">
+            Descartar
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <h3 class="ion-margin-top">Publicadores activos ({{ publicadoresActivos.length }})</h3>
+    <ion-list lines="full" class="ion-margin-bottom">
+      <ion-item *ngFor="let u of publicadoresActivos">
+        <ion-label class="ion-text-wrap">
+          <h3>{{ u.full_name || u.email }}</h3>
+          <p>Reputación: {{ u.reputation_score }} pts {{ u.promocion_motivo ? '· ' + u.promocion_motivo : '' }}</p>
+        </ion-label>
+        <ion-button slot="end" size="small" color="danger" fill="outline" (click)="decidirCandidato(u.id, 'revocar')">
+          Revocar
+        </ion-button>
+      </ion-item>
+    </ion-list>
+
+    <h3>Asociaciones y Entidades</h3>
+    <ion-list lines="full">
+      <ion-item *ngFor="let ent of entidades">
+        <ion-label class="ion-text-wrap">
+          <h3>{{ ent.nombre }}</h3>
+          <p>{{ ent.facebook_page_url || 'Sin página de Facebook asociada' }}</p>
+        </ion-label>
+        <ion-toggle
+          slot="end"
+          [checked]="ent.auto_approve"
+          (ionChange)="toggleAutoApproveEntidad(ent, $event.detail.checked)">
+          Aprobar auto
+        </ion-toggle>
+      </ion-item>
+    </ion-list>
+  </div>
+
+  <!-- 5. ESTADÍSTICAS -->
+  <div *ngIf="pestana === 'estadisticas'">
+    <ion-grid class="ion-no-padding">
+      <ion-row>
+        <ion-col size="6">
+          <ion-card class="ion-text-center">
+            <ion-card-header>
+              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.abiertos }}</ion-card-title>
+              <ion-card-subtitle>Eventos activos</ion-card-subtitle>
+            </ion-card-header>
+          </ion-card>
+        </ion-col>
+        <ion-col size="6">
+          <ion-card class="ion-text-center">
+            <ion-card-header>
+              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.inscripciones }}</ion-card-title>
+              <ion-card-subtitle>Total inscritos</ion-card-subtitle>
+            </ion-card-header>
+          </ion-card>
+        </ion-col>
+        <ion-col size="6">
+          <ion-card class="ion-text-center">
+            <ion-card-header>
+              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.porcentajeAsistencia }}%</ion-card-title>
+              <ion-card-subtitle>Asistencia real</ion-card-subtitle>
+            </ion-card-header>
+          </ion-card>
+        </ion-col>
+        <ion-col size="6">
+          <ion-card class="ion-text-center">
+            <ion-card-header>
+              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.avisosEnviados }}</ion-card-title>
+              <ion-card-subtitle>Avisos enviados</ion-card-subtitle>
+            </ion-card-header>
+          </ion-card>
+        </ion-col>
+      </ion-row>
+    </ion-grid>
+
+    <ion-card *ngIf="consumoIa" color="light" class="ion-no-margin ion-margin-top">
+      <ion-card-content>
+        <strong><ion-icon name="sparkles-outline"></ion-icon> Consumo de IA (eficiencia):</strong>
+        {{ consumoIa.llamadas }} llamadas realizadas · {{ consumoIa.tokens }} tokens usados.
+      </ion-card-content>
+    </ion-card>
+
+    <h3 class="ion-margin-top">Aviso de solapamientos horarios ({{ solapamientos.length }})</h3>
+    <div *ngIf="solapamientos.length === 0">
+      <ion-note>Ningún evento se pisa en horario ahora mismo.</ion-note>
+    </div>
+    <ion-card *ngFor="let sol of solapamientos" color="warning" class="ion-no-margin ion-margin-bottom">
+      <ion-card-content>
+        <strong>⚠️ Estos eventos coinciden en horario:</strong>
+        <p>{{ sol | json }}</p>
+      </ion-card-content>
+    </ion-card>
+
+    <h3 class="ion-margin-top">Detalle por actividad</h3>
+    <ion-card *ngFor="let st of statsEventos" class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>{{ st.title || 'Evento' }}</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <p>
+          Inscritos: <strong>{{ st.inscritos || 0 }}</strong> ·
+          En espera: <strong>{{ st.en_espera || 0 }}</strong> ·
+          Asistieron: <strong>{{ st.asistieron || 0 }}</strong>
+        </p>
+        <p>
+          🚗 Coches ofrecidos: <strong>{{ st.coches_ofrecidos || 0 }}</strong> ·
+          Buscan coche: <strong>{{ st.buscan_coche || 0 }}</strong> ·
+          ⭐ Media: <strong>{{ st.media_estrellas || '-' }}</strong>
+        </p>
+      </ion-card-content>
+    </ion-card>
+  </div>
+
+  <!-- 6. DEMO -->
+  <div *ngIf="pestana === 'demo'">
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>1. Simular post detectado en Facebook</ion-card-title>
+        <ion-card-subtitle>Carga uno de los 3 ejemplos preparados o pega un post real</ion-card-subtitle>
+      </ion-card-header>
+      <ion-card-content>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+          <ion-button size="small" color="success" fill="outline" (click)="cargarEjemploDemo('real')">
+            Ejemplo 1: Real
+          </ion-button>
+          <ion-button size="small" color="warning" fill="outline" (click)="cargarEjemploDemo('incompleto')">
+            Ejemplo 2: Falta precio
+          </ion-button>
+          <ion-button size="small" color="danger" fill="outline" (click)="cargarEjemploDemo('spam')">
+            Ejemplo 3: Spam
+          </ion-button>
+        </div>
+
+        <ion-list lines="full">
+          <ion-item>
+            <ion-input label="URL de la página de Facebook" labelPlacement="stacked" [(ngModel)]="demoPageUrl"></ion-input>
+          </ion-item>
+          <ion-item>
+            <ion-textarea label="Texto del post" labelPlacement="stacked" rows="3" [(ngModel)]="demoText"></ion-textarea>
+          </ion-item>
+          <ion-item>
+            <ion-input label="URL de la imagen del cartel (opcional)" labelPlacement="stacked" [(ngModel)]="demoImageUrl"></ion-input>
+          </ion-item>
+        </ion-list>
+
+        <ion-button expand="block" class="ion-margin-top" (click)="ejecutarDemo('facebook')" [disabled]="ejecutandoDemo">
+          <ion-icon slot="start" name="play-circle-outline"></ion-icon>
+          Enviar post al motor IA
+        </ion-button>
+      </ion-card-content>
+    </ion-card>
+
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>2. Disparadores del sistema (Telegram y Reputación)</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <ion-button expand="block" color="secondary" (click)="ejecutarDemo('recomendaciones')" [disabled]="ejecutandoDemo">
+          Enviar recomendaciones a vecinos
+        </ion-button>
+
+        <ion-item lines="outline" class="ion-margin-top">
+          <ion-select label="Evento para pedir reseñas" labelPlacement="stacked" [(ngModel)]="demoEventIdSeleccionado">
+            <ion-select-option *ngFor="let ev of eventosActivos" [value]="ev.id">
+              {{ ev.title }}
+            </ion-select-option>
+          </ion-select>
+        </ion-item>
+        <ion-button expand="block" fill="outline" class="ion-margin-top" (click)="ejecutarDemo('resenas')" [disabled]="ejecutandoDemo">
+          Pedir reseñas por Telegram
+        </ion-button>
+
+        <ion-button expand="block" fill="outline" color="tertiary" class="ion-margin-top" (click)="ejecutarDemo('promociones')" [disabled]="ejecutandoDemo">
+          Revisar promociones a Publicador
+        </ion-button>
+
+        <ion-button expand="block" fill="clear" class="ion-margin-top" (click)="ejecutarDemo('health')" [disabled]="ejecutandoDemo">
+          Despertar servidor (/health)
+        </ion-button>
+      </ion-card-content>
+    </ion-card>
+
+    <ion-card *ngIf="demoResultadoJson" color="dark" class="ion-no-margin">
+      <ion-card-header>
+        <ion-card-title>Respuesta del servidor</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <pre style="white-space: pre-wrap; font-size: 13px;">{{ demoResultadoJson }}</pre>
+      </ion-card-content>
+    </ion-card>
+  </div>
+</ion-content>

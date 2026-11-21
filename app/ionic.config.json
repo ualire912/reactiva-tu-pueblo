@@ -1,0 +1,7 @@
+{
+  "name": "reactiva-pueblo",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular-standalone"
+}
