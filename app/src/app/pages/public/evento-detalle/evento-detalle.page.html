@@ -176,12 +176,18 @@
 
         <ion-note *ngIf="resenas.length === 0">Aún no hay valoraciones.</ion-note>
 
-        <div *ngIf="puedeValorar && miResena" class="ion-margin-top">
-          <ion-note>✅ Ya has valorado este evento. ¡Gracias!</ion-note>
+        <div *ngIf="puedeValorar && miResena && !editandoResena" class="ion-margin-top">
+          <ion-note>
+            ✅ Tu valoración: {{ '⭐'.repeat(miResena.estrellas) }}
+            <span *ngIf="miResena.comentario"> · «{{ miResena.comentario }}»</span>
+          </ion-note>
+          <ion-button expand="block" fill="outline" size="small" class="ion-margin-top" (click)="empezarCambioResena()">
+            ✏️ Cambiar mi valoración
+          </ion-button>
         </div>
 
-        <!-- Formulario SOLO visible si tuvo plaza confirmada y aún no ha valorado -->
-        <div *ngIf="puedeValorar && !miResena" class="ion-margin-top">
+        <!-- Formulario: valorar por primera vez, o cambiar la valoración que ya hizo -->
+        <div *ngIf="puedeValorar && (!miResena || editandoResena)" class="ion-margin-top">
           <ion-item>
             <ion-select label="Tu puntuación" labelPlacement="stacked" [(ngModel)]="estrellas">
               <ion-select-option [value]="5">⭐⭐⭐⭐⭐ (5)</ion-select-option>
@@ -195,7 +201,10 @@
             <ion-input label="Comentario (opcional)" labelPlacement="stacked" [(ngModel)]="comentarioResena"></ion-input>
           </ion-item>
           <ion-button expand="block" color="success" class="ion-margin-top" (click)="enviarResena()">
-            Enviar valoración
+            {{ editandoResena ? 'Guardar el cambio' : 'Enviar valoración' }}
+          </ion-button>
+          <ion-button *ngIf="editandoResena" expand="block" fill="clear" (click)="editandoResena = false">
+            Cancelar
           </ion-button>
         </div>
 

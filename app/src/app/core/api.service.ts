@@ -81,6 +81,20 @@ export class ApiService {
     return res.json();
   }
 
+  /** Cambia la valoración que YA hizo el usuario (estrellas y, si se pasa, el comentario). */
+  async cambiarResena(eventId: string, estrellas: number, comentario?: string | null): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/resenas/${eventId}`, {
+      method: 'PUT',
+      headers: await this.getHeaders(true),
+      body: JSON.stringify({ estrellas, comentario })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'No se pudo cambiar la valoración');
+    }
+    return res.json();
+  }
+
   async pedirResenas(eventId: string): Promise<any> {
     const res = await fetch(`${this.baseUrl}/resenas/pedir/${eventId}`, {
       method: 'POST',

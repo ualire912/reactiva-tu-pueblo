@@ -11,6 +11,7 @@ usuario estaba inscrito y confirmado antes de insertar en resenas.
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from db import evento, perfil, require_user, sb
 from puentes import avisar
@@ -62,3 +63,26 @@ def pedir_resenas(event_id: str, user=Depends(require_user)):
         raise HTTPException(409, "El evento aún no ha terminado")
 
     return {"enviados": pedir_resenas_evento(ev)}
+
+
+# ══════════════════════════════════════════════════════════════
+#  PUT /resenas/{event_id} 🔒  {estrellas, comentario?} -> la reseña cambiada
+#  Cada uno cambia SOLO su propia reseña (la app no puede editar reseñas directamente:
+#  las reglas de la BD no lo permiten, así que pasa por aquí con la clave del servidor).
+# ══════════════════════════════════════════════════════════════
+class CambiarResenaIn(BaseModel):
+    estrellas: int = Field(ge=1, le=5)
+    comentario: str | None = None
+
+
+@router.put("/resenas/{event_id}")
+def cambiar_resena(event_id: str, body: CambiarResenaIn, user=Depends(require_user)):
+    ya = sb.table("resenas").select("id").eq("event_id", event_id).eq("user_id", user.id) \
+        .limit(1).execute().data
+    if not ya:
+        raise HTTPException(404, "No has valorado este evento todavía")
+    cambios = {"estrellas": body.estrellas}
+    if body.comentario is not None:
+        cambios["comentario"] = body.comentario.strip()[:500] or None
+    fila = sb.table("resenas").update(cambios).eq("id", ya[0]["id"]).execute().data
+    return fila[0] if fila else {"ok": True}
