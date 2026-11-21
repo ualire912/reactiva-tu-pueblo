@@ -6,6 +6,8 @@ Mis routers llaman a estas funciones y no a bot/ia directamente. Así:
     se corta a los X segundos y se sigue con un plan B sin IA.
   - Ninguna función de aquí lanza excepciones.
 """
+import asyncio
+import inspect
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -17,9 +19,19 @@ LIMITE_IA = 15        # segundos máximos por llamada a la IA
 _pool = ThreadPoolExecutor(max_workers=8)
 
 
+def _ejecutar(fn, *args):
+    """fn puede ser async (bot.avisar_usuario lo es): entonces se espera de verdad en este
+    hilo, con su propio bucle. Antes se devolvía la corrutina sin ejecutar: bool() daba True,
+    se contaba como 'enviado' y el mensaje NUNCA salía."""
+    r = fn(*args)
+    if inspect.isawaitable(r):
+        r = asyncio.run(r)
+    return r
+
+
 def _con_limite(segundos: int, fn, *args):
     """Ejecuta fn(*args) y, si tarda más de 'segundos', lanza TimeoutError."""
-    return _pool.submit(fn, *args).result(timeout=segundos)
+    return _pool.submit(_ejecutar, fn, *args).result(timeout=segundos)
 
 
 # ---------- B2: bot.avisar_usuario ----------
@@ -35,6 +47,16 @@ try:
 except Exception as e:
     log.warning("ia.py no disponible (%s): uso plan B sin IA", e)
     _ia = None
+
+
+def avisar_moderadores(event_id: str) -> int:
+    """Manda una propuesta pendiente a los moderadores con Telegram. -> nº avisados (0 si falla)."""
+    try:
+        from bot import avisar_moderadores as _avisar_moderadores
+        return int(_con_limite(LIMITE_TELEGRAM * 3, _avisar_moderadores, event_id) or 0)
+    except Exception as e:
+        log.error("avisar_moderadores falló para %s: %r", event_id, e)
+        return 0
 
 
 def avisar(user_id: str, texto: str, buttons=None) -> bool:

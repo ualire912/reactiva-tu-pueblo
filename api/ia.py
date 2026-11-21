@@ -435,9 +435,16 @@ def _evento_vacio(text: str | None) -> dict:
     }
 
 
+_PUEBLO_CORTO = {"lucainena": "Lucainena de las Torres", "uleila": "Uleila del Campo"}
+
+
 def _pueblo_en_texto(text: str | None) -> str | None:
+    """También con el nombre corto que usa la gente: "en Lucainena", "en Uleila"."""
     n = _norm(text or "")
-    return next((p for p in PUEBLOS if _norm(p) in n), None)
+    pueblo = next((p for p in PUEBLOS if _norm(p) in n), None)
+    if pueblo:
+        return pueblo
+    return next((p for corto, p in _PUEBLO_CORTO.items() if re.search(rf"\b{corto}\b", n)), None)
 
 
 _RE_GRATIS = re.compile(r"gratis|gratuit|entrada libre|acceso libre|sin coste|\b0 ?(€|euros)")
