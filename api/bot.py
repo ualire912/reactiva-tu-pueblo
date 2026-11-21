@@ -1459,6 +1459,26 @@ def _tiene_detalles_de_plan(texto: str) -> bool:
         r"uleila|lucainena)", n))
 
 
+def _mensaje_rechazo(ingesta_id: str) -> str:
+    """La IA (o las reglas) han descartado la propuesta: se le explica el MOTIVO al usuario."""
+    fila = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data or [{}])[0]
+    motivo = (fila.get("spam_reason") or "").strip()
+    n = _norm_txt(motivo)
+    if "ofensiv" in n or "inapropiad" in n or "insult" in n or "odio" in n or "violen" in n \
+            or "droga" in n or "sexual" in n or "discrimin" in n:
+        return ("🚫 No puedo publicar tu propuesta: tiene lenguaje o contenido ofensivo o "
+                "inapropiado (insultos, violencia, drogas...).\n\nEsta agenda es para planes "
+                "respetuosos con todos los vecinos. Si quieres, vuelve a proponerlo de otra forma.")
+    if "palabra prohibida" in n or "enlaces" in n or "mayusculas" in n or "publicidad" in n \
+            or "estafa" in n or "spam" in n or "apuesta" in n:
+        detalle = f"\nMotivo: {motivo}." if motivo else ""
+        return ("🚫 No publico tu propuesta porque parece publicidad o spam." + detalle +
+                "\n\nAquí solo se comparten planes y actividades de los pueblos de la Mancomunidad "
+                "(Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique).")
+    return ("🚫 No publico tu propuesta" + (f". Motivo: {motivo}" if motivo else "") +
+            ".\n\nSi crees que es un error, vuelve a proponerlo explicando mejor el plan.")
+
+
 async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: str,
                            es_audio: bool = False) -> None:
     """Guarda la propuesta, la IA saca los datos y se le pide confirmación al autor.
@@ -1485,12 +1505,7 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
         return  # ya le ha llegado el resumen con "¿Publico este plan?"
     CHATS_CON_VOZ.discard(chat_id)
     if estado == "spam":
-        await _enviar_respuesta(
-            chat_id,
-            "🚫 Tu mensaje parece publicidad o spam, así que no lo publico. Aquí solo se "
-            "comparten planes y actividades de los pueblos de la Mancomunidad "
-            "(Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique).",
-            perfil=perfil, force_audio=es_audio)
+        await _enviar_respuesta(chat_id, _mensaje_rechazo(ingesta_id), perfil=perfil, force_audio=es_audio)
         return
     if estado == "descartada":
         motivo = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data
@@ -1503,9 +1518,13 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
             return
     if estado in ("descartada", "spam"):
         ESPERANDO_PROPUESTA.add(chat_id)
+        motivo = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data
+                  or [{}])[0].get("spam_reason") or ""
+        motivo = re.sub(r"^no es un evento:\s*", "", motivo).strip()
+        por_que = f" (motivo: {motivo})" if motivo and motivo.lower() != "none" else ""
         await _enviar_respuesta(
             chat_id,
-            "🤔 No he sabido sacar un plan de tu mensaje. Cuéntamelo con más detalle: qué es, "
+            f"🤔 No he podido sacar un plan de tu mensaje{por_que}. Cuéntamelo con más detalle: qué es, "
             "en qué pueblo, qué día y a qué hora (por ejemplo: «Taller de esparto el sábado 12 "
             "de diciembre a las 17:00 en el centro social de Tahal, gratis»).",
             perfil=perfil, force_audio=es_audio)

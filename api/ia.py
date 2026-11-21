@@ -556,6 +556,15 @@ def extraer_evento(text: str | None, image_bytes: bytes | None = None) -> dict:
 # ══════════════════════════════════════════════════════════════
 #  2 · clasificar_spam  (reglas primero, IA solo si hay duda)
 # ══════════════════════════════════════════════════════════════
+# Insultos, odio, violencia, sexo explícito y drogas (texto ya normalizado, sin tildes).
+# Ojo con los falsos positivos: "matanza tradicional" o "pegar carteles" NO cuentan.
+_OFENSIVO = re.compile(
+    r"\b(gilipollas|imbecil(es)?|subnormal(es)?|retrasad[oa]s?|mierda|put[ao]s?|cabron(es|a|as)?|"
+    r"hij[oa]s? de puta|maricon(es)?|bollera|zorra|polla|follar|follamos|nazis?|"
+    r"panchit[oa]s?|sudac[oa]s?|negrat[ao]s?|moros? de mierda|gitanos? de mierda|"
+    r"matarl[oe]s?|matar a|matarnos|a hostias|paliza|pegarnos|pegarles|reventarl[oe]s?|"
+    r"navajas?|pistolas?|porros?|drogas?|cocaina|maria para fumar)\b")
+
 PALABRAS_SPAM = ["casino", "préstamo", "prestamo", "cripto", "bitcoin", "gana dinero",
                  "haz clic", "haz click", "apuestas", "inversión garantizada",
                  "inversion garantizada", "trabaja desde casa", "sorteo iphone", "forex"]
@@ -571,6 +580,10 @@ def reglas_spam(text: str | None, entidad: dict | None = None) -> dict | None:
     La usa también ingesta.py antes de gastar IA."""
     t = text or ""
     n = _norm(t)
+    ofensivo = _OFENSIVO.search(n)
+    if ofensivo:  # antes que nada (ni una entidad de confianza publica insultos)
+        return {"spam_score": 0.98, "motivo": "lenguaje ofensivo o inapropiado",
+                "ofensivo": True}
     if entidad and entidad.get("auto_approve"):
         return {"spam_score": 0.0, "motivo": "entidad con aprobación automática"}
     for p in PALABRAS_SPAM:
@@ -606,18 +619,23 @@ def reglas_no_evento(text: str | None) -> str | None:
     return None
 
 
-_PROMPT_SPAM = """¿Este post de Facebook es spam/estafa/publicidad ajena, o un evento o anuncio legítimo
-de un pueblo de Almería? Devuelve SOLO JSON: {{"spam_score": número 0..1, "motivo": "frase corta en español"}}.
+_PROMPT_SPAM = """¿Este mensaje es spam, estafa, publicidad ajena o contenido INAPROPIADO (insultos,
+odio o discriminación, violencia, contenido sexual, drogas o algo ilegal), o es un evento o anuncio
+legítimo y respetuoso de un pueblo de Almería? Un plan normal entre vecinos (ruta, taller, comida,
+fiesta, quedada) NO es spam. Devuelve SOLO JSON:
+{{"spam_score": número 0..1 (>= 0.8 si es spam o inapropiado), "motivo": "frase corta en español que se pueda enseñar a quien lo escribió"}}.
 POST:
 \"\"\"{texto}\"\"\"
 """
 
 
-def clasificar_spam(text: str | None, entidad: dict | None = None) -> dict:
-    """-> {"spam_score": 0..1, "motivo": str}. Nunca falla."""
+def clasificar_spam(text: str | None, entidad: dict | None = None, solo_ia: bool = False) -> dict:
+    """-> {"spam_score": 0..1, "motivo": str}. Nunca falla.
+    solo_ia=True: aunque las reglas lo den por bueno, lo revisa la IA (propuestas de vecinos:
+    algo ofensivo con fecha y lugar parecería un "evento normal" para las reglas)."""
     try:
         r = reglas_spam(text, entidad)
-        if r is not None:
+        if r is not None and (not solo_ia or r["spam_score"] >= 0.5):
             return r
         datos = _json(_llamar(_PROMPT_SPAM.format(texto=(text or "")[:2000])))
         if datos and "spam_score" in datos:
