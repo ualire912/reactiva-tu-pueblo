@@ -200,6 +200,7 @@ export class PanelPage implements OnInit {
 
   cambiarBusqueda(valor: string) {
     this.busqueda = valor;
+    this.paginaPublicados = 1;
     this.cdr.detectChanges();
   }
 
@@ -243,6 +244,36 @@ export class PanelPage implements OnInit {
   // 1. Pendientes y eventos activos
   pendientes: Evento[] = [];
   eventosActivos: Evento[] = [];
+
+  // Planes publicados, de 5 en 5: primero los próximos y luego los ya celebrados (los más recientes antes)
+  readonly porPaginaPublicados = 5;
+  paginaPublicados = 1;
+
+  private get publicadosOrdenados(): Evento[] {
+    const lista = this.filtrar(this.eventosActivos);
+    const activos = lista.filter((e) => e.status !== 'finalizado').sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    const pasados = lista.filter((e) => e.status === 'finalizado').sort((a, b) => b.starts_at.localeCompare(a.starts_at));
+    return [...activos, ...pasados];
+  }
+  get totalPaginasPublicados(): number {
+    return Math.max(1, Math.ceil(this.publicadosOrdenados.length / this.porPaginaPublicados));
+  }
+  get paginaPublicadosVisible(): number {
+    return Math.min(this.paginaPublicados, this.totalPaginasPublicados);
+  }
+  get paginaPublicadosLista(): Evento[] {
+    const inicio = (this.paginaPublicadosVisible - 1) * this.porPaginaPublicados;
+    return this.publicadosOrdenados.slice(inicio, inicio + this.porPaginaPublicados);
+  }
+  get rangoPublicados(): string {
+    const total = this.publicadosOrdenados.length;
+    const desde = (this.paginaPublicadosVisible - 1) * this.porPaginaPublicados + 1;
+    return `${desde}–${Math.min(total, desde + this.porPaginaPublicados - 1)} de ${total}`;
+  }
+  irAPaginaPublicados(n: number) {
+    this.paginaPublicados = Math.min(Math.max(1, n), this.totalPaginasPublicados);
+    this.cdr.detectChanges();
+  }
 
   // 2. Detectados por IA (ingestas)
   ingestas: Ingesta[] = [];

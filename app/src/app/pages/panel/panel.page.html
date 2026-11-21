@@ -135,7 +135,7 @@
         <h2 class="panel-subtitulo">Planes publicados</h2>
         <p class="texto-suave">Cambia la hora o el lugar, aplaza o cancela. Las personas apuntadas reciben el aviso.</p>
         <div class="panel-lista">
-          @for (ev of filtrar(eventosActivos); track ev.id) {
+          @for (ev of paginaPublicadosLista; track ev.id) {
             <div class="panel-fila" [style.--pueblo]="colorPueblo(ev.municipios?.nombre)">
               <div class="panel-fila-info">
                 <strong>{{ ev.title }}</strong>
@@ -158,6 +158,22 @@
             </div>
           }
         </div>
+        @if (totalPaginasPublicados > 1) {
+          <nav class="paginacion paginacion-panel" aria-label="Páginas de planes publicados">
+            <span class="pag-rango">{{ rangoPublicados }}</span>
+            <div class="pag-nav">
+              <button type="button" class="pag-boton" [disabled]="paginaPublicadosVisible <= 1" (click)="irAPaginaPublicados(paginaPublicadosVisible - 1)" aria-label="Página anterior">
+                <ion-icon name="chevron-back" aria-hidden="true"></ion-icon>
+                <span class="pag-texto">Anterior</span>
+              </button>
+              <span class="pag-actual">{{ paginaPublicadosVisible }} / {{ totalPaginasPublicados }}</span>
+              <button type="button" class="pag-boton" [disabled]="paginaPublicadosVisible >= totalPaginasPublicados" (click)="irAPaginaPublicados(paginaPublicadosVisible + 1)" aria-label="Página siguiente">
+                <span class="pag-texto">Siguiente</span>
+                <ion-icon name="chevron-forward" aria-hidden="true"></ion-icon>
+              </button>
+            </div>
+          </nav>
+        }
       }
 
       <!-- 2. DETECTADOS POR IA -->

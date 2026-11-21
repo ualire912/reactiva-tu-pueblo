@@ -27,7 +27,16 @@
     (filtrosChange)="cambiarFiltros($event)"
     (coords)="coords.set($event)"
     [conteoCategorias]="conteoCategorias()"
-    [total]="filtrados().length"></app-filtros-eventos>
+    [total]="vista() === 'calendario' ? paraCalendario().length : filtrados().length"></app-filtros-eventos>
+
+  <div class="selector-agenda" role="group" aria-label="Forma de ver la agenda">
+    <button type="button" [class.on]="vista() === 'cuadricula'" [attr.aria-pressed]="vista() === 'cuadricula'" (click)="cambiarVista('cuadricula')">
+      <ion-icon name="grid-outline" aria-hidden="true"></ion-icon> Tarjetas
+    </button>
+    <button type="button" [class.on]="vista() === 'calendario'" [attr.aria-pressed]="vista() === 'calendario'" (click)="cambiarVista('calendario')">
+      <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon> Calendario
+    </button>
+  </div>
 </ion-header>
 
 <ion-content class="rp-fondo">
@@ -37,7 +46,9 @@
 
   <h1 class="sr-only">Agenda de planes de la comarca</h1>
 
-  @if (cargando()) {
+  @if (!cargando() && vista() === 'calendario') {
+    <app-calendario-eventos [eventos]="paraCalendario()"></app-calendario-eventos>
+  } @else if (cargando()) {
     <div class="rejilla-eventos" aria-busy="true" aria-label="Cargando planes">
       @for (e of esqueletos; track e) {
         <div class="ev-card esqueleto" aria-hidden="true">
@@ -67,6 +78,7 @@
   }
 </ion-content>
 
+@if (vista() !== 'calendario') {
 <ion-footer class="rp-paginacion">
   <nav class="paginacion" aria-label="Paginación de planes">
     <label class="pag-tamano">
@@ -94,3 +106,4 @@
     </div>
   </nav>
 </ion-footer>
+}

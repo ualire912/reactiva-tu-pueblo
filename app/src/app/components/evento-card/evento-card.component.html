@@ -16,6 +16,7 @@
     <span class="ev-fecha" aria-hidden="true">
       <span class="ev-fecha-num">{{ fecha().num }}</span>
       <span class="ev-fecha-mes">{{ fecha().mes }}</span>
+      <span class="ev-fecha-anio">{{ fecha().anio }}</span>
     </span>
 
     @if (terminado()) {
@@ -58,6 +59,9 @@
 
     @if (!terminado() && ev().max_capacity) {
       <p class="ev-plazas-texto">{{ plazas() }}</p>
+    }
+    @if (!terminado()) {
+      <app-tiempo-evento class="ev-tiempo" [lat]="ev().lat" [lng]="ev().lng" [inicio]="ev().starts_at" [compacto]="true"></app-tiempo-evento>
     }
 
     <div class="ev-pie">

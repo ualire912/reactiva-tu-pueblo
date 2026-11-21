@@ -1,5 +1,6 @@
-import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { TiempoEventoComponent } from '../../../components/tiempo-evento/tiempo-evento.component';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import {
@@ -80,6 +81,7 @@ const TAMANO_MAX_FOTO = 5 * 1024 * 1024; // 5 MB
   templateUrl: './evento-detalle.page.html',
   standalone: true,
   imports: [
+    TiempoEventoComponent,
     FormsModule,
     RouterModule,
     IonHeader,
@@ -123,6 +125,16 @@ export class EventoDetallePage implements OnInit, OnDestroy {
 
   // Chat
   mensajes = signal<Mensaje[]>([]);
+  @ViewChild('cajaChat') cajaChat?: ElementRef<HTMLElement>;
+  /** Baja el chat al último mensaje cada vez que llega uno nuevo (o el asistente piensa). */
+  private bajarChat = effect(() => {
+    this.mensajes();
+    this.esperandoIa();
+    setTimeout(() => {
+      const caja = this.cajaChat?.nativeElement;
+      if (caja) caja.scrollTo({ top: caja.scrollHeight, behavior: 'smooth' });
+    }, 50);
+  });
   nombres = signal<Record<string, string>>({});
   nuevoMensaje = '';
   enviando = signal(false);

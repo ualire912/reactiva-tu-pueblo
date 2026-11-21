@@ -164,7 +164,14 @@ export class ProponerPage implements OnInit, OnDestroy {
    * ngOnInit solo se ejecuta la primera vez. Por eso aquí se vacía el formulario
    * si ya se envió un plan y se vuelve a leer el camino elegido (?modo=...).
    */
+  /** Publicadores y moderadores publican sin revisión (lo decide la BD al guardar). */
+  get publicaDirecto(): boolean {
+    return this.sb.rol === 'publicador' || this.sb.rol === 'moderador';
+  }
+
   ionViewWillEnter() {
+    // Por si le acaban de hacer Publicador/a: se relee su rol
+    this.sb.loadProfile().catch(() => null);
     if (this.debeReiniciar) {
       this.reiniciarFormulario();
       this.debeReiniciar = false;

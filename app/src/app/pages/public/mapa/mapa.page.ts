@@ -8,7 +8,7 @@ import { SupabaseService } from '../../../core/supabase.service';
 import { AvisosService } from '../../../core/avisos.service';
 import { EventoVista, EventosService, FILTROS_INICIALES, Filtros, filtrarEventos } from '../../../core/eventos.service';
 import { FiltrosEventosComponent } from '../../../components/filtros-eventos/filtros-eventos.component';
-import { estiloCategoria, fechaCorta, haTerminado, partesFecha, textoPrecio, ubicacionCompleta } from '../../../core/ui';
+import { colorPueblo, estiloCategoria, fechaCorta, haTerminado, iconoCategoria, normalizar, partesFecha, textoPrecio, ubicacionCompleta } from '../../../core/ui';
 
 @Component({
   selector: 'app-mapa',
@@ -24,6 +24,9 @@ export class MapaPage implements OnDestroy {
 
   private map?: L.Map;
   private markersLayer = L.layerGroup();
+  private limitesLayer?: L.GeoJSON;
+  /** Contornos de la provincia y de los 5 pueblos (OpenStreetMap, guardados en assets). */
+  private static limites?: Promise<any>;
   private userMarker?: L.Marker;
 
   eventos = signal<EventoVista[]>([]);
@@ -76,6 +79,7 @@ export class MapaPage implements OnDestroy {
       maxZoom: 18,
       attribution: '&copy; OpenStreetMap',
     }).addTo(this.map);
+    this.pintarLimites();
     this.markersLayer.addTo(this.map);
 
     // Botón "Ver ficha" dentro de los globos del mapa
@@ -102,6 +106,36 @@ export class MapaPage implements OnDestroy {
     }
   }
 
+  /** Contorno de la provincia de Almería y de cada pueblo, con su color. Clic en un pueblo = filtrar. */
+  private async pintarLimites() {
+    MapaPage.limites ??= fetch('assets/mapa/limites.geojson').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const datos = await MapaPage.limites;
+    if (!datos || !this.map) return;
+
+    this.limitesLayer = L.geoJSON(datos, {
+      style: (f) =>
+        f?.properties?.tipo === 'provincia'
+          ? { color: '#24312f', weight: 2, dashArray: '6 6', fillOpacity: 0, interactive: false }
+          : { color: colorPueblo(f?.properties?.nombre), weight: 2.5, fillColor: colorPueblo(f?.properties?.nombre), fillOpacity: 0.12 },
+      onEachFeature: (f, capa) => {
+        const nombre = f.properties?.nombre as string;
+        if (f.properties?.tipo === 'provincia') return;
+        capa.bindTooltip(nombre, { sticky: true, className: 'tooltip-pueblo' });
+        capa.on('mouseover', () => (capa as L.Path).setStyle({ fillOpacity: 0.25, weight: 3.5 }));
+        capa.on('mouseout', () => (capa as L.Path).setStyle({ fillOpacity: 0.12, weight: 2.5 }));
+        capa.on('click', () => {
+          const m = this.sb.municipios.find((x) => normalizar(x.nombre) === normalizar(nombre));
+          if (m) this.filtros.set({ ...this.filtros(), municipio: this.filtros().municipio === m.id ? null : m.id });
+        });
+      },
+    }).addTo(this.map);
+    this.limitesLayer.bringToBack();
+
+    // Encuadre: los 5 pueblos (la provincia entera queda de fondo al alejar)
+    const pueblos = L.geoJSON(datos.features.filter((f: any) => f.properties?.tipo === 'pueblo'));
+    this.map.fitBounds(pueblos.getBounds(), { padding: [20, 20] });
+  }
+
   private escapar(t: string | null | undefined): string {
     const mapa: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
     return (t || '').replace(/[&<>"']/g, (c) => mapa[c] || c);
@@ -118,7 +152,7 @@ export class MapaPage implements OnDestroy {
 
       const icon = L.divIcon({
         className: '',
-        html: `<div class="custom-pin" style="background-color:${color}"><span>${this.escapar(ev.pueblo.charAt(0))}</span></div>`,
+        html: `<div class="custom-pin" style="background-color:${color}"><span><ion-icon name="${iconoCategoria(ev.category)}" aria-hidden="true"></ion-icon></span></div>`,
         iconSize: [34, 34],
         iconAnchor: [17, 34],
         popupAnchor: [0, -34],
@@ -142,7 +176,7 @@ export class MapaPage implements OnDestroy {
           <button type="button" data-event-id="${ev.id}" class="popup-boton">Ver plan</button>
         </div>`;
 
-      L.marker([ev.lat, ev.lng], { icon, title: ev.title, alt: ev.title }).bindPopup(popupHtml).addTo(this.markersLayer);
+      L.marker([ev.lat, ev.lng], { icon, title: `${ev.title} (${this.nombreCategoria(ev.category)})`, alt: ev.title }).bindPopup(popupHtml).addTo(this.markersLayer);
     }
   }
 

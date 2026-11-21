@@ -18,8 +18,28 @@
 </ion-header>
 
 <ion-content class="rp-fondo">
-  <!-- Portada verde con colinas -->
-  <section class="portada" aria-labelledby="titulo-portada">
+  <!-- Portada con fotos de los pueblos que van rotando -->
+  <section class="portada con-fotos" aria-labelledby="titulo-portada">
+    <div class="portada-fotos" aria-hidden="true">
+      @for (f of fotos; track f.src; let i = $index) {
+        <div class="portada-foto" [class.activa]="i === fotoActual()" [style.background-image]="'url(' + f.src + ')'"></div>
+      }
+    </div>
+    <div class="portada-velo" aria-hidden="true"></div>
+    <div class="portada-pie">
+      <span class="portada-pueblo">
+        <ion-icon name="location" aria-hidden="true"></ion-icon> {{ fotos[fotoActual()].pueblo }}
+        <small>{{ fotos[fotoActual()].credito }}</small>
+      </span>
+      <span class="portada-controles">
+        @for (f of fotos; track f.src; let i = $index) {
+          <button type="button" class="portada-punto" [class.on]="i === fotoActual()" [attr.aria-label]="'Ver foto de ' + f.pueblo" [attr.aria-current]="i === fotoActual()" (click)="irAFoto(i)"></button>
+        }
+        <button type="button" class="portada-pausa" (click)="alternarFotos()" [attr.aria-label]="fotosPausadas() ? 'Reanudar las fotos' : 'Pausar las fotos'">
+          <ion-icon [name]="fotosPausadas() ? 'play' : 'pause'" aria-hidden="true"></ion-icon>
+        </button>
+      </span>
+    </div>
     <div class="portada-contenido">
       <span class="portada-insignia" aria-live="polite">
         {{ cargando() ? 'Buscando planes…' : 'Este finde hay ' + planesFinde() + (planesFinde() === 1 ? ' plan' : ' planes') }}

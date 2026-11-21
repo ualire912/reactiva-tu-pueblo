@@ -36,6 +36,7 @@
           <span class="ev-fecha ficha-fecha" aria-hidden="true">
             <span class="ev-fecha-num">{{ fechaPartes().num }}</span>
             <span class="ev-fecha-mes">{{ fechaPartes().mes }}</span>
+            <span class="ev-fecha-anio">{{ fechaPartes().anio }}</span>
           </span>
           @if (terminado()) {
             <span class="ev-sello-finalizado">Finalizado</span>
@@ -78,6 +79,12 @@
                 }
               </dd>
             </div>
+            @if (!terminado()) {
+              <div>
+                <dt><span aria-hidden="true">🌡️</span> Tiempo previsto</dt>
+                <dd><app-tiempo-evento [lat]="ev.lat" [lng]="ev.lng" [inicio]="ev.starts_at"></app-tiempo-evento></dd>
+              </div>
+            }
             <div>
               <dt><ion-icon name="person" aria-hidden="true"></ion-icon> Organiza</dt>
               <dd>
@@ -236,7 +243,7 @@
           <section class="bloque" aria-labelledby="titulo-chat">
             <h2 id="titulo-chat"><ion-icon name="chatbubbles" aria-hidden="true"></ion-icon> Dudas y anuncios</h2>
 
-            <div class="chat" aria-live="polite">
+            <div class="chat" #cajaChat aria-live="polite">
               @for (m of mensajes(); track m.id) {
                 <div class="mensaje" [class.mio]="m.user_id === uid()" [class.ia]="m.tipo === 'asistente_ia'" [class.anuncio]="m.tipo === 'anuncio_fijado'">
                   <span class="avatar" aria-hidden="true">

@@ -13,7 +13,7 @@ import {
   IonRefresherContent,
 } from '@ionic/angular';
 import { addIcons } from 'ionicons';
-import { addCircle, chevronBack, chevronForward, logInOutline, searchOutline } from 'ionicons/icons';
+import { addCircle, calendarOutline, chevronBack, chevronForward, gridOutline, logInOutline, searchOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { SupabaseService } from '../../../core/supabase.service';
 import { AvisosService } from '../../../core/avisos.service';
@@ -28,6 +28,7 @@ import {
 } from '../../../core/eventos.service';
 import { FiltrosEventosComponent } from '../../../components/filtros-eventos/filtros-eventos.component';
 import { EventoCardComponent } from '../../../components/evento-card/evento-card.component';
+import { CalendarioEventosComponent } from '../../../components/calendario-eventos/calendario-eventos.component';
 
 @Component({
   selector: 'app-agenda',
@@ -47,6 +48,7 @@ import { EventoCardComponent } from '../../../components/evento-card/evento-card
     IonRefresherContent,
     FiltrosEventosComponent,
     EventoCardComponent,
+    CalendarioEventosComponent,
   ],
 })
 export class AgendaPage implements OnInit, OnDestroy {
@@ -69,6 +71,21 @@ export class AgendaPage implements OnInit, OnDestroy {
   haySesion = signal(false);
 
   filtrados = computed(() => filtrarEventos(this.eventos(), this.filtros(), this.coords()));
+
+  /** Cuadrícula de tarjetas o calendario mensual (se recuerda en este navegador). */
+  vista = signal<'cuadricula' | 'calendario'>(leerVista());
+  /** En el calendario se ven todas las fechas: se navega por meses. */
+  paraCalendario = computed(() => filtrarEventos(this.eventos(), { ...this.filtros(), fecha: 'todas' }, this.coords()));
+
+  cambiarVista(v: 'cuadricula' | 'calendario') {
+    this.vista.set(v);
+    try {
+      localStorage.setItem('agenda-vista', v);
+    } catch {
+      /* sin almacenamiento: no pasa nada */
+    }
+    this.contenido?.scrollToTop(200);
+  }
 
   /** Cuántos planes hay de cada actividad con el resto de filtros aplicados (para los botones de color). */
   conteoCategorias = computed(() => {
@@ -98,7 +115,7 @@ export class AgendaPage implements OnInit, OnDestroy {
   private recarga?: ReturnType<typeof setTimeout>;
 
   constructor() {
-    addIcons({ addCircle, chevronBack, chevronForward, logInOutline, searchOutline });
+    addIcons({ addCircle, calendarOutline, chevronBack, chevronForward, gridOutline, logInOutline, searchOutline });
   }
 
   async ngOnInit() {
@@ -166,5 +183,13 @@ export class AgendaPage implements OnInit, OnDestroy {
     const destino = Math.min(Math.max(1, n), this.totalPaginas());
     this.paginaActual.set(destino);
     this.contenido?.scrollToTop(250);
+  }
+}
+
+function leerVista(): 'cuadricula' | 'calendario' {
+  try {
+    return localStorage.getItem('agenda-vista') === 'calendario' ? 'calendario' : 'cuadricula';
+  } catch {
+    return 'cuadricula';
   }
 }

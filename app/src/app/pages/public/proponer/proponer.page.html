@@ -111,7 +111,11 @@
 
         <p class="asistente-nota">
           <ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon>
-          Una persona del equipo lo revisa antes de publicarlo, así que no te preocupes si algo no queda perfecto.
+          @if (publicaDirecto) {
+            Como eres {{ sb.rol === 'moderador' ? 'moderador/a' : 'Publicador/a' }}, tu plan se publicará al momento, sin esperar revisión.
+          } @else {
+            Una persona del equipo lo revisa antes de publicarlo, así que no te preocupes si algo no queda perfecto.
+          }
         </p>
       }
 
@@ -476,7 +480,11 @@
 
         <p class="asistente-nota">
           <ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon>
-          Lo revisará una persona del equipo y te avisaremos cuando esté publicado.
+          @if (publicaDirecto) {
+            Como eres {{ sb.rol === 'moderador' ? 'moderador/a' : 'Publicador/a' }}, se publicará en la agenda en cuanto lo envíes.
+          } @else {
+            Lo revisará una persona del equipo y te avisaremos cuando esté publicado.
+          }
         </p>
       }
     }
@@ -496,7 +504,7 @@
       } @else {
         <button type="button" class="boton-siguiente enviar" (click)="guardarEvento()" [disabled]="guardando()">
           <ion-icon name="paper-plane-outline" aria-hidden="true"></ion-icon>
-          {{ guardando() ? 'Enviando…' : 'Enviar el plan' }}
+          {{ guardando() ? 'Enviando…' : publicaDirecto ? 'Publicar el plan' : 'Enviar el plan' }}
         </button>
       }
     </div>

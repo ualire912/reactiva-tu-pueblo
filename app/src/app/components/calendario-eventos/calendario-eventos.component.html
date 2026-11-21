@@ -1,0 +1,95 @@
+<section class="calendario" aria-label="Calendario de planes">
+  <header class="cal-cabecera">
+    <button type="button" class="cal-flecha" (click)="cambiarMes(-1)" aria-label="Mes anterior">
+      <ion-icon name="chevron-back" aria-hidden="true"></ion-icon>
+    </button>
+    <div class="cal-titulo">
+      <h2 aria-live="polite">{{ tituloMes() }}</h2>
+      <small>{{ totalMes() }} {{ totalMes() === 1 ? 'plan' : 'planes' }} este mes</small>
+    </div>
+    <button type="button" class="cal-flecha" (click)="cambiarMes(1)" aria-label="Mes siguiente">
+      <ion-icon name="chevron-forward" aria-hidden="true"></ion-icon>
+    </button>
+    <button type="button" class="cal-hoy" (click)="irAHoy()">
+      <ion-icon name="today-outline" aria-hidden="true"></ion-icon> Hoy
+    </button>
+  </header>
+
+  <div class="cal-rejilla" role="grid" [attr.aria-label]="tituloMes()">
+    <div class="cal-fila cal-nombres" role="row">
+      @for (n of nombresDia; track n) {
+        <span role="columnheader" class="cal-nombre">{{ n }}</span>
+      }
+    </div>
+    <div class="cal-dias" role="rowgroup">
+      @for (d of dias(); track d.clave) {
+        <button
+          type="button"
+          role="gridcell"
+          class="cal-dia"
+          [attr.data-dia]="d.clave"
+          [class.fuera]="!d.delMes"
+          [class.hoy]="d.hoy"
+          [class.pasado]="d.pasado"
+          [class.con-planes]="d.eventos.length > 0"
+          [class.seleccionado]="d.clave === seleccionado()"
+          [attr.aria-selected]="d.clave === seleccionado()"
+          [attr.aria-label]="etiquetaDia(d)"
+          [attr.tabindex]="d.clave === seleccionado() ? 0 : -1"
+          (click)="elegir(d)"
+          (keydown)="teclado($event, d)">
+          <span class="cal-numero">{{ d.numero }}</span>
+          <span class="cal-chips" aria-hidden="true">
+            @for (ev of d.eventos.slice(0, maxEnCelda); track ev.id) {
+              @let cat = estiloCategoria(ev.category);
+              <span class="cal-chip" [class.apagado]="terminado(ev) || ev.status === 'cancelado'" [style.background]="cat.fondo" [style.color]="cat.tinta">
+                <ion-icon [name]="iconoCategoria(ev.category)"></ion-icon>
+                <span class="cal-chip-texto">{{ ev.title }}</span>
+              </span>
+            }
+            @if (d.eventos.length > maxEnCelda) {
+              <span class="cal-mas">+{{ d.eventos.length - maxEnCelda }} más</span>
+            }
+          </span>
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- Planes del día elegido -->
+  <div class="cal-detalle" aria-live="polite">
+    <h3>{{ tituloDia() }}</h3>
+    @if (diaSeleccionado()?.eventos?.length) {
+      <ul class="cal-lista">
+        @for (ev of diaSeleccionado()!.eventos; track ev.id) {
+          @let cat = estiloCategoria(ev.category);
+          @let f = partesFecha(ev.starts_at);
+          <li>
+            <a class="cal-plan" [routerLink]="['/evento', ev.id]" [style.--pueblo]="ev.color" [class.apagado]="terminado(ev) || ev.status === 'cancelado'">
+              <span class="cal-plan-icono" [style.background]="cat.fondo" [style.color]="cat.tinta">
+                <ion-icon [name]="iconoCategoria(ev.category)" aria-hidden="true"></ion-icon>
+              </span>
+              <span class="cal-plan-info">
+                <strong>{{ ev.title }}</strong>
+                <span class="cal-plan-linea">
+                  {{ f.hora }} · <span class="etiqueta-pueblo pequena" [style.--pueblo]="ev.color">{{ ev.pueblo }}</span> ·
+                  <span class="precio-verde">{{ textoPrecio(ev.price) }}</span>
+                  @if (terminado(ev)) {
+                    · <span class="cal-estado">Finalizado</span>
+                  } @else if (ev.status === 'cancelado') {
+                    · <span class="cal-estado">Cancelado</span>
+                  }
+                </span>
+              </span>
+              @if (!terminado(ev)) {
+                <app-tiempo-evento class="cal-plan-tiempo" [lat]="ev.lat" [lng]="ev.lng" [inicio]="ev.starts_at" [compacto]="true"></app-tiempo-evento>
+              }
+            </a>
+          </li>
+        }
+      </ul>
+    } @else {
+      <p class="texto-suave">No hay planes este día. Toca otro día del calendario.</p>
+    }
+  </div>
+</section>

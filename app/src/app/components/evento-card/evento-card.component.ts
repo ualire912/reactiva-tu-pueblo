@@ -20,6 +20,7 @@ import {
   walkOutline,
 } from 'ionicons/icons';
 import { SupabaseService } from '../../core/supabase.service';
+import { TiempoEventoComponent } from '../tiempo-evento/tiempo-evento.component';
 import { EventoVista } from '../../core/eventos.service';
 import {
   estiloCategoria,
@@ -39,7 +40,7 @@ import {
 @Component({
   selector: 'app-evento-card',
   standalone: true,
-  imports: [RouterModule, IonIcon],
+  imports: [RouterModule, IonIcon, TiempoEventoComponent],
   templateUrl: './evento-card.component.html',
 })
 export class EventoCardComponent {

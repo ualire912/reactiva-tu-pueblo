@@ -1,0 +1,534 @@
+/* ==========================================================================
+   Año en las fechas, tiempo, mapa, calendario, portada con fotos y panel
+   ========================================================================== */
+
+/* ---------- Año bajo el mes en las fechas de las tarjetas, ficha, mapa y perfil */
+.ev-fecha-anio {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--rp-tinta-suave);
+  line-height: 1.1;
+}
+
+/* ---------- Tiempo previsto */
+app-tiempo-evento {
+  display: block;
+}
+.ev-tiempo {
+  margin: 2px 0 6px;
+}
+.tiempo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #eef4fb;
+  border: 1px solid #d6e4f3;
+  color: #1f3f5f;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  white-space: nowrap;
+
+  strong {
+    font-weight: 700;
+  }
+}
+.tiempo-emoji {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.tiempo-texto {
+  color: #2a5a86;
+}
+.aviso-lluvia {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #b45309; /* naranja oscuro: legible sobre blanco */
+}
+.tiempo-lejos {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--rp-tinta-suave);
+}
+
+/* ---------- Mapa: iconos de actividad en los pines y nombres de los pueblos */
+.custom-pin ion-icon {
+  display: block;
+  font-size: 17px;
+  color: #ffffff;
+}
+.leaflet-tooltip.tooltip-pueblo {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--rp-tinta);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+
+  &::before {
+    display: none;
+  }
+}
+
+/* ---------- Agenda: elegir tarjetas o calendario */
+.selector-agenda {
+  display: flex;
+  gap: 6px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 8px 16px;
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 6px 16px;
+    border: 1.5px solid var(--rp-borde-campo);
+    border-radius: 999px;
+    background: #ffffff;
+    color: var(--rp-tinta);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+
+    &.on {
+      background: var(--rp-principal);
+      border-color: var(--rp-principal);
+      color: #ffffff;
+    }
+    &:focus-visible {
+      outline: 3px solid var(--rp-foco);
+      outline-offset: 2px;
+    }
+  }
+}
+
+/* ---------- Calendario */
+.calendario {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 12px 16px 32px;
+}
+.cal-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cal-titulo {
+  flex: 1;
+  text-align: center;
+
+  h2 {
+    margin: 0;
+    font-family: var(--rp-fuente-titulos);
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+  small {
+    color: var(--rp-tinta-suave);
+    font-weight: 600;
+  }
+}
+.cal-flecha,
+.cal-hoy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1.5px solid var(--rp-borde-campo);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--rp-tinta);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+
+  ion-icon {
+    font-size: 20px;
+  }
+  &:hover {
+    background: var(--rp-principal-claro);
+  }
+  &:focus-visible {
+    outline: 3px solid var(--rp-foco);
+    outline-offset: 2px;
+  }
+}
+.cal-rejilla {
+  border: 1px solid var(--rp-borde);
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.cal-nombres {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--rp-arena);
+  border-bottom: 1px solid var(--rp-borde);
+}
+.cal-nombre {
+  padding: 8px 4px;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--rp-tinta-suave);
+}
+.cal-dias {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.cal-dia {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  min-height: 112px;
+  padding: 6px;
+  border: none;
+  border-right: 1px solid var(--rp-borde);
+  border-bottom: 1px solid var(--rp-borde);
+  background: #ffffff;
+  color: var(--rp-tinta);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:nth-child(7n) {
+    border-right: none;
+  }
+  &:hover {
+    background: var(--rp-crema);
+  }
+  &.fuera {
+    background: #fcfaf6;
+    .cal-numero {
+      color: #b3aca2;
+    }
+  }
+  &.pasado .cal-numero {
+    color: #9aa3a1;
+  }
+  &.hoy .cal-numero {
+    background: var(--rp-sol);
+    color: #3a2a05;
+  }
+  &.seleccionado {
+    background: var(--rp-principal-claro);
+    box-shadow: inset 0 0 0 2px var(--rp-principal);
+  }
+  &:focus-visible {
+    outline: 3px solid var(--rp-foco);
+    outline-offset: -3px;
+    z-index: 1;
+  }
+}
+.cal-numero {
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.cal-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cal-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.3;
+
+  ion-icon {
+    flex: none;
+    font-size: 12px;
+  }
+  &.apagado {
+    opacity: 0.55;
+  }
+}
+.cal-chip-texto {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-mas {
+  padding-left: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--rp-tinta-suave);
+}
+.cal-detalle {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--rp-borde);
+  border-radius: 12px;
+  background: #ffffff;
+
+  h3 {
+    margin: 0 0 10px;
+    font-family: var(--rp-fuente-titulos);
+    font-size: 1.15rem;
+  }
+  .texto-suave {
+    margin: 0;
+  }
+}
+.cal-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cal-plan {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--rp-borde);
+  border-left: 4px solid var(--pueblo, var(--rp-principal));
+  border-radius: 10px;
+  color: var(--rp-tinta);
+  text-decoration: none;
+  transition: box-shadow 0.15s, border-color 0.15s;
+
+  &:hover {
+    box-shadow: 0 2px 10px rgba(36, 49, 47, 0.08);
+  }
+  &:focus-visible {
+    outline: 3px solid var(--rp-foco);
+    outline-offset: 2px;
+  }
+  &.apagado {
+    opacity: 0.7;
+  }
+}
+.cal-plan-icono {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  font-size: 20px;
+}
+.cal-plan-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+
+  strong {
+    font-size: 1rem;
+  }
+}
+.cal-plan-linea {
+  font-size: 0.88rem;
+  color: var(--rp-tinta-suave);
+}
+.cal-estado {
+  color: var(--rp-rojo-finalizado);
+  font-weight: 700;
+}
+.cal-plan-tiempo {
+  flex: none;
+  text-align: right;
+}
+
+@media (max-width: 700px) {
+  /* En el móvil, los días solo muestran puntos de color */
+  .cal-dia {
+    min-height: 56px;
+    align-items: center;
+    padding: 4px 2px;
+  }
+  .cal-numero {
+    align-self: center;
+  }
+  .cal-chips {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2px;
+  }
+  .cal-chip {
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    border-radius: 50%;
+    background: currentColor !important;
+
+    ion-icon,
+    .cal-chip-texto {
+      display: none;
+    }
+  }
+  .cal-mas {
+    display: none;
+  }
+  .cal-hoy {
+    padding: 0 10px;
+  }
+  .cal-titulo h2 {
+    font-size: 1.2rem;
+  }
+  .cal-plan {
+    flex-wrap: wrap;
+  }
+}
+
+/* ---------- Portada con fotos de los pueblos */
+.portada.con-fotos {
+  background: #1b4844;
+}
+.portada-fotos {
+  position: absolute;
+  inset: 0;
+}
+.portada-foto {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transform: scale(1.06);
+  transition: opacity 1.4s ease, transform 7s ease-out;
+
+  &.activa {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.portada-velo {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, rgba(20, 45, 42, 0.86) 0%, rgba(20, 45, 42, 0.6) 45%, rgba(20, 45, 42, 0.15) 100%);
+}
+.portada.con-fotos .portada-contenido h1,
+.portada.con-fotos .portada-contenido p {
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+}
+.portada-pie {
+  position: absolute;
+  z-index: 1;
+  right: 16px;
+  bottom: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  color: #ffffff;
+}
+.portada-pueblo {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  font-weight: 700;
+  font-size: 0.92rem;
+
+  small {
+    font-weight: 500;
+    font-size: 0.7rem;
+    opacity: 0.85;
+  }
+}
+.portada-controles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.portada-punto {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+
+  &.on {
+    background: #ffffff;
+  }
+  &:focus-visible {
+    outline: 3px solid var(--rp-sol);
+    outline-offset: 2px;
+  }
+}
+.portada-pausa {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 4px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 3px solid var(--rp-sol);
+    outline-offset: 2px;
+  }
+}
+@media (max-width: 700px) {
+  .portada-pie {
+    bottom: 92px;
+    right: 12px;
+  }
+  .portada-pueblo small {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .portada-foto {
+    transition: opacity 0.2s;
+    transform: none;
+  }
+}
+
+/* ---------- Panel: paginación de los planes publicados */
+.paginacion-panel {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--rp-borde);
+  border-radius: 12px;
+  background: #ffffff;
+}

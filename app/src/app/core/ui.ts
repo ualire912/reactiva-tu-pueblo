@@ -167,6 +167,7 @@ const fmtLargo = new Intl.DateTimeFormat('es-ES', {
   weekday: 'long',
   day: 'numeric',
   month: 'long',
+  year: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
 });
@@ -175,6 +176,7 @@ const fmtCorto = new Intl.DateTimeFormat('es-ES', {
   weekday: 'short',
   day: 'numeric',
   month: 'short',
+  year: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
 });
@@ -182,6 +184,7 @@ const fmtHora = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, hour: '2-digi
 const fmtDiaSemana = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, weekday: 'short' });
 const fmtDia = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, day: 'numeric' });
 const fmtMes = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, month: 'short' });
+const fmtAnio = new Intl.DateTimeFormat('es-ES', { timeZone: ZONA, year: 'numeric' });
 const fmtYmd = new Intl.DateTimeFormat('en-CA', { timeZone: ZONA, year: 'numeric', month: '2-digit', day: '2-digit' });
 const fmtDow = new Intl.DateTimeFormat('en-US', { timeZone: ZONA, weekday: 'short' });
 
@@ -199,13 +202,14 @@ export function fechaCorta(iso: string | null | undefined): string {
   const d = valida(iso);
   return d ? fmtCorto.format(d) : '';
 }
-export function partesFecha(iso: string | null | undefined): { dia: string; num: string; mes: string; hora: string } {
+export function partesFecha(iso: string | null | undefined): { dia: string; num: string; mes: string; anio: string; hora: string } {
   const d = valida(iso);
-  if (!d) return { dia: '', num: '', mes: '', hora: '' };
+  if (!d) return { dia: '', num: '', mes: '', anio: '', hora: '' };
   return {
     dia: fmtDiaSemana.format(d).replace('.', ''),
     num: fmtDia.format(d),
     mes: fmtMes.format(d).replace('.', ''),
+    anio: fmtAnio.format(d),
     hora: fmtHora.format(d),
   };
 }

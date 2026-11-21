@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { Router, RouterModule } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { IonContent, IonHeader, IonToolbar, IonTitle, IonButtons, IonButton, IonIcon } from '@ionic/angular';
@@ -20,6 +20,9 @@ import {
   search,
   cameraOutline,
   createOutline,
+  location,
+  pause,
+  play,
 } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
 import { EventoVista, EventosService, FILTROS_INICIALES, filtrarEventos } from '../../../core/eventos.service';
@@ -40,7 +43,41 @@ interface Acceso {
   standalone: true,
   imports: [RouterModule, IonContent, IonHeader, IonToolbar, IonTitle, IonButtons, IonButton, IonIcon, EventoCardComponent],
 })
-export class InicioPage implements OnInit {
+export class InicioPage implements OnInit, OnDestroy {
+  // ---------- Portada: fotos de los pueblos que van rotando ----------
+  readonly fotos = FOTOS_PUEBLOS;
+  fotoActual = signal(0);
+  fotosPausadas = signal(prefiereSinMovimiento());
+  private temporizadorFotos?: ReturnType<typeof setInterval>;
+
+  private arrancarFotos() {
+    clearInterval(this.temporizadorFotos);
+    if (this.fotosPausadas()) return;
+    this.temporizadorFotos = setInterval(() => this.fotoActual.set((this.fotoActual() + 1) % this.fotos.length), 6000);
+  }
+
+  alternarFotos() {
+    this.fotosPausadas.set(!this.fotosPausadas());
+    this.arrancarFotos();
+  }
+
+  irAFoto(i: number) {
+    this.fotoActual.set(i);
+    this.arrancarFotos(); // vuelve a contar desde cero
+  }
+
+  ionViewDidEnter() {
+    this.arrancarFotos();
+  }
+
+  ionViewWillLeave() {
+    clearInterval(this.temporizadorFotos);
+  }
+
+  ngOnDestroy() {
+    clearInterval(this.temporizadorFotos);
+  }
+
   sb = inject(SupabaseService);
   private eventosSvc = inject(EventosService);
   private router = inject(Router);
@@ -121,6 +158,9 @@ export class InicioPage implements OnInit {
       search,
       cameraOutline,
       createOutline,
+      location,
+      pause,
+      play,
     });
   }
 
@@ -152,5 +192,22 @@ export class InicioPage implements OnInit {
   /** Abre la agenda con un filtro ya aplicado. */
   irAgenda(params: Record<string, string | number>) {
     this.router.navigate(['/agenda'], { queryParams: { ...params, v: Date.now() } });
+  }
+}
+
+/** Fotos de la portada (Wikimedia Commons; los créditos se muestran sobre cada foto). */
+const FOTOS_PUEBLOS = [
+  { pueblo: 'Lucainena de las Torres', src: 'assets/pueblos/lucainena-de-las-torres.jpg', credito: 'Foto: Inma Gasteiz · CC BY-SA 4.0' },
+  { pueblo: 'Velefique', src: 'assets/pueblos/velefique.jpg', credito: 'Foto: Ziegler175 · CC BY-SA 4.0' },
+  { pueblo: 'Senés', src: 'assets/pueblos/senes.jpg', credito: 'Foto: Julen Iturbe-Ormaetxe · CC BY-SA 2.0' },
+  { pueblo: 'Uleila del Campo', src: 'assets/pueblos/uleila-del-campo.jpg', credito: 'Foto: Hector Garcia · CC BY-SA 2.0' },
+  { pueblo: 'Tahal', src: 'assets/pueblos/tahal.jpg', credito: 'Foto: Ziegler175 · CC BY-SA 4.0' },
+];
+
+function prefiereSinMovimiento(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
   }
 }
