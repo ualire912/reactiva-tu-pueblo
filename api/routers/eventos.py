@@ -12,7 +12,8 @@ from puentes import avisar
 router = APIRouter(tags=["eventos"])
 
 # Estados que puede ver cualquiera (igual que la regla RLS de la BD)
-VISIBLES = {"abierto", "pospuesto", "cancelado", "finalizado"}
+VISIBLES = {"abierto", "completo", "inscripcion_cerrada", "en_curso",
+            "pospuesto", "cancelado", "finalizado"}
 
 
 @router.get("/eventos/{event_id}.ics")

@@ -72,7 +72,7 @@ def generar_ics(evento: dict) -> str:
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
 
     lugar = ", ".join(x for x in [evento.get("location_name"), evento.get("municipio")] if x)
-    estado = "CANCELLED" if evento.get("status") == "cancelado" else "CONFIRMED"
+    estado = {"cancelado": "CANCELLED", "pospuesto": "TENTATIVE"}.get(evento.get("status"), "CONFIRMED")
 
     lineas = [
         "BEGIN:VCALENDAR",

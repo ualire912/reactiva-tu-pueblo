@@ -24,7 +24,10 @@ from datetime import datetime, timedelta, timezone
 
 from db import sb
 
-PASSWORD = os.environ.get("DEMO_PASSWORD") or "Reactiva-Demo-2026"
+PASSWORD = os.environ.get("DEMO_PASSWORD", "")
+if len(PASSWORD) < 12:
+    # El repo es público: una contraseña por defecto dejaría entrar a cualquiera como moderador
+    raise SystemExit("Pon DEMO_PASSWORD (mínimo 12 caracteres) en api/.env y vuelve a ejecutar.")
 FB_PAGE = os.environ.get("DEMO_FACEBOOK_PAGE_URL") or "https://www.facebook.com/asociacionculturallucainena"
 AHORA = datetime.now(timezone.utc)
 
@@ -54,18 +57,22 @@ def evento_pasado(titulo, autor, municipio_id, dias_atras, categoria, inscritos)
     ya = sb.table("eventos").select("id").eq("title", titulo).eq("created_by", autor).execute().data
     if ya:
         return ya[0]["id"]
-    inicio = (AHORA - timedelta(days=dias_atras)).replace(hour=9, minute=0, second=0, microsecond=0)
+    # La BD no deja apuntarse a un evento pasado, así que: se crea en el futuro,
+    # se inscribe a la gente y después se mueve al pasado (la BD lo pone 'finalizado' sola).
+    futuro = AHORA + timedelta(days=1)
     ev = sb.table("eventos").insert({
         "title": titulo, "created_by": autor, "municipio_id": municipio_id,
-        "category": categoria, "starts_at": inicio.isoformat(), "duration_minutes": 180,
+        "category": categoria, "starts_at": futuro.isoformat(), "duration_minutes": 180,
         "location_name": "Plaza del pueblo", "description": "Plan de demo.",
-        "status": "abierto",  # abierto para poder inscribir; luego se finaliza
-        "origen": "web",
+        "status": "abierto", "origen": "web",
     }).execute().data[0]
     for uid in inscritos:
         sb.table("inscripciones").insert({"user_id": uid, "event_id": ev["id"]}).execute()
     sb.table("inscripciones").update({"asistio": True}).eq("event_id", ev["id"]).execute()
-    sb.table("eventos").update({"status": "finalizado"}).eq("id", ev["id"]).execute()
+    inicio = (AHORA - timedelta(days=dias_atras)).replace(hour=9, minute=0, second=0, microsecond=0)
+    sb.table("eventos").update({
+        "starts_at": inicio.isoformat(), "ends_at": (inicio + timedelta(hours=3)).isoformat(),
+    }).eq("id", ev["id"]).execute()
     return ev["id"]
 
 
@@ -101,7 +108,9 @@ def main():
     print("Historial de Carmen (camino a Publicadora):")
     e1 = evento_pasado("Bici por la Vía Verde (octubre)", carmen, luc, 20, "deporte", [ana, pedro, luis])
     e2 = evento_pasado("Paseo a la Torre de los Alcores", carmen, luc, 10, "senderismo", [rosa, luis, ana])
-    e3 = evento_pasado("Ruta del Cerro al atardecer", carmen, luc, 1, "senderismo", [ana, pedro])
+    # Hace 3 días: fuera de la petición automática de reseñas (últimas 24 h),
+    # así en la demo se pide a mano cuando toca.
+    e3 = evento_pasado("Ruta del Cerro al atardecer", carmen, luc, 3, "senderismo", [ana, pedro])
     resena(e1, ana, 5, "¡Genial!")
     resena(e1, pedro, 4, "Muy bien organizado")
     resena(e2, rosa, 5, "Repetiré")
@@ -111,7 +120,7 @@ def main():
     print(f"  Evento para la demo de reseñas: {e3}")
     print(f"    -> POST /resenas/pedir/{e3}  y que Ana (o Pedro) ponga 4-5 estrellas")
 
-    print("\nListo. Contraseña de todas las cuentas:", "(la de DEMO_PASSWORD)" if os.environ.get("DEMO_PASSWORD") else PASSWORD)
+    print("\nListo. Contraseña de todas las cuentas: la de DEMO_PASSWORD (no la compartas en el grupo).")
     print("Moderador:", moderador)
 
 
