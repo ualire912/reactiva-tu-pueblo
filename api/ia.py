@@ -626,6 +626,14 @@ def clasificar_spam(text: str | None, entidad: dict | None = None) -> dict:
 # ══════════════════════════════════════════════════════════════
 INTENCIONES = ["buscar", "proponer", "apuntarse", "pregunta", "otro"]
 _DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+# Palabras que delatan cada categoría (las usan las reglas y el RAG)
+SINONIMOS_CATEGORIA = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
+                       "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
+                       "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
+                       "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
+                       "fiestas": ["fiesta", "verbena", "feria", "baile"],
+                       "taller": ["taller", "curso", "manualidad", "esparto"],
+                       "voluntariado": ["voluntari", "ayudar", "solidari"]}
 
 
 def _fecha_de_texto(n: str) -> str | None:
@@ -651,13 +659,7 @@ def _reglas_mensaje(text: str) -> dict:
     p = _pueblo_en_texto(text)
     if p:
         filtros["municipio"] = p
-    sinonimos = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
-                 "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
-                 "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
-                 "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
-                 "fiestas": ["fiesta", "verbena", "feria", "baile"],
-                 "taller": ["taller", "curso", "manualidad", "esparto"],
-                 "voluntariado": ["voluntari", "ayudar", "solidari"]}
+    sinonimos = SINONIMOS_CATEGORIA
     for cat, palabras in sinonimos.items():
         if any(w in n for w in palabras):
             filtros["categoria"] = cat

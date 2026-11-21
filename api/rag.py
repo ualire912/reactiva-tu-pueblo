@@ -19,6 +19,7 @@ Plan B:    sin embeddings -> filtros + búsqueda por palabras (ILIKE). Nunca se 
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import logging
@@ -171,6 +172,41 @@ _PASADO = re.compile(r"\b(hubo|ha habido|habia|pasad[oa]s?|se hizo|se hicieron|s
                      r"que ya han|que se han hecho|ultimos eventos)\b")
 
 
+_NUM_PALABRA = {"un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6}
+_FINALIZADOS = re.compile(r"\b(finalizad|terminad|acabad|celebrad)[oa]s?\b")
+
+# Palabras que no dicen QUÉ evento se busca (solo cuándo, dónde o que se quiere una lista).
+# Si la pregunta solo tiene estas, se lista por fecha en vez de por parecido.
+_VACIAS = set("""
+dame dime muestrame ensename ensena lista listame quiero querria ver saber busca buscame
+hay habia hubo han ha que cuales cual cuantos cuantas todos todas los las el la lo un una unos
+unas de del al a en para por con y o mi me mis se ya algun alguno alguna
+evento eventos plan planes actividad actividades cosa cosas algo hacer
+finalizado finalizados finalizadas terminado terminados terminadas pasado pasados pasadas
+celebrado celebrados celebradas anteriores antiguo antiguos acabado acabados acabadas hizo
+hicieron celebro celebraron fue fueron proximo proximos proxima proximas siguiente
+siguientes nuevos futuro futuros hoy manana semana semanas mes meses ano dia dias finde fin
+viene este esta esto dentro durante ultimos ultimas uno dos tres cuatro cinco seis pueblo
+pueblos zona favor porfa lunes martes miercoles jueves viernes sabado domingo tarde noche
+""".split())
+
+
+def _es_generica(n: str) -> bool:
+    """¿La pregunta solo pide una lista (con filtros) sin decir de qué va el evento?"""
+    pueblos = {t for p in ia.PUEBLOS for t in ia._norm(p).split()}
+    raices = [r for lista in ia.SINONIMOS_CATEGORIA.values() for r in lista] + \
+             [c for c in ia.CATEGORIAS]
+    for tok in re.findall(r"[a-z0-9]+", n):
+        if tok in _VACIAS or tok in pueblos or tok.isdigit():
+            continue
+        if any(tok.startswith(r) for r in raices):
+            continue
+        if len(tok) >= 4 and difflib.get_close_matches(tok, _VACIAS, n=1, cutoff=0.75):
+            continue  # errata: "evetnos", "finalizdos"...
+        return False
+    return True
+
+
 def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
     """Fechas relativas -> (desde, hasta). Texto ya normalizado (sin tildes, minúsculas)."""
     ahora = datetime.now(ia.TZ)
@@ -179,6 +215,15 @@ def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
     if m:
         a = int(m.group(1))
         return hoy.replace(year=a, month=1, day=1), hoy.replace(year=a + 1, month=1, day=1)
+    # "dentro de dos semanas", "en las próximas 2 semanas", "los próximos 10 días", "últimos 3 meses"
+    m = re.search(r"\b(dentro de|en|durante|proxim[oa]s|siguientes|ultim[oa]s)\s+(?:las\s+|los\s+)?"
+                  r"(\d+|una?|dos|tres|cuatro|cinco|seis)\s+(dias?|semanas?|mes(?:es)?)\b", n)
+    if m:
+        cuantos = int(m.group(2)) if m.group(2).isdigit() else _NUM_PALABRA[m.group(2)]
+        dias = cuantos * {"d": 1, "s": 7, "m": 30}[m.group(3)[0]]
+        if m.group(1).startswith("ultim"):
+            return ahora - timedelta(days=dias), ahora
+        return ahora, ahora + timedelta(days=dias)
     if "ano pasado" in n:
         return hoy.replace(year=hoy.year - 1, month=1, day=1), hoy.replace(month=1, day=1)
     if "este ano" in n:
@@ -189,7 +234,8 @@ def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
     if "este mes" in n:
         sig = (hoy.replace(day=28) + timedelta(days=4)).replace(day=1)
         return hoy, sig
-    if "proxima semana" in n or "semana que viene" in n:
+    # "semana que viene" aguantando erratas: "semana uqe viene", "semana q viene"...
+    if re.search(r"proxima semana|semana proxima|semana entrante|semana\s+\S{1,4}\s+viene", n):
         ini = hoy + timedelta(days=7 - hoy.weekday())
         return ini, ini + timedelta(days=7)
     if "esta semana" in n:
@@ -228,9 +274,15 @@ def extraer_filtros(pregunta: str) -> dict:
         "municipio": base.get("municipio"),
         "desde": desde, "hasta": hasta, "palabras": None,
         "pasado": bool(_PASADO.search(n)),
+        "solo_finalizados": bool(_FINALIZADOS.search(n)),
+        "generica": _es_generica(n),
         "con_ia": False,
     }
-    hay_algo = filtros["categoria"] or filtros["municipio"] or desde or filtros["tipo"] == "general"
+    if filtros["solo_finalizados"]:
+        filtros["pasado"] = True
+    # Una lista genérica ("dame los eventos finalizados") no necesita IA para entenderse
+    hay_algo = (filtros["categoria"] or filtros["municipio"] or desde or filtros["tipo"] == "general"
+                or filtros["generica"])
     if not hay_algo and len(n.split()) >= 4:
         datos = ia._json(ia._llamar(_PROMPT_FILTROS.format(
             hoy=ia._hoy_texto(), categorias=ia.CATEGORIAS, pueblos=ia.PUEBLOS,
@@ -251,9 +303,13 @@ def extraer_filtros(pregunta: str) -> dict:
             if datos.get("palabras"):
                 filtros["palabras"] = str(datos["palabras"])[:40]
             filtros["pasado"] = bool(datos.get("pasado")) or filtros["pasado"]
-    # Sin fechas y sin hablar del pasado -> solo eventos de hoy en adelante
-    if filtros["tipo"] == "eventos" and not filtros["desde"] and not filtros["pasado"]:
-        filtros["desde"] = datetime.now(ia.TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Sin hablar del pasado -> solo eventos de AHORA en adelante (no los que ya
+    # terminaron esta mañana), también si el rango empezaba antes ("esta semana")
+    if filtros["tipo"] == "eventos" and not filtros["pasado"]:
+        ahora = datetime.now(ia.TZ)
+        if not filtros["desde"] or (filtros["desde"] < ahora
+                                    and (not filtros["hasta"] or filtros["hasta"] > ahora)):
+            filtros["desde"] = ahora
     # Hablando del pasado -> nunca eventos futuros
     if filtros["tipo"] == "eventos" and filtros["pasado"]:
         ahora = datetime.now(ia.TZ)
@@ -289,6 +345,66 @@ def buscar_eventos(pregunta: str, filtros: dict, limite: int = 8) -> list[dict]:
     return sb.rpc("buscar_eventos_similares", params).execute().data or []
 
 
+_ESTADOS_VISIBLES = ["abierto", "completo", "inscripcion_cerrada", "en_curso",
+                     "finalizado", "pospuesto", "cancelado"]
+
+
+def buscar_por_fecha(filtros: dict, limite: int = 8) -> list[dict]:
+    """Lista genérica: mismos filtros que buscar_eventos pero ordenada por fecha
+    (lo más reciente primero si se pregunta por el pasado). Mismo formato de filas."""
+    q = (sb.table("eventos")
+         .select("id,title,category,starts_at,location_name,price,max_capacity,confirmed_count,"
+                 "status,description,municipios(nombre)", count="exact"))
+    if filtros.get("solo_finalizados"):
+        q = q.eq("status", "finalizado")
+    elif filtros.get("pasado"):
+        q = q.in_("status", _ESTADOS_VISIBLES)
+    else:  # futuro: lo que todavía se puede hacer
+        q = q.in_("status", ["abierto", "completo", "inscripcion_cerrada", "en_curso", "pospuesto"])
+    if filtros.get("categoria"):
+        q = q.eq("category", filtros["categoria"])
+    mid = _municipio_id(filtros.get("municipio"))
+    if mid:
+        q = q.eq("municipio_id", mid)
+    if filtros.get("desde"):
+        q = q.gte("starts_at", filtros["desde"].isoformat())
+    if filtros.get("hasta"):
+        q = q.lt("starts_at", filtros["hasta"].isoformat())
+    r = q.order("starts_at", desc=bool(filtros.get("pasado"))).limit(limite).execute()
+    total = r.count if r.count is not None else len(r.data or [])
+    return [{"event_id": e["id"], "title": e["title"], "category": e["category"],
+             "starts_at": e["starts_at"], "municipio": (e.get("municipios") or {}).get("nombre"),
+             "location_name": e.get("location_name"), "price": e.get("price"),
+             "max_capacity": e.get("max_capacity"), "confirmed_count": e.get("confirmed_count"),
+             "status": e["status"], "description": (e.get("description") or "")[:300],
+             "similitud": 0, "total_filtrados": total} for e in (r.data or [])]
+
+
+def _fecha_corta(d: datetime) -> str:
+    return f"{d.day} de {ia._MESES_ES[d.month - 1]}" + (f" de {d.year}" if d.year != datetime.now(ia.TZ).year else "")
+
+
+def describir_filtros(f: dict) -> str:
+    """'de deporte en Senés entre el 1 de octubre y el 31 de octubre' (para cabeceras)."""
+    partes = []
+    if f.get("categoria"):
+        nombres = {"gastronomia": "gastronomía", "otro": "otro tipo"}
+        partes.append(f"de {nombres.get(f['categoria'], f['categoria'])}")
+    if f.get("municipio"):
+        partes.append(f"en {f['municipio']}")
+    desde, hasta = f.get("desde"), f.get("hasta")
+    if desde and hasta:
+        fin = hasta - timedelta(seconds=1)
+        empieza_ahora = abs((desde - datetime.now(ia.TZ)).total_seconds()) < 300
+        if desde.date() == fin.date():
+            partes.append(f"el {_fecha_corta(desde)}")
+        elif empieza_ahora:
+            partes.append(f"de aquí al {_fecha_corta(fin)}")
+        else:
+            partes.append(f"entre el {_fecha_corta(desde)} y el {_fecha_corta(fin)}")
+    return " ".join(partes)
+
+
 def _fecha_con_anio(iso) -> str:
     try:
         d = datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(ia.TZ)
@@ -317,8 +433,8 @@ Si los datos no bastan para responder, dilo. No inventes.
 
 PREGUNTA: {pregunta}
 """
-_LISTAR = re.compile(r"^(que|hay|cuales|dime|ensena|muestrame|busca|algo|planes|eventos|alguna|algun|"
-                     r"lista|listame|quiero ver|ver)")
+_LISTAR = re.compile(r"^(que|hay|cuales|dime|dame|ensena|ensename|muestrame|busca|buscame|algo|planes|"
+                     r"eventos|alguna|algun|lista|listame|quiero ver|quiero saber|ver)")
 
 
 def preguntar_agenda(pregunta: str) -> dict:
@@ -350,30 +466,49 @@ def preguntar_agenda(pregunta: str) -> dict:
                     "eventos": [], "tipo": "general"}
 
         # ── Eventos: fase 2
-        eventos = buscar_eventos(pregunta, f)
-        if not eventos and f.get("con_ia") and (f.get("categoria") or f.get("municipio")):
-            # La IA eligió filtros demasiado estrechos ("algo con mis nietos" -> "otro"):
-            # se repite solo con las fechas y que decida el parecido (embedding)
-            eventos = buscar_eventos(pregunta, {**f, "categoria": None, "municipio": None})
+        if f.get("generica"):
+            # "dame los eventos finalizados", "eventos de Senés dentro de dos semanas":
+            # no hay nada que comparar por parecido -> por fecha (lo más cercano a hoy primero)
+            eventos = buscar_por_fecha(f)
+        else:
+            eventos = buscar_eventos(pregunta, f)
+            if not eventos and f.get("con_ia") and (f.get("categoria") or f.get("municipio")):
+                # La IA eligió filtros demasiado estrechos ("algo con mis nietos" -> "otro"):
+                # se repite solo con las fechas y que decida el parecido (embedding)
+                eventos = buscar_eventos(pregunta, {**f, "categoria": None, "municipio": None})
+            if f.get("solo_finalizados"):
+                eventos = [e for e in eventos if e.get("status") == "finalizado"]
         total = eventos[0]["total_filtrados"] if eventos else 0
         salida = [{"id": e["event_id"], "title": e["title"], "starts_at": e["starts_at"],
                    "municipio": e["municipio"], "status": e["status"]} for e in eventos]
+        que = describir_filtros(f)
         if not eventos:
-            return {"respuesta": "No he encontrado eventos que encajen con lo que buscas.",
-                    "eventos": [], "tipo": "eventos"}
+            texto = (f"No hubo eventos {que}." if f["pasado"] and que else
+                     f"No he encontrado eventos {que}." if que else
+                     "No he encontrado eventos que encajen con lo que buscas.")
+            return {"respuesta": texto, "cabecera": texto, "eventos": [], "tipo": "eventos", "total": 0}
 
         n = re.sub(r"^[¿¡\s]+", "", ia._norm(pregunta))
-        if _LISTAR.match(n):  # "¿qué hay…?" / "¿qué eventos hubo…?" -> lista directa, 0 tokens
+        if f.get("generica") or _LISTAR.match(n):  # lista directa, 0 tokens
             if f["pasado"]:
                 eventos.sort(key=lambda e: e.get("starts_at") or "", reverse=True)
-                cab = (f"Se celebraron {total} eventos así. Los más relacionados:" if total > len(eventos[:6])
-                       else "Estos son los que se celebraron:")
+                nombre = "eventos ya celebrados" if f.get("solo_finalizados") else "eventos"
+                cab = (f"Hay {total} {nombre} {que}".rstrip() + ". Los más recientes:" if f.get("generica")
+                       else f"Se celebraron {total} eventos así. Los más relacionados:")
+                if total <= 6:
+                    cab = (f"Estos son los {nombre} {que}".rstrip() + f" ({total}):")
                 lineas = [_linea(e, con_anio=True).replace(" (ya celebrado)", "") for e in eventos[:6]]
             else:
-                cab = "Esto es lo que he encontrado:" if total <= len(eventos) else \
-                      f"Hay {total} planes; estos son los que mejor encajan:"
-                lineas = [_linea(e) for e in eventos[:5]]
-            return {"respuesta": cab + "\n" + "\n".join(lineas), "eventos": salida[:6], "tipo": "eventos"}
+                eventos.sort(key=lambda e: e.get("starts_at") or "")
+                if total <= 6:
+                    cab = f"Estos son los planes {que}".rstrip() + f" ({total}):"
+                else:
+                    cab = f"Hay {total} planes {que}".rstrip() + "; estos son los más próximos:"
+                lineas = [_linea(e) for e in eventos[:6]]
+            salida = [{"id": e["event_id"], "title": e["title"], "starts_at": e["starts_at"],
+                       "municipio": e["municipio"], "status": e["status"]} for e in eventos]
+            return {"respuesta": cab + "\n" + "\n".join(lineas), "cabecera": cab,
+                    "eventos": salida[:6], "tipo": "eventos", "total": total}
 
         contexto = (f"HOY ES {ia._hoy_texto()}.\n"
                     f"EVENTOS QUE CUMPLEN LOS FILTROS: {total} en total. "
@@ -385,7 +520,9 @@ def preguntar_agenda(pregunta: str) -> dict:
                            como_json=False)
         if not texto:  # Plan B: lista
             texto = "Esto es lo que he encontrado:\n" + "\n".join(_linea(e) for e in eventos[:5])
-        return {"respuesta": texto.strip()[:1200], "eventos": salida, "tipo": "eventos"}
+        texto = texto.strip()[:1200]
+        return {"respuesta": texto, "cabecera": texto, "eventos": salida, "tipo": "eventos",
+                "total": total}
     except Exception:
         log.exception("preguntar_agenda falló")
         return {"respuesta": "Ahora mismo no puedo buscar. Mira la agenda en la app.",
