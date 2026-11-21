@@ -2025,6 +2025,15 @@ async def _procesar_texto_o_voz(
                 force_audio=es_audio,
             )
     else:
+        # "piscina", "canicas"...: una palabra suelta puede ser lo que busca. Si hay planes
+        # que la contienen, se le enseñan; si no, se le dice que no se ha entendido.
+        rag_mod = _get_rag_module()
+        consulta = texto_reconocido or (texto or "").strip()
+        if rag_mod and hasattr(rag_mod, "palabras_clave") and len(consulta.split()) <= 4:
+            claves = rag_mod.palabras_clave(_norm_txt(consulta))
+            if claves and rag_mod.buscar_por_texto(claves, rag_mod.extraer_filtros(consulta)):
+                await _responder_con_rag(chat_id, perfil=perfil, consulta=consulta, force_audio=es_audio)
+                return
         await _enviar_respuesta(
             chat_id,
             "🤔 Perdona, no te he entendido bien. Prueba a decírmelo de otra forma, por ejemplo: «¿qué hay este finde en Tahal?», o elige una opción:",
@@ -2283,7 +2292,20 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         ingesta_id = data.split(":", 2)[2]
         ESPERANDO_CAMPO.pop(chat_id_int, None)
         sb.table("ingestas").update({"estado": "descartada"}).eq("id", ingesta_id).execute()
-        await send_message(chat_id_int, "🗑️ Propuesta descartada.")
+        if msg_id_int:
+            await edit_message_reply_markup(chat_id_int, msg_id_int, [])
+        await send_message(chat_id_int, "🗑️ Propuesta descartada. Si quieres, propón otra cuando quieras.")
+    elif data.startswith("conf:corr:"):
+        ingesta_id = data.split(":", 2)[2]
+        etiquetas = [("🏷️ Título", "title"), ("📅 Día y hora", "starts_at"), ("🏘️ Pueblo", "municipio"),
+                     ("📍 Lugar", "location_name"), ("💶 Precio", "price"), ("👥 Plazas", "max_capacity")]
+        botones = [[(e, f"cfield:{ingesta_id}:{c}")] for e, c in etiquetas]
+        await send_message(chat_id_int, "✏️ ¿Qué quieres corregir?", buttons=botones)
+    elif data.startswith("cfield:"):
+        _, ingesta_id, campo = data.split(":", 2)
+        if campo in PREGUNTAS_CAMPOS:
+            ESPERANDO_CAMPO[chat_id_int] = {"ingesta_id": ingesta_id, "campo": campo}
+            await send_message(chat_id_int, _pregunta_para_campo(campo))
     elif data.startswith("rate:") and perfil:
         _, event_id, estrellas_str = data.split(":", 2)
         estrellas = max(1, min(5, int(estrellas_str)))
@@ -2326,6 +2348,11 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
             on_conflict="event_id,user_id",
         ).execute()
         sb.table("inscripciones").update({"asistio": True}).eq("id", insc[0]["id"]).execute()
+        try:  # puntos de reputación de quien organizó el evento (y paso a publicador)
+            import reputacion
+            reputacion.recalcular_del_evento(event_id)
+        except Exception as e:
+            print(f"[bot] reputación no recalculada: {e!r}")
         if msg_id_int:  # quitar las estrellas para no valorar dos veces
             await edit_message_reply_markup(chat_id_int, msg_id_int, [])
         if antes:
@@ -2470,58 +2497,91 @@ async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:
 
     chat_id_int = int(chat_id)
     ext = ing.get("extracted") or {}
-    missing = ing.get("missing") or []
+    missing = [str(c) for c in (ing.get("missing") or [])]
+    titulo = ext.get("title") or "Tu plan"
+    voz = chat_id_int in CHATS_CON_VOZ
+    sb.table("ingestas").update({"estado": "esperando_confirmacion"}).eq("id", ingesta_id).execute()
 
-    titulo = ext.get("title") or "Plan detectado"
+    # 1) Faltan datos -> PRIMERO el cuestionario (nada se inventa ni se crea todavía)
+    if missing:
+        sabido = []
+        if ext.get("starts_at") and "starts_at" not in missing:
+            sabido.append(f"📅 {_format_fecha_es(ext.get('starts_at')).replace(' a las ', ' · ')}")
+        if ext.get("municipio") and "municipio" not in missing:
+            sabido.append(f"🏘️ {ext['municipio']}")
+        if ext.get("location_name") and "location_name" not in missing:
+            sabido.append(f"📍 {ext['location_name']}")
+        if ext.get("price") is not None and "price" not in missing:
+            sabido.append(f"💶 {_format_precio_es(ext.get('price'))}")
+        if ext.get("max_capacity") and "max_capacity" not in missing:
+            sabido.append(f"👥 {ext['max_capacity']} plazas")
+        faltan = ", ".join(_NOMBRE_CAMPO.get(c, c) for c in missing)
+        texto = (f"📝 Vamos a preparar tu propuesta: <b>{escape_html(titulo)}</b>"
+                 + (" <i>(título sugerido, luego lo puedes cambiar)</i>" if "title" not in missing else "")
+                 + ("\n\nYa sé:\n" + "\n".join(escape_html(s) for s in sabido) if sabido else "")
+                 + f"\n\nMe falta saber: <b>{escape_html(faltan)}</b>. Te lo pregunto uno a uno "
+                   "(puedes contestar escribiendo o con una nota de voz) 👇")
+        await send_message(chat_id_int, texto, escape=False)
+        primer = missing[0]
+        ESPERANDO_CAMPO[chat_id_int] = {"ingesta_id": ingesta_id, "campo": primer}
+        await send_message(chat_id_int, _pregunta_para_campo(primer))
+        if voz:
+            CHATS_CON_VOZ.discard(chat_id_int)
+            await _enviar_audio(chat_id_int, f"Vamos a preparar tu propuesta: {titulo}. "
+                                             f"Me falta saber: {faltan}. {_pregunta_para_campo(primer)}")
+        return True
+
+    # 2) Ya está todo -> resumen y botón según quién propone
+    publica = _puede_publicar_directo(perfil, ing)
     fecha_es = _format_fecha_es(ext.get("starts_at"))
-    muni = ext.get("municipio") or "Por confirmar"
-    lugar = ext.get("location_name") or "Por confirmar"
+    muni = ext.get("municipio") or "?"
+    lugar = ext.get("location_name") or "?"
     precio_txt = _format_precio_es(ext.get("price"))
     plazas = ext.get("max_capacity")
-    plazas_txt = "Sin límite" if plazas is None else str(plazas)
-
+    plazas_txt = "Sin límite" if plazas is None else f"{plazas} plazas"
     icono = _ICONO_CATEGORIA.get(str(ext.get("category") or ""), ("📌", ""))[0]
     resumen = (
-        f"📝 <b>¿Publico este plan?</b>\n\n"
+        f"📝 <b>Revisa tu propuesta</b>\n\n"
         f"{icono} <b>{escape_html(titulo)}</b>\n"
         f"📅 {escape_html(fecha_es.replace(' a las ', ' · '))}\n"
         f"📍 {escape_html(lugar)} · {escape_html(muni)}\n"
-        f"💶 {escape_html(precio_txt)}   ·   👥 {escape_html(plazas_txt)}"
-        f"{' plazas' if plazas else ''}\n\n"
-        f"<i>Revisa que esté todo bien y pulsa un botón 👇</i>"
+        f"💶 {escape_html(precio_txt)}   ·   👥 {escape_html(plazas_txt)}\n\n"
+        + ("<i>Como eres publicador, se publicará en la agenda al momento.</i>" if publica else
+           "<i>Un moderador la revisará antes de publicarla y te avisaré por aquí.</i>")
     )
     botones: list[list[tuple[str, str]]] = [
-        [
-            ("✅ Sí, publícalo", f"conf:si:{ingesta_id}"),
-            ("❌ No", f"conf:no:{ingesta_id}"),
-        ]
+        [("✅ Sí, publicar" if publica else "📨 Sí, enviar al moderador", f"conf:si:{ingesta_id}")],
+        [("✏️ Corregir algo", f"conf:corr:{ingesta_id}"), ("❌ No, descartar", f"conf:no:{ingesta_id}")],
     ]
-
     image_url = ing.get("image_url") or ext.get("image_url") or ext.get("poster_url")
     if image_url:
         await send_photo(chat_id_int, image_url, caption=resumen, buttons=botones, escape=False)
     else:
         await send_message(chat_id_int, resumen, buttons=botones, escape=False)
-
-    pregunta = ""
-    if missing:
-        primer_campo = str(missing[0])
-        ESPERANDO_CAMPO[chat_id_int] = {"ingesta_id": ingesta_id, "campo": primer_campo}
-        pregunta = _pregunta_para_campo(primer_campo)
-        await send_message(chat_id_int, pregunta)
-
-    if chat_id_int in CHATS_CON_VOZ:  # lo propuso con una nota de voz -> también en audio
+    if voz:
         CHATS_CON_VOZ.discard(chat_id_int)
         await _enviar_audio(
             chat_id_int,
-            f"He entendido este plan: {titulo}, el {_fecha_hablada(ext.get('starts_at'))}, "
-            f"en {lugar}, {muni}. "
-            f"Precio: {precio_txt}. Plazas: {plazas_txt}. "
-            + (pregunta if pregunta else "Si está bien, pulsa «Sí, publícalo»."),
-        )
-
-    sb.table("ingestas").update({"estado": "esperando_confirmacion"}).eq("id", ingesta_id).execute()
+            f"Revisa tu propuesta: {titulo}, el {_fecha_hablada(ext.get('starts_at'))}, en {lugar}, "
+            f"{muni}. Precio: {precio_txt}. Plazas: {plazas_txt}. "
+            + ("Si está bien, pulsa «Sí, publicar»." if publica
+               else "Si está bien, pulsa «Sí, enviar al moderador»."))
     return True
+
+
+_NOMBRE_CAMPO = {"title": "el título", "starts_at": "el día y la hora", "municipio": "el pueblo",
+                 "location_name": "el lugar exacto", "price": "el precio", "max_capacity": "las plazas"}
+
+
+def _puede_publicar_directo(perfil: dict[str, Any] | None, ing: dict[str, Any]) -> bool:
+    """Solo publican sin moderador: publicadores (4 puntos de reputación), moderadores y
+    entidades de confianza (auto_approve). Un usuario normal SIEMPRE pasa por el moderador."""
+    if (perfil or {}).get("rol") in ("publicador", "moderador"):
+        return True
+    if ing.get("entidad_id"):
+        ent = sb.table("entidades").select("auto_approve").eq("id", ing["entidad_id"]).execute().data
+        return bool(ent and ent[0].get("auto_approve"))
+    return False
 
 
 @router.post("/telegram/webhook")

@@ -194,6 +194,38 @@ apuntarme apuntar apunto apuntarnos inscribirme inscribir ir vamos
 """.split())
 
 
+def palabras_clave(n: str) -> list[str]:
+    """Las palabras que dicen QUÉ se busca ("piscina", "canicas"): ni vacías, ni pueblos,
+    ni categorías (esas ya filtran por su lado), ni erratas de palabras vacías."""
+    pueblos = {t for p in ia.PUEBLOS for t in ia._norm(p).split()} | {"lucainena", "uleila"}
+    raices = [r for lista in ia.SINONIMOS_CATEGORIA.values() for r in lista] + list(ia.CATEGORIAS)
+    claves = []
+    for tok in re.findall(r"[a-z0-9]+", n):
+        if len(tok) < 4 or tok in _VACIAS or tok in pueblos or tok.isdigit():
+            continue
+        if any(tok.startswith(r) for r in raices):
+            continue
+        if difflib.get_close_matches(tok, _VACIAS, n=1, cutoff=0.75):
+            continue
+        claves.append(tok)
+    return claves
+
+
+def _contiene(e: dict, claves: list[str]) -> bool:
+    texto = ia._norm(f"{e.get('title') or ''} {e.get('description') or ''}")
+    return any(k[:6] in texto for k in claves)
+
+
+def buscar_por_texto(claves: list[str], filtros: dict, limite: int = 8) -> list[dict]:
+    """Plan B: eventos cuyo título o descripción contiene la palabra (mismos filtros de fecha)."""
+    resultado: dict[str, dict] = {}
+    for k in claves[:3]:
+        for e in buscar_por_fecha({**filtros, "categoria": None}, limite=50):
+            if k[:6] in ia._norm(f"{e.get('title') or ''} {e.get('description') or ''}"):
+                resultado.setdefault(e["event_id"], e)
+    return list(resultado.values())[:limite]
+
+
 def _es_generica(n: str) -> bool:
     """¿La pregunta solo pide una lista (con filtros) sin decir de qué va el evento?"""
     pueblos = {t for p in ia.PUEBLOS for t in ia._norm(p).split()}
@@ -449,6 +481,13 @@ def preguntar_agenda(pregunta: str) -> dict:
     try:
         f = extraer_filtros(pregunta)
 
+        # La IA a veces toma "¿hay algo en la piscina?" por una pregunta sobre la app: si la
+        # palabra concreta sale en algún plan, es una búsqueda de eventos
+        if f["tipo"] == "general" and not _GENERAL.search(ia._norm(pregunta)):
+            claves = palabras_clave(ia._norm(pregunta))
+            if claves and buscar_por_texto(claves, {**f, "desde": datetime.now(ia.TZ)}):
+                f.update({"tipo": "eventos", "desde": f.get("desde") or datetime.now(ia.TZ)})
+
         # ── Conocimiento general de la app
         if f["tipo"] == "general":
             vector = _vector_pregunta(pregunta)
@@ -482,6 +521,16 @@ def preguntar_agenda(pregunta: str) -> dict:
                 eventos = buscar_eventos(pregunta, {**f, "categoria": None, "municipio": None})
             if f.get("solo_finalizados"):
                 eventos = [e for e in eventos if e.get("status") == "finalizado"]
+            # Nombra algo concreto ("piscina", "canicas"): si hay planes que lo contienen,
+            # SOLO esos (antes "¿algo en la piscina?" sacaba todo el deporte, petanca incluida)
+            claves = palabras_clave(ia._norm(pregunta))
+            if claves:
+                con_clave = [e for e in eventos if _contiene(e, claves)] or \
+                            [e for e in buscar_por_texto(claves, f) if _contiene(e, claves)]
+                if con_clave:
+                    eventos = con_clave
+                    for e in eventos:
+                        e["total_filtrados"] = len(eventos)
         total = eventos[0]["total_filtrados"] if eventos else 0
         salida = [{"id": e["event_id"], "title": e["title"], "starts_at": e["starts_at"],
                    "municipio": e["municipio"], "status": e["status"]} for e in eventos]

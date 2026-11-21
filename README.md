@@ -80,7 +80,9 @@ python tests/test_extractor.py                     # 8 carteles de prueba vs tes
 ```
 
 ## Proponer y gestionar planes por Telegram
-Proponer (texto, nota de voz o foto del cartel) → resumen → «Sí, publícalo». **Usuario** → siempre lo revisa un moderador. **Publicador** → se publica solo si su reputación por reseñas es buena y la IA no duda; si no, al moderador. Spam y planes de fuera de la Mancomunidad se rechazan explicando el porqué.
+Proponer (texto, nota de voz o foto del cartel) → **cuestionario** con lo que falte (la IA solo sugiere título, categoría y descripción; nunca inventa día, hora, pueblo, lugar, precio ni plazas) → resumen → **«📨 Sí, enviar al moderador»** (usuario) o **«✅ Sí, publicar»** (publicador/moderador) → feedback y, cuando el moderador decide, aviso por Telegram. La IA revisa SIEMPRE el mensaje: spam, contenido ofensivo y planes de fuera de la Mancomunidad se rechazan explicando el motivo.
+
+**Reputación y paso a Publicador** (`api/reputacion.py`): de cada evento creado se hace la media de sus reseñas (1-2★ → −1 punto, 3★ → 0, 4-5★ → +0,5) y se suman; con **4 puntos** el usuario pasa a Publicador y se le avisa. Para que la BD use la misma fórmula, ejecuta una vez `supabase/migracion_reputacion.sql` en el SQL editor de Supabase (mientras, el servidor la corrige cada 5 minutos).
 `/mis_propuestas` (estado, ✏️ editar fecha/lugar/precio/plazas, ❌ cancelar; se avisa a los apuntados) · `/moderar` (moderadores: ✅ aprobar / 🚫 rechazar con motivo / ✏️ editar; el autor recibe el aviso, también si se decide en el panel web).
 
 **Robustez:** todas las llamadas a Telegram (10 s) y a la IA (15 s) tienen límite de tiempo. Si fallan, el servidor sigue con un plan B sin IA y nunca se queda esperando. Sin IA, los candidatos esperan al moderador en vez de promoverse.

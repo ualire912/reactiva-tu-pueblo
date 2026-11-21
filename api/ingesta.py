@@ -224,9 +224,17 @@ def procesar_ingesta(ingesta_id: str) -> None:
         # 2. Extraer con IA (texto + cartel). Con cartel: cascada de modelos de visión
         #    gratuitos (extractor_vlm); si ninguno responde, el extractor de siempre.
         imagen = descargar_imagen(ing.get("image_url"))
-        extraido = _extraer_con_cartel(texto, imagen, entidad) if imagen else None
+        texto_ia = texto
+        if ing.get("origen") == "telegram":
+            # Un vecino PROPONE un plan: aunque le falten datos (el día, el precio...) es un
+            # evento; lo que falte se le pregunta. Solo no lo es una venta, un aviso, etc.
+            texto_ia = ("(PROPUESTA DE UN VECINO que quiere organizar un plan. Si es un plan o "
+                        "actividad, es_evento=true aunque falten datos: pon null y añádelos a "
+                        "missing. es_evento=false solo si es una venta, un aviso, publicidad o "
+                        "no propone ningún plan.)\n" + texto)
+        extraido = _extraer_con_cartel(texto_ia, imagen, entidad) if imagen else None
         if extraido is None:
-            extraido = ia.extraer_evento(texto, imagen)
+            extraido = ia.extraer_evento(texto_ia, imagen)
 
         # 2a. Había cartel pero la IA no pudo leerlo (Gemini caído/saturado) -> se reintenta luego
         if imagen and extraido.get("confidence", 0) == 0 and extraido.get("es_evento") is None:
@@ -420,21 +428,16 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
     dudoso = bool(faltan_datos or ex.get("dudas") or float(ex.get("confidence") or 0) < 0.7)
 
     # Quién lo publica y con qué estado:
-    #   entidad con auto_approve o moderador -> se publica
-    #   publicador -> se publica si su reputación es buena y no hay dudas; si no, moderador
+    #   entidad con auto_approve, moderador o PUBLICADOR (4 puntos de reputación) -> se publica
     #   usuario normal -> siempre pasa por el moderador
+    #   (en los dos casos la IA ya ha revisado el mensaje: spam, ofensivo, no es un evento...)
     autor_id = ing.get("user_id") or (entidad or {}).get("owner_user_id")
     rol = (perfil(autor_id) or {}).get("rol") if autor_id else None
     motivo_revision = motivo  # por qué lo revisa un moderador (si no se publica)
     if publicar is not None:  # quien llama ya ha decidido (agente, fuente verificada...)
         publica_directo = publicar
-    elif (entidad or {}).get("auto_approve") or rol == "moderador":
+    elif (entidad or {}).get("auto_approve") or rol in ("moderador", "publicador"):
         publica_directo = True
-    elif rol == "publicador":
-        if dudoso:
-            publica_directo, motivo_revision = False, "faltan datos o la IA tiene dudas"
-        else:
-            publica_directo, motivo_revision = publicador_de_confianza(autor_id)
     else:
         publica_directo, motivo_revision = False, "lo propone un usuario: lo revisa un moderador"
 
@@ -483,35 +486,6 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
             log.warning("No se pudo avisar a los moderadores: %r", e)
     return ev
 
-
-def publicador_de_confianza(autor_id: str) -> tuple[bool, str | None]:
-    """¿Un publicador puede publicar sin revisión? Por su reputación (reseñas de sus eventos):
-    reglas de la BD primero (media >= 4, >= 2 eventos valorados, sin incidencias abiertas) y,
-    si no está claro, la IA (ia.revisar_confianza). -> (publicar, motivo si va a revisión)."""
-    try:
-        p = perfil(autor_id) or {}
-        evs = sb.table("eventos").select("id,title,status,description,municipio_id") \
-            .eq("created_by", autor_id).execute().data or []
-        ids = [e["id"] for e in evs]
-        res = sb.table("resenas").select("estrellas,comentario").in_("event_id", ids).execute().data \
-            if ids else []
-        inc = sb.table("incidencias").select("id").in_("event_id", ids).eq("estado", "abierta") \
-            .execute().data if ids else []
-        if inc:
-            return False, "tiene incidencias abiertas en sus eventos"
-        media = sum(r["estrellas"] for r in res) / len(res) if res else 0
-        valorados = len(res)
-        if valorados >= 2 and media >= 4 and float(p.get("reputation_score") or 0) >= 2:
-            return True, None
-        if valorados and media < 3:
-            return False, f"sus eventos tienen una media baja ({media:.1f}★)"
-        veredicto = ia.revisar_confianza(p, evs, res)  # la IA decide en los casos dudosos
-        if veredicto.get("aprobar") and float(veredicto.get("confianza") or 0) >= 0.7:
-            return True, None
-        return False, f"la IA duda: {veredicto.get('motivo')}"
-    except Exception as e:
-        log.warning("publicador_de_confianza falló: %r", e)
-        return False, "no se pudo revisar su reputación"
 
 
 # ══════════════════════════════════════════════════════════════
