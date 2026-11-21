@@ -513,3 +513,11 @@ def ia_cartel(body: PeticionCartel, user=Depends(require_user)):
 @router.get("/ia/consumo")
 def ia_consumo():
     return dict(ia.CONSUMO)
+
+
+# El asistente de la agenda (rag.py) cuelga de este mismo router: así main.py no cambia
+try:
+    from rag import router as _rag_router
+    router.include_router(_rag_router)
+except Exception as _e:  # si falta algo (p. ej. aún no se ejecutó rag.sql), el resto sigue
+    log.warning("Asistente de la agenda (rag) no disponible: %s", _e)

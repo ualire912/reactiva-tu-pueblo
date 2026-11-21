@@ -1,0 +1,410 @@
+"""
+api/rag.py  ·  C1  ·  Asistente que responde preguntas sobre la agenda y la app (embeddings)
+
+Como recomendó el profesor, en DOS FASES para no pasarle miles de eventos al modelo:
+  Fase 1 · FILTRAR: de la pregunta se sacan categoría, pueblo, fechas y palabras clave
+           (primero reglas, gratis; IA solo si las reglas no sacan nada).
+  Fase 2 · BUSCAR: solo entre los eventos filtrados, los más parecidos a la pregunta
+           (embedding de la pregunta vs. embedding de cada evento, en Supabase/pgvector).
+  Luego se responde: lista directa (0 tokens) o, si hace falta razonar ("¿cuántas veces…?"),
+  la IA redacta la respuesta SOLO con esos eventos.
+
+Dos "bases" vectoriales: eventos (tabla eventos_embeddings) y conocimiento general (tabla conocimiento).
+
+Endpoint:  POST /ia/preguntar  {pregunta}  ->  {respuesta, eventos: [...], tipo}
+Funciones: preguntar_agenda(pregunta) -> dict      (la puede usar B2 en el bot)
+           indexar_eventos_pendientes(limite) -> int (B1 la llama cada 5 min en tareas.py)
+           indexar_conocimiento() -> int
+Plan B:    sin embeddings -> filtros + búsqueda por palabras (ILIKE). Nunca se rompe.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import re
+import time
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+import ia
+from db import require_moderador, sb
+
+log = logging.getLogger("reactiva.rag")
+router = APIRouter(tags=["ia-rag"])
+
+EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+DIMENSIONES = 768            # tiene que coincidir con vector(768) de rag.sql
+_CACHE_EMB: dict[str, list[float]] = {}
+
+
+# ══════════════════════════════════════════════════════════════
+#  Embeddings (Gemini, con las dos claves)
+# ══════════════════════════════════════════════════════════════
+def embeber(textos: list[str], para_pregunta: bool = False) -> list[list[float]] | None:
+    """Convierte textos en vectores de 768 números. None si no hay forma (Plan B)."""
+    if not textos:
+        return []
+    from google.genai import types
+    tipo = "RETRIEVAL_QUERY" if para_pregunta else "RETRIEVAL_DOCUMENT"
+    for nombre in ("GEMINI_API_KEY", "GEMINI_API_KEY_2"):
+        clave = os.getenv(nombre)
+        if not clave:
+            continue
+        try:
+            r = ia._cliente_gemini(clave).models.embed_content(
+                model=EMBED_MODEL, contents=textos,
+                config=types.EmbedContentConfig(task_type=tipo, output_dimensionality=DIMENSIONES))
+            vectores = [list(e.values) for e in r.embeddings]
+            if any(len(v) != DIMENSIONES for v in vectores):
+                log.error("El modelo %s no devolvió %d dimensiones", EMBED_MODEL, DIMENSIONES)
+                return None
+            ia.CONSUMO["llamadas"] += 1
+            ia.CONSUMO["tokens"] += sum(len(t) for t in textos) // 4  # estimación
+            return vectores
+        except Exception as e:
+            log.warning("Embedding con %s falló: %s", nombre, str(e)[:150])
+    return None
+
+
+def _vector_pregunta(pregunta: str) -> list[float] | None:
+    clave = hashlib.sha256(pregunta.lower().encode()).hexdigest()
+    if clave not in _CACHE_EMB:
+        v = embeber([pregunta], para_pregunta=True)
+        if not v:
+            return None
+        _CACHE_EMB[clave] = v[0]
+    return _CACHE_EMB[clave]
+
+
+def _pg(v: list[float] | None) -> str | None:
+    """Formato que entiende pgvector: '[0.1,0.2,...]'."""
+    return None if v is None else "[" + ",".join(f"{x:.6f}" for x in v) + "]"
+
+
+# ══════════════════════════════════════════════════════════════
+#  Indexar (crear los embeddings de eventos y conocimiento)
+# ══════════════════════════════════════════════════════════════
+def texto_evento(ev: dict) -> str:
+    """Todo lo que describe el evento en una frase, para el embedding."""
+    partes = [ev.get("title"), f"Categoría: {ev.get('category')}"]
+    if ev.get("municipio"):
+        partes.append(f"Pueblo: {ev['municipio']}")
+    if ev.get("location_name"):
+        partes.append(f"Lugar: {ev['location_name']}")
+    if ev.get("starts_at"):
+        d = datetime.fromisoformat(str(ev["starts_at"]).replace("Z", "+00:00")).astimezone(ia.TZ)
+        partes.append(f"Fecha: {ia._DIAS_ES[d.weekday()]} {d.day} de "
+                      f"{ia._MESES_ES[d.month - 1]} de {d.year}")
+    if ev.get("price") is not None:
+        partes.append("Gratis" if float(ev["price"]) == 0 else f"Precio: {ev['price']} euros")
+    if ev.get("is_accessible"):
+        partes.append("Accesible")
+    if ev.get("min_age") or ev.get("max_age"):
+        partes.append(f"Edad: {ev.get('min_age') or 0}-{ev.get('max_age') or 'sin máximo'}")
+    if ev.get("description"):
+        partes.append(str(ev["description"])[:600])
+    return ". ".join(str(p) for p in partes if p)
+
+
+def indexar_eventos_pendientes(limite: int = 100) -> int:
+    """Crea/actualiza el embedding de los eventos nuevos o con contenido cambiado.
+    Los embeddings van en la tabla eventos_embeddings (diseño de B1): guardar uno no toca
+    eventos (ni updated_at, ni sequence, ni Realtime). Devuelve cuántos se han indexado."""
+    try:
+        pendientes = (sb.table("v_eventos_sin_indexar").select("id, huella")
+                      .limit(limite).execute().data)
+        if not pendientes:
+            return 0
+        huellas = {p["id"]: p["huella"] for p in pendientes}
+        eventos = (sb.table("eventos").select("*, municipios(nombre)")
+                   .in_("id", list(huellas)).execute().data)
+        for ev in eventos:
+            ev["municipio"] = (ev.pop("municipios", None) or {}).get("nombre")
+        hechos = 0
+        for i in range(0, len(eventos), 50):  # en lotes de 50 (1 llamada por lote)
+            lote = eventos[i:i + 50]
+            vectores = embeber([texto_evento(e) for e in lote])
+            if not vectores:
+                break
+            for ev, v in zip(lote, vectores):
+                if len(v) != DIMENSIONES:  # la columna es vector(768): si no, fallaría
+                    log.error("Embedding con %d dimensiones (esperaba %d)", len(v), DIMENSIONES)
+                    return hechos
+                sb.rpc("guardar_embedding_evento", {"p_event_id": ev["id"], "p_embedding": _pg(v),
+                                                    "p_huella": huellas.get(ev["id"])}).execute()
+                hechos += 1
+        log.info("Indexados %d eventos", hechos)
+        return hechos
+    except Exception:
+        log.exception("indexar_eventos_pendientes falló")
+        return 0
+
+
+def indexar_conocimiento() -> int:
+    """Carga api/conocimiento.json en la tabla conocimiento con sus embeddings."""
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conocimiento.json")
+    with open(ruta, encoding="utf-8") as f:
+        temas = json.load(f)
+    vectores = embeber([f"{t['tema']}. {t['contenido']}" for t in temas])
+    filas = [{"tema": t["tema"], "contenido": t["contenido"],
+              "embedding": _pg(vectores[k]) if vectores else None,
+              "updated_at": datetime.now(ia.TZ).isoformat()}
+             for k, t in enumerate(temas)]
+    sb.table("conocimiento").upsert(filas, on_conflict="tema").execute()
+    return len(filas)
+
+
+# ══════════════════════════════════════════════════════════════
+#  Fase 1 · Sacar filtros de la pregunta
+# ══════════════════════════════════════════════════════════════
+_GENERAL = re.compile(r"iniciar sesion|registr|cuenta|contrasena|telegram|vincular|como funciona|"
+                      r"la app|aplicacion|publicador|resena|valorar|incidencia|lista de espera|"
+                      r"borrarme|cancelar mi|desapuntar|calendario|audio|notificacion|aviso|"
+                      r"compartir coche|como me apunto|como apuntarme|como propongo|como proponer")
+_PASADO = re.compile(r"\b(hubo|ha habido|habia|pasad[oa]|se hizo|se celebro|fue|fueron|"
+                     r"cuantas veces|historial|anteriores|desde cuando)\b")
+
+
+def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
+    """Fechas relativas -> (desde, hasta). Texto ya normalizado (sin tildes, minúsculas)."""
+    ahora = datetime.now(ia.TZ)
+    hoy = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
+    m = re.search(r"\b(20\d\d)\b", n)
+    if m:
+        a = int(m.group(1))
+        return hoy.replace(year=a, month=1, day=1), hoy.replace(year=a + 1, month=1, day=1)
+    if "ano pasado" in n:
+        return hoy.replace(year=hoy.year - 1, month=1, day=1), hoy.replace(month=1, day=1)
+    if "este ano" in n:
+        return hoy.replace(month=1, day=1), hoy.replace(year=hoy.year + 1, month=1, day=1)
+    if "mes pasado" in n:
+        ini = (hoy.replace(day=1) - timedelta(days=1)).replace(day=1)
+        return ini, hoy.replace(day=1)
+    if "este mes" in n:
+        sig = (hoy.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return hoy, sig
+    if "proxima semana" in n or "semana que viene" in n:
+        ini = hoy + timedelta(days=7 - hoy.weekday())
+        return ini, ini + timedelta(days=7)
+    if "esta semana" in n:
+        return hoy, hoy + timedelta(days=7 - hoy.weekday())
+    if re.search(r"fin de semana|finde", n):
+        sab = hoy + timedelta(days=(5 - hoy.weekday()) % 7)
+        return max(hoy, sab), sab + timedelta(days=2)
+    f = ia._fecha_de_texto(n)  # hoy, mañana, el sábado...
+    if f:
+        d = datetime.fromisoformat(f).replace(tzinfo=ia.TZ)
+        return d, d + timedelta(days=1)
+    return None, None
+
+
+_PROMPT_FILTROS = """Analiza la pregunta de un vecino sobre la agenda de eventos de unos pueblos de Almería.
+Hoy es {hoy}. Devuelve SOLO JSON:
+{{"tipo": "eventos" (pregunta por eventos/planes) o "general" (cómo funciona la app, cuentas, Telegram...),
+  "categoria": una de {categorias} o null,
+  "municipio": uno de {pueblos} o null,
+  "desde": "YYYY-MM-DD" o null, "hasta": "YYYY-MM-DD" (sin incluir) o null,
+  "palabras": "1-3 palabras clave del nombre del evento (p. ej. romería, migas) o null",
+  "pasado": true si pregunta por eventos que ya ocurrieron}}
+No inventes filtros que no estén en la pregunta.
+PREGUNTA: \"\"\"{pregunta}\"\"\"
+"""
+
+
+def extraer_filtros(pregunta: str) -> dict:
+    """Fase 1. Reglas primero; IA solo si las reglas no encuentran ningún filtro."""
+    n = ia._norm(pregunta)
+    base = ia._reglas_mensaje(pregunta)["filtros"]
+    desde, hasta = _rango_fechas(n)
+    filtros = {
+        "tipo": "general" if _GENERAL.search(n) else "eventos",
+        "categoria": base.get("categoria"),
+        "municipio": base.get("municipio"),
+        "desde": desde, "hasta": hasta, "palabras": None,
+        "pasado": bool(_PASADO.search(n)),
+        "con_ia": False,
+    }
+    hay_algo = filtros["categoria"] or filtros["municipio"] or desde or filtros["tipo"] == "general"
+    if not hay_algo and len(n.split()) >= 4:
+        datos = ia._json(ia._llamar(_PROMPT_FILTROS.format(
+            hoy=ia._hoy_texto(), categorias=ia.CATEGORIAS, pueblos=ia.PUEBLOS,
+            pregunta=pregunta[:500])))
+        if datos:
+            filtros["con_ia"] = True
+            if datos.get("tipo") in ("eventos", "general"):
+                filtros["tipo"] = datos["tipo"]
+            c = ia._norm(str(datos.get("categoria") or ""))
+            filtros["categoria"] = c if c in ia.CATEGORIAS else None
+            filtros["municipio"] = ia._pueblo(datos.get("municipio"))
+            for k in ("desde", "hasta"):
+                try:
+                    if datos.get(k):
+                        filtros[k] = datetime.fromisoformat(str(datos[k])[:10]).replace(tzinfo=ia.TZ)
+                except ValueError:
+                    pass
+            if datos.get("palabras"):
+                filtros["palabras"] = str(datos["palabras"])[:40]
+            filtros["pasado"] = bool(datos.get("pasado")) or filtros["pasado"]
+    # Sin fechas y sin hablar del pasado -> solo eventos de hoy en adelante
+    if filtros["tipo"] == "eventos" and not filtros["desde"] and not filtros["pasado"]:
+        filtros["desde"] = datetime.now(ia.TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    return filtros
+
+
+# ══════════════════════════════════════════════════════════════
+#  Fase 2 · Buscar y responder
+# ══════════════════════════════════════════════════════════════
+def _municipio_id(nombre: str | None) -> int | None:
+    if not nombre:
+        return None
+    for m in sb.table("municipios").select("id, nombre").execute().data:
+        if ia._norm(m["nombre"]) == ia._norm(nombre):
+            return m["id"]
+    return None
+
+
+def buscar_eventos(pregunta: str, filtros: dict, limite: int = 8) -> list[dict]:
+    vector = _vector_pregunta(pregunta)
+    params = {
+        "p_embedding": _pg(vector),
+        "p_categoria": filtros.get("categoria"),
+        "p_municipio_id": _municipio_id(filtros.get("municipio")),
+        "p_desde": filtros["desde"].isoformat() if filtros.get("desde") else None,
+        "p_hasta": filtros["hasta"].isoformat() if filtros.get("hasta") else None,
+        # Plan B (sin embeddings): búsqueda por palabra clave
+        "p_texto": filtros.get("palabras") if vector is None else None,
+        "p_limite": limite,
+    }
+    return sb.rpc("buscar_eventos_similares", params).execute().data or []
+
+
+def _linea(e: dict) -> str:
+    precio = "" if e.get("price") is None else (" · gratis" if float(e["price"]) == 0
+                                                 else f" · {float(e['price']):g} €")
+    estado = {"cancelado": " (cancelado)", "pospuesto": " (aplazado)", "completo": " (completo)",
+              "finalizado": ""}.get(e.get("status"), "")
+    return f"• {e['title']} — {e.get('municipio')}, {ia.fecha_humana(e.get('starts_at'))}{precio}{estado}"
+
+
+_PROMPT_RESPUESTA = """Eres el asistente de la agenda de unos pueblos de Almería. Responde en español,
+en 1-4 frases sencillas, usando SOLO estos datos. Si no bastan, dilo. No inventes.
+
+{contexto}
+
+PREGUNTA: {pregunta}
+"""
+_LISTAR = re.compile(r"^(que|hay|cuales|dime|ensena|muestrame|busca|algo|planes|eventos|alguna|algun)")
+
+
+def preguntar_agenda(pregunta: str) -> dict:
+    """-> {"respuesta": str, "eventos": [...], "tipo": "eventos"|"general"}. Nunca falla."""
+    pregunta = (pregunta or "").strip()[:500]
+    if not pregunta:
+        return {"respuesta": "¿Qué quieres saber?", "eventos": [], "tipo": "general"}
+    try:
+        f = extraer_filtros(pregunta)
+
+        # ── Conocimiento general de la app
+        if f["tipo"] == "general":
+            vector = _vector_pregunta(pregunta)
+            trozos = (sb.rpc("buscar_conocimiento", {"p_embedding": _pg(vector), "p_limite": 3})
+                      .execute().data if vector else []) or []
+            if not trozos:  # Plan B: por palabras
+                ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "conocimiento.json")
+                with open(ruta, encoding="utf-8") as fh:
+                    temas = json.load(fh)
+                n = set(ia._norm(pregunta).split())
+                temas.sort(key=lambda t: -len(n & set(ia._norm(t["tema"] + " " + t["contenido"]).split())))
+                trozos = [{"tema": t["tema"], "contenido": t["contenido"], "similitud": 0} for t in temas[:2]]
+            if trozos and trozos[0].get("similitud", 0) >= 0.80:
+                return {"respuesta": trozos[0]["contenido"], "eventos": [], "tipo": "general"}  # 0 tokens
+            contexto = "\n".join(f"- {t['tema']}: {t['contenido']}" for t in trozos)
+            texto = ia._llamar(_PROMPT_RESPUESTA.format(contexto=contexto, pregunta=pregunta),
+                               como_json=False)
+            return {"respuesta": (texto or (trozos[0]["contenido"] if trozos else ia.NO_LO_SE)).strip(),
+                    "eventos": [], "tipo": "general"}
+
+        # ── Eventos: fase 2
+        eventos = buscar_eventos(pregunta, f)
+        total = eventos[0]["total_filtrados"] if eventos else 0
+        salida = [{"id": e["event_id"], "title": e["title"], "starts_at": e["starts_at"],
+                   "municipio": e["municipio"], "status": e["status"]} for e in eventos]
+        if not eventos:
+            return {"respuesta": "No he encontrado eventos que encajen con lo que buscas.",
+                    "eventos": [], "tipo": "eventos"}
+
+        n = re.sub(r"^[¿¡\s]+", "", ia._norm(pregunta))
+        if _LISTAR.match(n) and not f["pasado"]:  # "¿qué hay…?" -> lista directa, 0 tokens
+            cab = "Esto es lo que he encontrado:" if total <= len(eventos) else \
+                  f"Hay {total} planes; estos son los que mejor encajan:"
+            return {"respuesta": cab + "\n" + "\n".join(_linea(e) for e in eventos[:5]),
+                    "eventos": salida[:5], "tipo": "eventos"}
+
+        contexto = (f"EVENTOS QUE CUMPLEN LOS FILTROS: {total} en total. "
+                    f"Los {len(eventos)} más relacionados con la pregunta:\n"
+                    + "\n".join(_linea(e) + (f" — {e['description'][:150]}" if e.get("description") else "")
+                                for e in eventos))
+        texto = ia._llamar(_PROMPT_RESPUESTA.format(contexto=contexto, pregunta=pregunta),
+                           como_json=False)
+        if not texto:  # Plan B: lista
+            texto = "Esto es lo que he encontrado:\n" + "\n".join(_linea(e) for e in eventos[:5])
+        return {"respuesta": texto.strip()[:1200], "eventos": salida, "tipo": "eventos"}
+    except Exception:
+        log.exception("preguntar_agenda falló")
+        return {"respuesta": "Ahora mismo no puedo buscar. Mira la agenda en la app.",
+                "eventos": [], "tipo": "eventos"}
+
+
+# ══════════════════════════════════════════════════════════════
+#  POST /ia/preguntar  (público: también lo pueden usar los visitantes)
+# ══════════════════════════════════════════════════════════════
+class Pregunta(BaseModel):
+    pregunta: str
+
+
+# Protección de cuota (la ruta es pública):
+#  - respuesta guardada 10 min para preguntas repetidas (misma pregunta = 0 llamadas)
+#  - límite por IP: 10 preguntas/minuto y 100/día
+_RESPUESTAS: dict[str, tuple[float, dict]] = {}
+_USO_IP: dict[str, list[float]] = {}
+MAX_MINUTO, MAX_DIA, CACHE_S = 10, 100, 600
+
+
+def _ip(request: Request) -> str:
+    reenviada = request.headers.get("x-forwarded-for", "")  # Render va detrás de un proxy
+    return reenviada.split(",")[0].strip() or (request.client.host if request.client else "?")
+
+
+@router.post("/ia/preguntar")
+def ia_preguntar(body: Pregunta, request: Request):
+    pregunta = (body.pregunta or "").strip()
+    if not pregunta:
+        raise HTTPException(400, "Pregunta vacía")
+    ahora = time.time()
+
+    clave = re.sub(r"[^a-z0-9ñ ]", "", ia._norm(pregunta))
+    guardada = _RESPUESTAS.get(clave)
+    if guardada and ahora - guardada[0] < CACHE_S:
+        return guardada[1]
+
+    usos = [t for t in _USO_IP.get(_ip(request), []) if ahora - t < 86400]
+    if len(usos) >= MAX_DIA or sum(1 for t in usos if ahora - t < 60) >= MAX_MINUTO:
+        raise HTTPException(429, "Demasiadas preguntas seguidas. Espera un poco, por favor.")
+    usos.append(ahora)
+    _USO_IP[_ip(request)] = usos
+
+    respuesta = preguntar_agenda(pregunta)
+    if len(_RESPUESTAS) > 500:
+        _RESPUESTAS.clear()
+    _RESPUESTAS[clave] = (ahora, respuesta)
+    return respuesta
+
+
+@router.post("/ia/indexar")
+def ia_indexar(user=Depends(require_moderador)):
+    """🛡️ Solo moderador (pestaña Demo del panel): indexa ya lo pendiente."""
+    return {"eventos": indexar_eventos_pendientes(), "conocimiento": indexar_conocimiento()}
