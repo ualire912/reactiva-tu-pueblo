@@ -23,7 +23,9 @@ def _limpiar(texto: str) -> str:
     """Quita emojis, enlaces y símbolos que la voz leería raro."""
     t = re.sub(r"https?://\S+", "", texto or "")
     t = re.sub(r"[*_`#>\[\]]", "", t)                       # markdown
-    t = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", t)  # emojis
+    # emojis y símbolos (si no, la voz lee "estrella" por ⭐, "reloj" por ⏳...)
+    t = re.sub(r"[\U0001F000-\U0001FAFF←-⇿⌀-⏿①-➿"
+               r"⤀-⥿⬀-⯿〰〽️‍]", "", t)
     t = t.replace("€", " euros").replace("&", " y ")
     return re.sub(r"\s+", " ", t).strip()[:MAX_CARACTERES]
 

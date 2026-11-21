@@ -188,6 +188,7 @@ hicieron celebro celebraron fue fueron proximo proximos proxima proximas siguien
 siguientes nuevos futuro futuros hoy manana semana semanas mes meses ano dia dias finde fin
 viene este esta esto dentro durante ultimos ultimas uno dos tres cuatro cinco seis pueblo
 pueblos zona favor porfa lunes martes miercoles jueves viernes sabado domingo tarde noche
+apuntarme apuntar apunto apuntarnos inscribirme inscribir ir vamos
 """.split())
 
 
@@ -428,6 +429,7 @@ en 1-4 frases sencillas y cercanas, como un vecino que conoce la agenda, usando 
 Responde directamente a la pregunta. No digas "según los datos", "eventos mostrados" ni copies
 etiquetas como "(ya celebrado)": si un evento ya pasó, dilo con naturalidad ("se celebró el...").
 Si los datos no bastan para responder, dilo. No inventes.
+Escribe texto plano: sin Markdown, sin asteriscos ni almohadillas.
 
 {contexto}
 
