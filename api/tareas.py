@@ -71,6 +71,34 @@ def _paso_rag():
         log.info("[tareas] %s eventos indexados para el asistente", n)
 
 
+def _paso_propuestas_atascadas():
+    """Propuestas que se quedaron a medias (p. ej. el servidor se reinició al desplegar justo
+    mientras se procesaban): se reintentan y se le contesta al autor. Lo que llegó por
+    Facebook o noticias se reprocesa sin avisar a nadie."""
+    from db import sb
+    from puentes import _con_limite
+
+    ahora = datetime.now(timezone.utc)
+    filas = sb.table("ingestas").select("id,origen,estado,created_at") \
+        .in_("estado", ["nueva", "error"]) \
+        .lte("created_at", (ahora - timedelta(minutes=3)).isoformat()) \
+        .gte("created_at", (ahora - timedelta(days=2)).isoformat()).limit(10).execute().data or []
+    for f in filas:
+        # los "error" solo durante la primera hora (p. ej. la IA estaba caída); luego, al panel
+        if f["estado"] == "error" and f["created_at"] < (ahora - timedelta(hours=1)).isoformat():
+            continue
+        try:
+            if f["origen"] == "telegram":
+                from bot import reanudar_propuesta
+                _con_limite(120, reanudar_propuesta, f["id"])
+            else:
+                from ingesta import procesar_ingesta
+                procesar_ingesta(f["id"])
+            log.info("[tareas] propuesta atascada reintentada: %s (%s)", f["id"], f["origen"])
+        except Exception as e:
+            log.error("[tareas] no se pudo reintentar %s: %r", f["id"], e)
+
+
 def _paso_avisos_moderacion():
     """El moderador aprobó o rechazó una propuesta (en el panel web o por Telegram):
     se avisa al autor UNA vez (registro en 'notificaciones', tipo 'moderacion')."""
@@ -256,7 +284,7 @@ def _paso_agente():
 
 def ciclo():
     for paso in (_paso_estados, _paso_resenas, _paso_promociones, _paso_rag,
-                 _paso_avisos_moderacion, _paso_recordatorios, _paso_recomendaciones, _paso_agente):
+                 _paso_propuestas_atascadas, _paso_avisos_moderacion, _paso_recordatorios, _paso_recomendaciones, _paso_agente):
         try:
             paso()
         except Exception as e:
