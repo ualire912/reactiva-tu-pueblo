@@ -1,66 +1,65 @@
-<ion-header>
-  <ion-toolbar color="primary">
-    <ion-title>Mapa de planes</ion-title>
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>
+      <a routerLink="/inicio" class="marca" aria-label="Reactiva tu pueblo, ir al inicio">
+        <span class="marca-logo" aria-hidden="true">R</span>
+        <span class="marca-texto">Mapa de planes</span>
+      </a>
+    </ion-title>
     <ion-buttons slot="end">
-      <ion-button routerLink="/agenda" aria-label="Ver en formato lista accesible">
-        <ion-icon slot="start" name="list-outline"></ion-icon>
-        Lista
+      <ion-button class="boton-cabecera" (click)="centrarCercaDeMi()">
+        <ion-icon slot="start" name="locate" aria-hidden="true"></ion-icon>
+        Cerca de mí
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
+
+  <app-filtros-eventos
+    [filtros]="filtros()"
+    (filtrosChange)="filtros.set($event)"
+    [total]="filtrados().length"
+    [sinCercania]="true"></app-filtros-eventos>
+
+  <div class="selector-vista" role="group" aria-label="Forma de ver los planes">
+    <button type="button" [class.on]="vista() === 'mapa'" [attr.aria-pressed]="vista() === 'mapa'" (click)="cambiarVista('mapa')">
+      <ion-icon name="map-outline" aria-hidden="true"></ion-icon> Mapa
+    </button>
+    <button type="button" [class.on]="vista() === 'lista'" [attr.aria-pressed]="vista() === 'lista'" (click)="cambiarVista('lista')">
+      <ion-icon name="list-outline" aria-hidden="true"></ion-icon> Lista accesible
+    </button>
+  </div>
 </ion-header>
 
-<ion-content [scrollY]="false">
-  <div style="display: flex; flex-direction: column; height: 100%;">
-    <!-- Barra de filtros superior -->
-    <div class="ion-padding-horizontal ion-padding-top" style="background: var(--ion-background-color); z-index: 10;">
-      <ion-grid class="ion-no-padding">
-        <ion-row>
-          <ion-col size="6" class="ion-padding-end">
-            <ion-item lines="outline">
-              <ion-select label="Pueblo" labelPlacement="stacked" [(ngModel)]="filtroMunicipio" (ionChange)="aplicarFiltros()">
-                <ion-select-option value="todos">Todos</ion-select-option>
-                <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
-                  {{ m.nombre }}
-                </ion-select-option>
-              </ion-select>
-            </ion-item>
-          </ion-col>
+<ion-content [scrollY]="false" class="rp-fondo">
+  <div class="mapa-layout" [class.ver-lista]="vista() === 'lista'">
+    <div id="mapa-comarca" class="mapa-contenedor" role="region" aria-label="Mapa con los planes de la comarca. La misma información está en la lista accesible."></div>
 
-          <ion-col size="6">
-            <ion-item lines="outline">
-              <ion-select label="Cuándo" labelPlacement="stacked" [(ngModel)]="filtroFecha" (ionChange)="aplicarFiltros()">
-                <ion-select-option value="todos">Cualquier fecha</ion-select-option>
-                <ion-select-option value="hoy">Hoy</ion-select-option>
-                <ion-select-option value="finde">Este finde</ion-select-option>
-                <ion-select-option value="semana">Próximos 7 días</ion-select-option>
-              </ion-select>
-            </ion-item>
-          </ion-col>
-        </ion-row>
-      </ion-grid>
-
-      <div style="display: flex; gap: 8px; overflow-x: auto; padding: 8px 0;">
-        <ion-chip color="secondary" (click)="centrarCercaDeMi()">
-          <ion-icon name="navigate-outline"></ion-icon>
-          <ion-label>Cerca de mí</ion-label>
-        </ion-chip>
-
-        <ion-chip
-          *ngFor="let cat of sb.categorias"
-          [color]="filtroCategoria === cat.slug ? 'primary' : 'light'"
-          (click)="seleccionarCategoria(cat.slug)">
-          <ion-label>{{ cat.nombre }}</ion-label>
-        </ion-chip>
-      </div>
-    </div>
-
-    <!-- Contenedor del mapa Leaflet -->
-    <div
-      id="mapa-comarca"
-      role="region"
-      aria-label="Mapa interactivo con los eventos de la comarca"
-      style="flex: 1; width: 100%; min-height: 300px;">
-    </div>
+    <!-- Alternativa accesible al mapa: la misma información en lista -->
+    <section class="mapa-lista" aria-label="Lista de planes del mapa">
+      @for (ev of filtrados(); track ev.id) {
+        @let f = partesFecha(ev.starts_at);
+        @let cat = estiloCategoria(ev.category);
+        <a class="mapa-item" [routerLink]="['/evento', ev.id]" [style.--pueblo]="ev.color">
+          <span class="mapa-item-fecha" aria-hidden="true">
+            <span class="mapa-item-num">{{ f.num }}</span>
+            <span class="mapa-item-mes">{{ f.mes }}</span>
+          </span>
+          <span class="mapa-item-info">
+            <span class="mapa-item-etiquetas">
+              <span class="mapa-item-pueblo"><span class="punto" aria-hidden="true"></span>{{ ev.pueblo }}</span>
+              <span class="mapa-item-cat" [style.background]="cat.fondo" [style.color]="cat.tinta">{{ nombreCategoria(ev.category) }}</span>
+            </span>
+            <strong class="mapa-item-titulo">{{ ev.title }}</strong>
+            <span class="mapa-item-linea">
+              <span class="sr-only">{{ fechaCorta(ev.starts_at) }}. </span>
+              <span aria-hidden="true" class="mapa-item-dia">{{ f.dia }} {{ f.hora }}</span> · {{ ubicacionCompleta(ev.location_name, ev.pueblo) }}
+            </span>
+            <span class="mapa-item-precio">{{ textoPrecio(ev.price) }}</span>
+          </span>
+        </a>
+      } @empty {
+        <p class="ion-padding">No hay planes con estos filtros.</p>
+      }
+    </section>
   </div>
 </ion-content>

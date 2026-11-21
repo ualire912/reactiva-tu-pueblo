@@ -1,135 +1,96 @@
-<ion-header>
-  <ion-toolbar color="primary">
-    <ion-title>Reactiva tu pueblo</ion-title>
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>
+      <a routerLink="/inicio" class="marca" aria-label="Reactiva tu pueblo, ir al inicio">
+        <span class="marca-logo" aria-hidden="true">R</span>
+        <span class="marca-texto">Agenda de la comarca</span>
+      </a>
+    </ion-title>
     <ion-buttons slot="end">
-      <ion-button *ngIf="!(sb.session$ | async)" routerLink="/login">
-        Entrar
+      <ion-button class="boton-cabecera sol" routerLink="/proponer">
+        <ion-icon slot="start" name="add-circle" aria-hidden="true"></ion-icon>
+        Proponer plan
       </ion-button>
+      @if (!haySesion()) {
+        <ion-button class="boton-cabecera" routerLink="/login">
+          <ion-icon slot="start" name="log-in-outline" aria-hidden="true"></ion-icon>
+          Entrar
+        </ion-button>
+      }
     </ion-buttons>
   </ion-toolbar>
+
+
+  <!-- Buscador y filtros fijos: no se pierden al hacer scroll -->
+  <app-filtros-eventos
+    [filtros]="filtros()"
+    (filtrosChange)="cambiarFiltros($event)"
+    (coords)="coords.set($event)"
+    [conteoCategorias]="conteoCategorias()"
+    [total]="filtrados().length"></app-filtros-eventos>
 </ion-header>
 
-<ion-content>
+<ion-content class="rp-fondo">
   <ion-refresher slot="fixed" (ionRefresh)="cargarEventos($event)">
-    <ion-refresher-content></ion-refresher-content>
+    <ion-refresher-content pullingText="Desliza para actualizar" refreshingText="Actualizando…"></ion-refresher-content>
   </ion-refresher>
 
-  <!-- Filtros superiores -->
-  <div class="ion-padding-horizontal ion-padding-top">
-    <ion-grid class="ion-no-padding">
-      <ion-row>
-        <ion-col size="6" class="ion-padding-end">
-          <ion-item lines="outline">
-            <ion-select label="Pueblo" labelPlacement="stacked" [(ngModel)]="filtroMunicipio" (ionChange)="aplicarFiltros()">
-              <ion-select-option value="todos">Todos los pueblos</ion-select-option>
-              <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
-                {{ m.nombre }}
-              </ion-select-option>
-            </ion-select>
-          </ion-item>
-        </ion-col>
+  <h1 class="sr-only">Agenda de planes de la comarca</h1>
 
-        <ion-col size="6">
-          <ion-item lines="outline">
-            <ion-select label="Cuándo" labelPlacement="stacked" [(ngModel)]="filtroFecha" (ionChange)="aplicarFiltros()">
-              <ion-select-option value="todos">Cualquier fecha</ion-select-option>
-              <ion-select-option value="hoy">Hoy</ion-select-option>
-              <ion-select-option value="finde">Este finde</ion-select-option>
-              <ion-select-option value="semana">Próximos 7 días</ion-select-option>
-            </ion-select>
-          </ion-item>
-        </ion-col>
-      </ion-row>
-    </ion-grid>
-
-    <!-- Chips de categorías + botón Cerca de mí -->
-    <div style="display: flex; gap: 8px; overflow-x: auto; padding: 10px 0;">
-      <ion-chip [color]="ordenCercaniaActivo ? 'secondary' : 'medium'" (click)="ordenarCercaDeMi()">
-        <ion-icon name="navigate-outline"></ion-icon>
-        <ion-label>Cerca de mí</ion-label>
-      </ion-chip>
-
-      <ion-chip
-        *ngFor="let cat of sb.categorias"
-        [color]="filtroCategoria === cat.slug ? 'primary' : 'light'"
-        (click)="seleccionarCategoria(cat.slug)">
-        <ion-icon [name]="cat.icono || 'calendar-outline'"></ion-icon>
-        <ion-label>{{ cat.nombre }}</ion-label>
-      </ion-chip>
+  @if (cargando()) {
+    <div class="rejilla-eventos" aria-busy="true" aria-label="Cargando planes">
+      @for (e of esqueletos; track e) {
+        <div class="ev-card esqueleto" aria-hidden="true">
+          <div class="ev-poster"></div>
+          <div class="ev-cuerpo"><span></span><span></span><span></span></div>
+        </div>
+      }
     </div>
-  </div>
-
-  <!-- Estado cargando -->
-  <div *ngIf="cargando" class="ion-padding ion-text-center">
-    <ion-spinner></ion-spinner>
-    <p>Buscando planes en la comarca...</p>
-  </div>
-
-  <!-- Estado vacío -->
-  <div *ngIf="!cargando && eventosFiltrados.length === 0" class="ion-padding ion-text-center">
-    <h3>No hay planes con estos filtros</h3>
-    <p>Prueba a cambiar el pueblo o la fecha, ¡o propón tú un plan!</p>
-    <ion-button routerLink="/proponer" fill="outline">Proponer un plan</ion-button>
-  </div>
-
-  <!-- Lista de eventos -->
-  <ion-card
-    *ngFor="let ev of eventosFiltrados"
-    [routerLink]="ev.status === 'cancelado' ? null : ['/evento', ev.id]"
-    [button]="ev.status !== 'cancelado'"
-    [attr.aria-disabled]="ev.status === 'cancelado'"
-    [style.opacity]="ev.status === 'finalizado' ? '0.6' : (ev.status === 'cancelado' ? '0.8' : '1')"
-    [style.filter]="ev.status === 'finalizado' ? 'grayscale(85%)' : 'none'"
-    [style.pointer-events]="ev.status === 'cancelado' ? 'none' : 'auto'">
-
-    <!-- Banner ROJO arriba si está cancelado (no deja entrar) -->
-    <div
-      *ngIf="ev.status === 'cancelado'"
-      style="background: var(--ion-color-danger); color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
-      <ion-icon name="close-circle-outline" style="font-size: 22px;"></ion-icon>
-      <span>EVENTO CANCELADO</span>
-    </div>
-
-    <!-- Banner GRIS arriba si está finalizado (sí deja entrar para valorar) -->
-    <div
-      *ngIf="ev.status === 'finalizado'"
-      style="background: #6c757d; color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
-      <ion-icon name="checkmark-done-outline" style="font-size: 22px;"></ion-icon>
-      <span>EVENTO FINALIZADO · Entra para valorar si asististe</span>
-    </div>
-
-    <!-- Banner AMARILLO si está pospuesto -->
-    <div
-      *ngIf="ev.status === 'pospuesto'"
-      style="background: var(--ion-color-warning); color: #000000; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
-      <ion-icon name="time-outline" style="font-size: 22px;"></ion-icon>
-      <span>EVENTO APLAZADO — Revisa la nueva fecha</span>
-    </div>
-
-    <img *ngIf="ev.poster_url" [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" style="width: 100%; max-height: 220px; object-fit: cover;" />
-
-    <ion-card-header>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
-        <ion-badge color="primary">{{ ev.municipios?.nombre || 'Comarca' }}</ion-badge>
-        <ion-badge *ngIf="ev.status === 'pospuesto'" color="warning">POSPUESTO</ion-badge>
-        <ion-badge *ngIf="ev.is_accessible" color="success">
-          <ion-icon name="accessibility-outline"></ion-icon> Accesible
-        </ion-badge>
+  } @else if (pagina().length === 0) {
+    <div class="estado-vacio">
+      <ion-icon name="search-outline" aria-hidden="true"></ion-icon>
+      <h2>No hay planes con estos filtros</h2>
+      <p>Prueba con otro pueblo u otra fecha, ¡o propón tú un plan!</p>
+      <div class="estado-vacio-acciones">
+        <ion-button fill="outline" (click)="cambiarFiltros({ texto: '', municipio: null, categoria: null, fecha: 'todas', accesible: false, cerca: false })">
+          Ver todos los planes
+        </ion-button>
+        <ion-button routerLink="/proponer">Proponer un plan</ion-button>
       </div>
-      <ion-card-title class="ion-margin-top">{{ ev.title }}</ion-card-title>
-      <ion-card-subtitle>
-        <ion-icon name="time-outline"></ion-icon> {{ formatearFecha(ev.starts_at) }}
-      </ion-card-subtitle>
-    </ion-card-header>
-
-    <ion-card-content>
-      <p *ngIf="ev.location_name">
-        <ion-icon name="location-outline"></ion-icon> {{ ev.location_name }}
-      </p>
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-        <strong>{{ ev.price === 0 ? 'Gratis' : ev.price + ' €' }}</strong>
-        <ion-note>{{ textoPlazas(ev) }}</ion-note>
-      </div>
-    </ion-card-content>
-  </ion-card>
+    </div>
+  } @else {
+    <ul class="rejilla-eventos" aria-label="Planes encontrados">
+      @for (ev of pagina(); track ev.id) {
+        <li><app-evento-card [ev]="ev"></app-evento-card></li>
+      }
+    </ul>
+  }
 </ion-content>
+
+<ion-footer class="rp-paginacion">
+  <nav class="paginacion" aria-label="Paginación de planes">
+    <label class="pag-tamano">
+      <span>Ver</span>
+      <select (change)="cambiarTamano($any($event.target).value)" aria-label="Planes por página">
+        @for (t of tamanos; track t) {
+          <option [value]="t" [selected]="porPagina() === t">{{ t }}</option>
+        }
+      </select>
+      <span>por página</span>
+    </label>
+
+    <span class="pag-rango" aria-live="polite">{{ rango() }}</span>
+
+    <div class="pag-nav">
+      <button type="button" class="pag-boton" [disabled]="paginaVisible() <= 1" (click)="irAPagina(paginaVisible() - 1)" aria-label="Página anterior">
+        <ion-icon name="chevron-back" aria-hidden="true"></ion-icon>
+        <span class="pag-texto">Anterior</span>
+      </button>
+      <span class="pag-actual">{{ paginaVisible() }} / {{ totalPaginas() }}</span>
+      <button type="button" class="pag-boton" [disabled]="paginaVisible() >= totalPaginas()" (click)="irAPagina(paginaVisible() + 1)" aria-label="Página siguiente">
+        <span class="pag-texto">Siguiente</span>
+        <ion-icon name="chevron-forward" aria-hidden="true"></ion-icon>
+      </button>
+    </div>
+  </nav>
+</ion-footer>

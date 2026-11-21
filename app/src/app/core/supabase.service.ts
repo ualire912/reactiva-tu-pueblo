@@ -1,4 +1,4 @@
-import { Injectable, inject, NgZone, ApplicationRef } from '@angular/core';
+import { Injectable, inject, NgZone, ApplicationRef, signal } from '@angular/core';
 import { createClient, SupabaseClient, Session } from '@supabase/supabase-js';
 import { BehaviorSubject } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -20,6 +20,8 @@ export class SupabaseService {
 
   public municipios: Municipio[] = [];
   public categorias: Categoria[] = [];
+  /** Cambia cada vez que se cargan los catálogos (para que las vistas con señales se actualicen). */
+  public readonly catalogos = signal(0);
 
   constructor() {
     const url = environment.supabaseUrl.startsWith('http')
@@ -117,6 +119,7 @@ export class SupabaseService {
     this.zone.run(() => {
       if (munRes.data) this.municipios = munRes.data;
       if (catRes.data) this.categorias = catRes.data;
+      this.catalogos.update((v) => v + 1);
       this.appRef.tick();
     });
   }

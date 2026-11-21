@@ -34,7 +34,8 @@
 
 /* @import "@ionic/angular/css/palettes/dark.always.css"; */
 /* @import "@ionic/angular/css/palettes/dark.class.css"; */
-@import '@ionic/angular/css/palettes/dark.system.css';
+/* Modo oscuro desactivado: el tema claro está ajustado para contraste AA. */
+/* @import '@ionic/angular/css/palettes/dark.system.css'; */
 
 @import 'leaflet/dist/leaflet.css';
 
@@ -61,8 +62,8 @@
 .user-pin {
   width: 18px;
   height: 18px;
-  background-color: #2563eb;
+  background-color: #f4b740;
   border: 3px solid #ffffff;
   border-radius: 50%;
-  box-shadow: 0 0 8px rgba(37, 99, 235, 0.8);
+  box-shadow: 0 0 8px rgba(244, 183, 64, 0.9);
 }

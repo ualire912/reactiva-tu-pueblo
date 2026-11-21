@@ -1,33 +1,44 @@
-<ion-header>
-  <ion-toolbar color="primary">
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
     <ion-buttons slot="start">
-      <ion-back-button defaultHref="/agenda" text="Volver"></ion-back-button>
+      <ion-back-button defaultHref="/inicio" text="Volver"></ion-back-button>
     </ion-buttons>
     <ion-title>{{ modoRegistro ? 'Crear cuenta' : 'Entrar' }}</ion-title>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="ion-padding">
-  <div style="max-width: 450px; margin: 20px auto;">
+<ion-content class="ion-padding rp-fondo">
+  <div class="bloque login-caja">
     <h2>{{ modoRegistro ? 'Únete a Reactiva tu pueblo' : 'Hola de nuevo' }}</h2>
     <p>Entra para apuntarte a planes, compartir coche o proponer actividades en tu pueblo.</p>
 
-    <ion-list lines="full" class="ion-margin-top">
-      <ion-item *ngIf="modoRegistro">
-        <ion-label position="stacked">Tu nombre completo</ion-label>
-        <ion-input [(ngModel)]="fullName" placeholder="Ej. María García"></ion-input>
-      </ion-item>
+    <form class="login-campos" (submit)="$event.preventDefault(); enviar()">
+      <label class="campo" *ngIf="modoRegistro">
+        <span>Tu nombre</span>
+        <input type="text" name="nombre" [(ngModel)]="fullName" autocomplete="name" placeholder="Ej. María García" />
+      </label>
 
-      <ion-item>
-        <ion-label position="stacked">Correo electrónico</ion-label>
-        <ion-input type="email" [(ngModel)]="email" placeholder="tu@correo.com"></ion-input>
-      </ion-item>
+      <label class="campo">
+        <span>Correo electrónico</span>
+        <input type="email" name="email" [(ngModel)]="email" autocomplete="email" inputmode="email" placeholder="tu@correo.com" />
+      </label>
 
-      <ion-item>
-        <ion-label position="stacked">Contraseña</ion-label>
-        <ion-input type="password" [(ngModel)]="password" placeholder="Mínimo 6 caracteres"></ion-input>
-      </ion-item>
-    </ion-list>
+      <label class="campo">
+        <span>Contraseña</span>
+        <span class="campo-con-boton">
+          <input
+            [type]="verClave ? 'text' : 'password'"
+            name="password"
+            [(ngModel)]="password"
+            [autocomplete]="modoRegistro ? 'new-password' : 'current-password'"
+            placeholder="Mínimo 6 caracteres" />
+          <button type="button" class="boton-sec" (click)="verClave = !verClave" [attr.aria-label]="verClave ? 'Ocultar la contraseña' : 'Mostrar la contraseña'" [attr.aria-pressed]="verClave">
+            <ion-icon [name]="verClave ? 'eye-off-outline' : 'eye-outline'" aria-hidden="true"></ion-icon>
+          </button>
+        </span>
+      </label>
+      <button type="submit" class="sr-only" tabindex="-1">Entrar</button>
+    </form>
 
     <ion-button expand="block" class="ion-margin-top" (click)="enviar()" [disabled]="cargando">
       {{ cargando ? 'Cargando...' : (modoRegistro ? 'Registrarme' : 'Entrar') }}

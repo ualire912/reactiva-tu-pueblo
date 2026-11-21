@@ -1,155 +1,305 @@
-<ion-header>
-  <ion-toolbar color="primary">
-    <ion-title>Mi Perfil</ion-title>
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>Mi perfil</ion-title>
     <ion-buttons slot="end">
-      <ion-button (click)="cerrarSesion()" aria-label="Cerrar sesión">
-        <ion-icon slot="start" name="log-out-outline"></ion-icon>
-        Salir
+      <ion-button class="boton-cabecera neutro" (click)="cerrarSesion()">
+        <ion-icon slot="start" name="log-out-outline" aria-hidden="true"></ion-icon>
+        Cerrar sesión
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="ion-padding">
-  <div *ngIf="sb.profile$ | async as profile">
-    <!-- TARJETA 1: VINCULAR TELEGRAM -->
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <ion-card-title>Avisos por Telegram</ion-card-title>
-          <ion-badge [color]="profile.telegram_linked ? 'success' : 'medium'">
-            {{ profile.telegram_linked ? '✓ Vinculado' : 'Sin vincular' }}
-          </ion-badge>
+<ion-content class="rp-fondo">
+  <div class="perfil" *ngIf="sb.profile$ | async as profile">
+    <!-- SALUDO -->
+    <section class="perfil-saludo">
+      <span class="perfil-avatar" aria-hidden="true">{{ inicial }}</span>
+      <div class="perfil-saludo-textos">
+        <h1>¡Hola, {{ fullName.trim() || 'vecino/a' }}!</h1>
+        <div class="perfil-etiquetas">
+          @if (puebloActual; as p) {
+            <span class="etiqueta-pueblo" [style.--pueblo]="p.color">Vives en {{ p.nombre }}</span>
+          }
+          <span class="chip-mini">
+            <ion-icon [name]="papel(profile.rol).icono" aria-hidden="true"></ion-icon>
+            {{ papel(profile.rol).nombre }}
+          </span>
+          <span class="chip-mini" [class.ok]="profile.telegram_linked">
+            <ion-icon [name]="profile.telegram_linked ? 'checkmark-circle' : 'paper-plane-outline'" aria-hidden="true"></ion-icon>
+            {{ profile.telegram_linked ? 'Telegram conectado' : 'Telegram sin conectar' }}
+          </span>
         </div>
-        <ion-card-subtitle>
-          Recibe planes a tu medida, apuntate con un toque o habla con notas de voz.
-        </ion-card-subtitle>
-      </ion-card-header>
+      </div>
+    </section>
 
-      <ion-card-content>
-        <div *ngIf="!profile.telegram_linked">
-          <ion-button
-            expand="block"
-            color="secondary"
-            [href]="enlaceTelegram"
-            target="_blank">
-            <ion-icon slot="start" name="paper-plane-outline"></ion-icon>
-            Vincular mi Telegram
-          </ion-button>
+    <!-- ÍNDICE: ir directo a cada parte -->
+    <nav class="perfil-indice" aria-label="Partes del perfil">
+      <button type="button" class="perfil-ir verde" (click)="irA('mis-planes')">
+        <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon> Mis planes
+      </button>
+      <button type="button" class="perfil-ir melocoton" (click)="irA('mis-gustos')">
+        <ion-icon name="heart-outline" aria-hidden="true"></ion-icon> Mis gustos
+      </button>
+      <button type="button" class="perfil-ir sol" (click)="irA('avisos')">
+        <ion-icon name="notifications-outline" aria-hidden="true"></ion-icon> Avisos
+      </button>
+      <button type="button" class="perfil-ir lavanda" (click)="irA('mis-datos')">
+        <ion-icon name="person-outline" aria-hidden="true"></ion-icon> Mis datos
+      </button>
+    </nav>
 
-          <ion-button
-            expand="block"
-            fill="outline"
-            class="ion-margin-top"
-            (click)="comprobarVinculacion()"
-            [disabled]="comprobandoTelegram">
-            <ion-icon slot="start" name="refresh-outline"></ion-icon>
-            {{ comprobandoTelegram ? 'Comprobando...' : 'Ya lo he vinculado' }}
-          </ion-button>
+    <!-- MIS PLANES -->
+    <section class="bloque perfil-seccion" id="mis-planes" aria-labelledby="titulo-mis-planes">
+      <div class="perfil-seccion-cabecera">
+        <h2 id="titulo-mis-planes">Mis planes</h2>
+        <span class="perfil-contador">
+          {{ misPlanes.length === 0 ? 'Aún ninguno' : misPlanes.length === 1 ? 'Te has apuntado a 1' : 'Te has apuntado a ' + misPlanes.length }}
+        </span>
+      </div>
+
+      @if (misPlanes.length === 0) {
+        <div class="perfil-vacio">
+          <p>Cuando te apuntes a un plan, aparecerá aquí.</p>
+          <ion-button routerLink="/agenda">Ver planes de la comarca</ion-button>
         </div>
-
-        <div *ngIf="profile.telegram_linked">
-          <p>
-            <ion-icon name="checkmark-circle-outline" color="success"></ion-icon>
-            Tu cuenta está conectada con el bot. Rol actual: <strong>{{ profile.rol | uppercase }}</strong>
-            (Reputación: {{ profile.reputation_score }} pts).
-          </p>
+      } @else {
+        <div class="perfil-planes">
+          @for (insc of misPlanes; track insc.id) {
+            @let f = partesFecha(insc.eventos?.starts_at);
+            @let cat = estiloCategoria(insc.eventos?.category);
+            <a class="perfil-plan" [routerLink]="['/evento', insc.event_id]">
+              <span class="perfil-plan-fecha" [style.background]="cat.fondo">
+                <span class="num">{{ f.num }}</span>
+                <span class="mes" [style.color]="cat.tinta">{{ f.mes }}</span>
+              </span>
+              <span class="perfil-plan-info">
+                <strong>{{ insc.eventos?.title || 'Plan' }}</strong>
+                <span class="perfil-plan-linea"><span class="capital">{{ f.dia }}</span> {{ f.hora }} · {{ insc.eventos?.municipios?.nombre }}</span>
+              </span>
+              <span class="perfil-plan-estado" [class.espera]="insc.status !== 'confirmada'">
+                {{ insc.status === 'confirmada' ? 'Tienes plaza' : 'En lista de espera' }}
+              </span>
+              @if (avisoEstado(insc.eventos?.status); as aviso) {
+                <span class="perfil-plan-aviso">{{ aviso }}</span>
+              }
+            </a>
+          }
         </div>
-      </ion-card-content>
-    </ion-card>
+        <p class="campo-ayuda">Pulsa un plan para ver los detalles o borrarte.</p>
+      }
+    </section>
 
-    <!-- TARJETA 2: DATOS Y GUSTOS -->
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>Mis datos y preferencias</ion-card-title>
-      </ion-card-header>
+    <!-- MIS GUSTOS -->
+    <section class="bloque perfil-seccion" id="mis-gustos" aria-labelledby="titulo-mis-gustos">
+      <div>
+        <h2 id="titulo-mis-gustos">Mis gustos</h2>
+        <p class="perfil-explica">Así te enseñamos primero lo que te interesa. Puedes elegir todo lo que quieras.</p>
+      </div>
 
-      <ion-card-content>
-        <ion-list lines="full">
-          <ion-item>
-            <ion-input label="Nombre" labelPlacement="stacked" [(ngModel)]="fullName" placeholder="Tu nombre"></ion-input>
-          </ion-item>
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-actividades">
+        <div class="perfil-pregunta-cabecera">
+          <span id="pregunta-actividades">¿Qué te gusta hacer?</span>
+          <span class="perfil-contador">{{ categoriasFav.length === 0 ? 'Ninguna elegida' : categoriasFav.length === 1 ? '1 elegida' : categoriasFav.length + ' elegidas' }}</span>
+        </div>
+        <div class="perfil-opciones">
+          <button
+            type="button"
+            *ngFor="let cat of sb.categorias"
+            class="marcable"
+            [class.on]="categoriasFav.includes(cat.slug)"
+            [style.--color-fondo]="estiloCategoria(cat.slug).fondo"
+            [style.--color-tinta]="estiloCategoria(cat.slug).tinta"
+            [attr.aria-pressed]="categoriasFav.includes(cat.slug)"
+            (click)="toggleCategoria(cat.slug)">
+            <span class="marcable-caja" aria-hidden="true">
+              <ion-icon name="checkmark" *ngIf="categoriasFav.includes(cat.slug)"></ion-icon>
+            </span>
+            {{ cat.nombre }}
+          </button>
+        </div>
+      </div>
 
-          <ion-item>
-            <ion-input type="number" label="Edad (opcional)" labelPlacement="stacked" [(ngModel)]="edad" placeholder="Ej. 65"></ion-input>
-          </ion-item>
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-pueblos">
+        <div class="perfil-pregunta-cabecera">
+          <span id="pregunta-pueblos">¿De qué pueblos quieres enterarte?</span>
+          <button type="button" class="enlace-accion" (click)="alternarTodosPueblos()">
+            {{ municipiosFav.length === sb.municipios.length ? 'Quitar todos' : 'Elegir todos' }}
+          </button>
+        </div>
+        <div class="perfil-opciones">
+          <button
+            type="button"
+            *ngFor="let m of sb.municipios"
+            class="marcable"
+            [class.on]="municipiosFav.includes('' + m.id)"
+            [style.--color-fondo]="suave(colorPueblo(m.nombre))"
+            [style.--color-tinta]="colorPueblo(m.nombre)"
+            [attr.aria-pressed]="municipiosFav.includes('' + m.id)"
+            (click)="toggleMunicipioFav(m.id)">
+            <span class="marcable-caja" aria-hidden="true">
+              <ion-icon name="checkmark" *ngIf="municipiosFav.includes('' + m.id)"></ion-icon>
+            </span>
+            {{ m.nombre }}
+          </button>
+        </div>
+      </div>
+    </section>
 
-          <ion-item>
-            <ion-select label="Pueblo donde vives" labelPlacement="stacked" [(ngModel)]="municipioId" placeholder="Selecciona pueblo">
-              <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
-                {{ m.nombre }}
-              </ion-select-option>
-            </ion-select>
-          </ion-item>
+    <!-- AVISOS -->
+    <section class="bloque perfil-seccion" id="avisos" aria-labelledby="titulo-avisos">
+      <div>
+        <h2 id="titulo-avisos">Avisos</h2>
+        <p class="perfil-explica">Tú decides cómo y cuándo te avisamos.</p>
+      </div>
 
-          <ion-item>
-            <ion-toggle [(ngModel)]="notificacionesActivas">
-              Recibir recomendaciones de planes
-            </ion-toggle>
-          </ion-item>
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-avisos">
+        <span id="pregunta-avisos" class="perfil-pregunta-titulo">¿Quieres que te avisemos cuando haya planes que te gusten?</span>
+        <div class="eleccion-doble">
+          <button type="button" class="eleccion" [class.on]="notificacionesActivas" [attr.aria-pressed]="notificacionesActivas" (click)="notificacionesActivas = true">Sí, avísame</button>
+          <button type="button" class="eleccion" [class.on]="!notificacionesActivas" [attr.aria-pressed]="!notificacionesActivas" (click)="notificacionesActivas = false">No, gracias</button>
+        </div>
+      </div>
 
-          <ion-item>
-            <ion-toggle [(ngModel)]="prefiereAudio">
-              <ion-icon name="volume-high-outline" style="vertical-align: middle;"></ion-icon>
-              Prefiero recibir los avisos en audio (voz)
-            </ion-toggle>
-          </ion-item>
-        </ion-list>
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-voz">
+        <span id="pregunta-voz" class="perfil-pregunta-titulo">¿Prefieres escuchar los avisos en vez de leerlos?</span>
+        <span class="campo-ayuda">Útil si te cuesta leer en la pantalla. Te llegará una nota de voz.</span>
+        <div class="eleccion-doble">
+          <button type="button" class="eleccion" [class.on]="prefiereAudio" [attr.aria-pressed]="prefiereAudio" (click)="prefiereAudio = true">
+            <ion-icon name="volume-high-outline" aria-hidden="true"></ion-icon> Sí, en voz
+          </button>
+          <button type="button" class="eleccion" [class.on]="!prefiereAudio" [attr.aria-pressed]="!prefiereAudio" (click)="prefiereAudio = false">No, prefiero leerlos</button>
+        </div>
+      </div>
 
-        <div class="ion-margin-top">
-          <strong>¿Qué actividades te interesan?</strong>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
-            <ion-chip
-              *ngFor="let cat of sb.categorias"
-              [color]="categoriasFav.includes(cat.slug) ? 'primary' : 'light'"
-              (click)="toggleCategoria(cat.slug)">
-              <ion-label>{{ cat.nombre }}</ion-label>
-            </ion-chip>
+        <div class="telegram telegram-dentro" aria-labelledby="titulo-telegram">
+          <div class="telegram-cabecera">
+            <span class="telegram-logo" aria-hidden="true"><ion-icon name="paper-plane-outline"></ion-icon></span>
+            <div class="telegram-titulos">
+              <h3 id="titulo-telegram">Avisos en tu móvil por Telegram</h3>
+              <p>Te llegan los planes al móvil, sin tener que entrar en la web.</p>
+            </div>
+            <span class="telegram-estado" [class.conectado]="profile.telegram_linked">
+              <ion-icon [name]="profile.telegram_linked ? 'checkmark-circle' : 'ellipse-outline'" aria-hidden="true"></ion-icon>
+              {{ profile.telegram_linked ? 'Conectado' : 'Sin conectar' }}
+            </span>
           </div>
+
+          <ul class="telegram-ventajas" aria-label="Qué puedes hacer con Telegram">
+            <li class="ventaja sol">
+              <ion-icon name="notifications-outline" aria-hidden="true"></ion-icon>
+              <strong>Planes a tu gusto</strong>
+              <span>Te avisamos solo de lo que te interesa y en tu pueblo.</span>
+            </li>
+            <li class="ventaja verde">
+              <ion-icon name="hand-left-outline" aria-hidden="true"></ion-icon>
+              <strong>Apúntate con un toque</strong>
+              <span>Desde el mismo mensaje, sin rellenar nada.</span>
+            </li>
+            <li class="ventaja lavanda">
+              <ion-icon name="mic-outline" aria-hidden="true"></ion-icon>
+              <strong>Habla en vez de escribir</strong>
+              <span>Manda una nota de voz si te cuesta teclear.</span>
+            </li>
+          </ul>
+
+          @if (profile.telegram_linked) {
+            <div class="telegram-cuenta">
+              <div class="dato-cuenta">
+                <span class="dato-etiqueta">Tu papel</span>
+                <strong class="dato-valor">
+                  <ion-icon [name]="papel(profile.rol).icono" aria-hidden="true"></ion-icon>
+                  {{ papel(profile.rol).nombre }}
+                </strong>
+                <span class="dato-explica">{{ papel(profile.rol).explica }}</span>
+              </div>
+              <div class="dato-cuenta">
+                <span class="dato-etiqueta">Tu reputación</span>
+                <strong class="dato-valor">
+                  <ion-icon name="star-outline" aria-hidden="true"></ion-icon>
+                  {{ profile.reputation_score || 0 }} {{ profile.reputation_score === 1 ? 'punto' : 'puntos' }}
+                </strong>
+                <span class="dato-explica">Sube cuando organizas planes y la gente los valora bien.</span>
+              </div>
+            </div>
+          } @else {
+            <ol class="telegram-pasos" aria-label="Cómo conectarlo">
+              <li><span class="paso-marca" aria-hidden="true">1</span> Pulsa <strong>Conectar con Telegram</strong>.</li>
+              <li><span class="paso-marca" aria-hidden="true">2</span> En Telegram, pulsa <strong>Iniciar</strong>.</li>
+              <li><span class="paso-marca" aria-hidden="true">3</span> Vuelve aquí y pulsa <strong>Ya lo he conectado</strong>.</li>
+            </ol>
+            <div class="telegram-acciones">
+              <ion-button color="secondary" [href]="enlaceTelegram" target="_blank">
+                <ion-icon slot="start" name="paper-plane-outline" aria-hidden="true"></ion-icon>
+                Conectar con Telegram
+              </ion-button>
+              <ion-button fill="outline" (click)="comprobarVinculacion()" [disabled]="comprobandoTelegram">
+                <ion-icon slot="start" name="refresh-outline" aria-hidden="true"></ion-icon>
+                {{ comprobandoTelegram ? 'Comprobando…' : 'Ya lo he conectado' }}
+              </ion-button>
+            </div>
+          }
         </div>
+    </section>
 
-        <div class="ion-margin-top">
-          <strong>Pueblos favoritos (para avisarte de sus planes)</strong>
-          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
-            <ion-chip
-              *ngFor="let m of sb.municipios"
-              [color]="municipiosFav.includes('' + m.id) ? 'secondary' : 'light'"
-              (click)="toggleMunicipioFav(m.id)">
-              <ion-label>{{ m.nombre }}</ion-label>
-            </ion-chip>
-          </div>
+    <!-- MIS DATOS -->
+    <section class="bloque perfil-seccion" id="mis-datos" aria-labelledby="titulo-mis-datos">
+      <div>
+        <h2 id="titulo-mis-datos">Mis datos</h2>
+        <p class="perfil-explica">Solo los usamos para recomendarte planes. Nadie más los ve.</p>
+      </div>
+
+      <label class="campo perfil-nombre">
+        <span>¿Cómo quieres que te llamemos?</span>
+        <input type="text" [(ngModel)]="fullName" placeholder="Tu nombre" autocomplete="given-name" />
+        <small class="campo-ayuda">Así aparecerás en el chat de los planes.</small>
+      </label>
+
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-vivo">
+        <span id="pregunta-vivo" class="perfil-pregunta-titulo">¿En qué pueblo vives?</span>
+        <div class="perfil-opciones">
+          <button
+            type="button"
+            *ngFor="let m of sb.municipios"
+            class="chip-pueblo grande"
+            [class.on]="municipioId === m.id"
+            [attr.aria-pressed]="municipioId === m.id"
+            [style.--pueblo]="colorPueblo(m.nombre)"
+            (click)="municipioId = m.id">
+            {{ m.nombre }}
+          </button>
         </div>
+      </div>
 
-        <ion-button expand="block" class="ion-margin-top" (click)="guardarPerfil()" [disabled]="guardando">
-          <ion-icon slot="start" name="save-outline"></ion-icon>
-          {{ guardando ? 'Guardando...' : 'Guardar preferencias' }}
-        </ion-button>
-      </ion-card-content>
-    </ion-card>
-
-    <!-- TARJETA 3: MIS PLANES -->
-    <ion-card class="ion-no-margin">
-      <ion-card-header>
-        <ion-card-title>Mis planes apuntados ({{ misPlanes.length }})</ion-card-title>
-      </ion-card-header>
-
-      <ion-card-content>
-        <div *ngIf="misPlanes.length === 0">
-          <ion-note>Aún no te has apuntado a ningún plan.</ion-note>
+      <div class="perfil-pregunta" role="group" aria-labelledby="pregunta-edad">
+        <span id="pregunta-edad" class="perfil-pregunta-titulo">¿Cuántos años tienes? <span class="opcional">(opcional)</span></span>
+        <div class="perfil-opciones">
+          <button
+            type="button"
+            *ngFor="let r of rangosEdad"
+            class="eleccion"
+            [class.on]="rangoEdad === r.id"
+            [attr.aria-pressed]="rangoEdad === r.id"
+            (click)="elegirRangoEdad(r.id)">
+            {{ r.texto }}
+          </button>
         </div>
-
-        <ion-list lines="full" *ngIf="misPlanes.length > 0">
-          <ion-item *ngFor="let insc of misPlanes" [routerLink]="['/evento', insc.event_id]" button="true">
-            <ion-label class="ion-text-wrap">
-              <h3>{{ insc.eventos?.title || 'Evento' }}</h3>
-              <p>{{ insc.eventos?.municipios?.nombre }} · {{ formatearFecha(insc.eventos?.starts_at) }}</p>
-            </ion-label>
-            <ion-badge slot="end" [color]="insc.status === 'confirmada' ? 'success' : 'warning'">
-              {{ insc.status === 'confirmada' ? 'Confirmada' : 'En espera' }}
-            </ion-badge>
-          </ion-item>
-        </ion-list>
-      </ion-card-content>
-    </ion-card>
+        <span class="campo-ayuda">Basta con un rango. Sirve para recomendarte planes de tu edad.</span>
+      </div>
+    </section>
   </div>
 </ion-content>
+
+<!-- Barra de guardar, siempre a la vista -->
+<ion-footer class="perfil-guardar">
+  <div class="perfil-guardar-dentro">
+    <span class="perfil-guardar-estado" role="status" [class.pendiente]="hayCambios" [class.hecho]="!hayCambios && guardadoReciente">
+      <span class="punto" aria-hidden="true"></span>
+      {{ hayCambios ? 'Tienes cambios sin guardar' : guardadoReciente ? 'Cambios guardados' : 'Todo está al día' }}
+    </span>
+    <button type="button" class="boton-guardar" [class.activo]="hayCambios" (click)="guardarPerfil()" [disabled]="guardando || !hayCambios">
+      <ion-icon [name]="hayCambios ? 'save-outline' : 'checkmark-circle'" aria-hidden="true"></ion-icon>
+      {{ guardando ? 'Guardando…' : hayCambios ? 'Guardar cambios' : 'Guardado' }}
+    </button>
+  </div>
+</ion-footer>

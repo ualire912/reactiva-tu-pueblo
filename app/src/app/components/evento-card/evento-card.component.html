@@ -1,0 +1,68 @@
+<a
+  class="ev-card"
+  [routerLink]="['/evento', ev().id]"
+  [class.terminado]="terminado()"
+  [class.cancelado]="ev().status === 'cancelado'"
+  [style.--pueblo]="ev().color"
+  [style.--cat-fondo]="estilo().fondo"
+  [style.--cat-tinta]="estilo().tinta">
+  <div class="ev-poster" [class.con-cartel]="!!ev().poster_url">
+    @if (ev().poster_url) {
+      <img [src]="ev().poster_url" [alt]="'Cartel de ' + ev().title" loading="lazy" />
+    } @else {
+      <ion-icon class="ev-poster-icono" [name]="iconoLinea()" aria-hidden="true"></ion-icon>
+    }
+
+    <span class="ev-fecha" aria-hidden="true">
+      <span class="ev-fecha-num">{{ fecha().num }}</span>
+      <span class="ev-fecha-mes">{{ fecha().mes }}</span>
+    </span>
+
+    @if (terminado()) {
+      <span class="ev-sello-finalizado">Finalizado</span>
+    }
+    @if (cinta(); as c) {
+      <span [class]="'ev-cinta ' + c.clase">{{ c.texto }}</span>
+    }
+  </div>
+
+  <div class="ev-cuerpo">
+    <div class="ev-etiquetas">
+      <span class="ev-etiqueta-cat">{{ categoriaNombre() }}</span>
+      <span class="ev-etiqueta-pueblo">{{ ev().pueblo }}</span>
+      @if (ev().is_accessible) {
+        <span class="ev-etiqueta-accesible">
+          <ion-icon name="accessibility" aria-hidden="true"></ion-icon>
+          Accesible
+        </span>
+      }
+    </div>
+
+    <h3 class="ev-titulo">{{ ev().title }}</h3>
+
+    <p class="ev-linea">
+      <span class="sr-only">{{ fechaCompleta() }}. </span>
+      <span aria-hidden="true" class="ev-dia">{{ fecha().dia }} {{ fecha().hora }}</span> · {{ ubicacion() }}
+    </p>
+
+    <p class="ev-linea">
+      Organiza {{ ev().organizador_nombre }}
+      <span class="ev-estrellas" role="img" [attr.aria-label]="etiquetaValoracion()">
+        @if (ev().organizador_media != null) {
+          · <ion-icon name="star" aria-hidden="true"></ion-icon> {{ valoracion() }}
+        } @else {
+          · <span class="ev-nuevo">Nuevo</span>
+        }
+      </span>
+    </p>
+
+    @if (!terminado() && ev().max_capacity) {
+      <p class="ev-plazas-texto">{{ plazas() }}</p>
+    }
+
+    <div class="ev-pie">
+      <span class="ev-precio-pie"><span class="sr-only">Precio: </span>{{ precio() }}</span>
+      <span class="ev-cta" [class.destacada]="ctaDestacada()">{{ cta() }}</span>
+    </div>
+  </div>
+</a>

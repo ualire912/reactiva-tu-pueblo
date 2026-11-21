@@ -1,4 +1,4 @@
-import { Component, inject } from '@angular/core';
+import { ChangeDetectorRef, Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -14,9 +14,12 @@ import {
   IonLabel,
   IonInput,
   IonButton,
-  ToastController
+  IonIcon
 } from '@ionic/angular';
+import { addIcons } from 'ionicons';
+import { eyeOutline, eyeOffOutline } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
+import { AvisosService } from '../../../core/avisos.service';
 
 @Component({
   selector: 'app-login',
@@ -35,23 +38,34 @@ import { SupabaseService } from '../../../core/supabase.service';
     IonItem,
     IonLabel,
     IonInput,
-    IonButton
+    IonButton,
+    IonIcon
   ]
 })
 export class LoginPage {
+  /** Mostrar u ocultar la contraseña (ayuda a quien escribe despacio o con el móvil). */
+  verClave = false;
+
+  constructor() {
+    addIcons({ eyeOutline, eyeOffOutline });
+  }
+
   private sb = inject(SupabaseService);
   private router = inject(Router);
-  private toastCtrl = inject(ToastController);
+  private avisos = inject(AvisosService);
 
   modoRegistro = false;
   fullName = '';
   email = '';
   password = '';
   cargando = false;
+  /** Sin zone.js: avisar a Angular tras esperar al servidor para que repinte el botón. */
+  private cdr = inject(ChangeDetectorRef);
 
   async enviar() {
+    if (this.cargando) return;
     if (!this.email || !this.password) {
-      this.mostrarAviso('Escribe tu correo y contraseña');
+      this.avisos.aviso('Escribe tu correo y tu contraseña.');
       return;
     }
 
@@ -66,25 +80,22 @@ export class LoginPage {
           }
         });
         if (error) throw error;
-        this.mostrarAviso('¡Cuenta creada! Bienvenido/a');
+        this.avisos.ok('¡Cuenta creada! Te damos la bienvenida.');
       } else {
         const { error } = await this.sb.client.auth.signInWithPassword({
           email: this.email.trim(),
           password: this.password
         });
         if (error) throw error;
-        this.mostrarAviso('Sesión iniciada');
+        this.avisos.ok('¡Hola de nuevo!');
       }
-      this.router.navigateByUrl('/agenda');
+      this.router.navigateByUrl('/inicio');
     } catch (err: any) {
-      this.mostrarAviso(err.message || 'Error al iniciar sesión');
+      this.avisos.error(err, 'No hemos podido entrar. Revisa tus datos e inténtalo de nuevo.');
     } finally {
       this.cargando = false;
+      this.cdr.markForCheck();
     }
   }
 
-  private async mostrarAviso(message: string) {
-    const toast = await this.toastCtrl.create({ message, duration: 2500, position: 'bottom' });
-    await toast.present();
-  }
 }

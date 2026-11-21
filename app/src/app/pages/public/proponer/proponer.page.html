@@ -1,139 +1,504 @@
-<ion-header>
-  <ion-toolbar color="primary">
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
     <ion-buttons slot="start">
-      <ion-back-button defaultHref="/agenda" text="Agenda"></ion-back-button>
+      <ion-back-button defaultHref="/inicio" text="Salir"></ion-back-button>
     </ion-buttons>
     <ion-title>Proponer un plan</ion-title>
   </ion-toolbar>
+
+  @if (paso() > 0) {
+    <div class="asistente-progreso">
+      <div class="asistente-progreso-texto">
+        <span>Paso {{ paso() }} de {{ totalPasos }}</span>
+        <strong>{{ nombrePaso() }}</strong>
+      </div>
+      <div
+        class="asistente-barra"
+        role="progressbar"
+        aria-label="Progreso"
+        aria-valuemin="1"
+        [attr.aria-valuemax]="totalPasos"
+        [attr.aria-valuenow]="paso()">
+        <span [style.width.%]="(paso() / totalPasos) * 100"></span>
+      </div>
+    </div>
+  }
 </ion-header>
 
-<ion-content class="ion-padding">
-  <ion-card class="ion-no-margin ion-margin-bottom" color="light">
-    <ion-card-header>
-      <ion-card-title>
-        <ion-icon name="sparkles-outline" color="secondary"></ion-icon> Autocompletar con IA
-      </ion-card-title>
-      <ion-card-subtitle>
-        Sube la foto del cartel o pega el texto de Facebook y rellenamos la ficha por ti.
-      </ion-card-subtitle>
-    </ion-card-header>
-
-    <ion-card-content>
-      <input
-        type="file"
-        accept="image/*"
-        #fileInput
-        hidden
-        (change)="onFileSelected($event)" />
-
-      <ion-button expand="block" fill="outline" (click)="fileInput.click()" [disabled]="subiendoFoto">
-        <ion-icon slot="start" name="image-outline"></ion-icon>
-        {{ subiendoFoto ? 'Subiendo cartel...' : (posterUrl ? 'Cambiar foto del cartel' : 'Subir foto del cartel') }}
-      </ion-button>
-
-      <img
-        *ngIf="posterUrl"
-        [src]="posterUrl"
-        alt="Vista previa del cartel"
-        style="width: 100%; max-height: 180px; object-fit: contain; margin-top: 10px; border-radius: 8px;" />
-
-      <ion-item lines="outline" class="ion-margin-top">
-        <ion-textarea
-          label="O pega aquí el texto del anuncio (opcional)"
-          labelPlacement="stacked"
-          [(ngModel)]="textoCartelOpcional"
-          placeholder="Ej. Este domingo ruta senderista en Velefique a las 9:00..."></ion-textarea>
-      </ion-item>
-
-      <ion-button
-        expand="block"
-        color="secondary"
-        class="ion-margin-top"
-        (click)="rellenarConIa()"
-        [disabled]="extrayendoIa || (!posterUrl && !textoCartelOpcional.trim())">
-        <ion-icon slot="start" name="sparkles-outline"></ion-icon>
-        {{ extrayendoIa ? 'Leyendo cartel con IA...' : 'Rellenar datos con IA' }}
-      </ion-button>
-
-      <div *ngIf="camposFaltantes.length > 0" class="ion-margin-top">
-        <ion-badge color="warning">
-          <ion-icon name="alert-circle-outline"></ion-icon> Faltan datos en el cartel: {{ camposFaltantes.join(', ') }}
-        </ion-badge>
+<ion-content class="rp-fondo">
+  <div class="asistente">
+    @if (listaErrores.length && paso() > 0) {
+      <div class="resumen-errores" id="resumen-errores" role="alert" tabindex="-1">
+        <span class="resumen-errores-icono" aria-hidden="true"><ion-icon name="alert-circle"></ion-icon></span>
+        <div>
+          <p class="resumen-errores-titulo">
+            {{ listaErrores.length === 1 ? 'Falta una cosa' : 'Faltan ' + listaErrores.length + ' cosas' }} para seguir
+          </p>
+          <ul>
+            @for (e of listaErrores; track e.campo) {
+              <li>
+                <button type="button" class="enlace-error" (click)="irACampo(e.id)">{{ e.etiqueta }}</button>
+                @if (e.paso !== paso()) {
+                  <span class="resumen-errores-seccion"> ({{ e.seccion }})</span>
+                }<span>: {{ e.mensaje }}</span>
+              </li>
+            }
+          </ul>
+        </div>
       </div>
-    </ion-card-content>
-  </ion-card>
+    }
 
-  <ion-list lines="full">
-    <ion-item [color]="faltaCampo('title') ? 'warning' : undefined">
-      <ion-input label="Título del plan *" labelPlacement="stacked" [(ngModel)]="title" placeholder="Ej. Vuelta en bici por la Vía Verde"></ion-input>
-    </ion-item>
+    @switch (paso()) {
+      <!-- ============================================ 0 · CÓMO EMPEZAR -->
+      @case (0) {
+        <div class="pregunta">
+          <h1>¿Organizas algo en tu pueblo?</h1>
+          <p>Compártelo con la comarca. Es gratis y se hace en unos minutos.</p>
+        </div>
 
-    <ion-item [color]="faltaCampo('municipio') ? 'warning' : undefined">
-      <ion-select label="Pueblo *" labelPlacement="stacked" [(ngModel)]="municipioId" placeholder="Selecciona pueblo">
-        <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
-          {{ m.nombre }}
-        </ion-select-option>
-      </ion-select>
-    </ion-item>
+        <div class="opciones-inicio">
+          <button type="button" class="opcion-grande sol" [class.on]="modoCartel()" [attr.aria-pressed]="modoCartel()" (click)="modoCartel.set(true)">
+            <span class="opcion-icono" aria-hidden="true"><ion-icon name="image-outline"></ion-icon></span>
+            <span class="opcion-textos">
+              <strong>Tengo un cartel o un anuncio</strong>
+              <span>Haz una foto o pega el texto y rellenamos los datos por ti.</span>
+            </span>
+          </button>
+          <button type="button" class="opcion-grande verde" (click)="irAPaso(1)">
+            <span class="opcion-icono" aria-hidden="true"><ion-icon name="create-outline"></ion-icon></span>
+            <span class="opcion-textos">
+              <strong>Lo cuento yo, paso a paso</strong>
+              <span>Te hacemos 4 preguntas sencillas. Puedes volver atrás cuando quieras.</span>
+            </span>
+          </button>
+        </div>
 
-    <ion-item [color]="faltaCampo('category') ? 'warning' : undefined">
-      <ion-select label="Categoría" labelPlacement="stacked" [(ngModel)]="category">
-        <ion-select-option *ngFor="let c of sb.categorias" [value]="c.slug">
-          {{ c.nombre }}
-        </ion-select-option>
-      </ion-select>
-    </ion-item>
+        @if (modoCartel()) {
+          <section class="bloque bloque-ia" aria-labelledby="titulo-cartel">
+            <h2 id="titulo-cartel"><ion-icon name="sparkles" aria-hidden="true"></ion-icon> Rellenamos el plan por ti</h2>
+            <div class="ia-fila">
+              <div class="ia-cartel">
+                <span class="ia-titulo">Sube una foto del cartel</span>
+                <input type="file" accept="image/*" id="cartel" class="sr-only" (change)="onFileSelected($event)" />
+                <label for="cartel" class="ia-subir">
+                  <ion-icon name="image-outline" aria-hidden="true"></ion-icon>
+                  <strong>{{ subiendoFoto() ? 'Subiendo…' : posterUrl() ? 'Cambiar el cartel' : 'Elegir una foto' }}</strong>
+                  <small>JPG o PNG, desde el móvil o el ordenador</small>
+                </label>
+                @if (posterUrl()) {
+                  <img [src]="posterUrl()" alt="Vista previa del cartel" class="cartel-previa" />
+                }
+              </div>
+              <label class="campo ia-texto">
+                <span class="ia-titulo">O pega aquí el texto del anuncio</span>
+                <textarea rows="4" [(ngModel)]="textoCartelOpcional" placeholder="Ej. Este domingo ruta senderista en Velefique a las 9:00…"></textarea>
+              </label>
+            </div>
+            <ion-button
+              expand="block"
+              color="secondary"
+              (click)="rellenarConIa()"
+              [disabled]="extrayendoIa() || (!posterUrl() && !textoCartelOpcional.trim())">
+              @if (extrayendoIa()) {
+                <ion-spinner name="dots" slot="start"></ion-spinner> Leyendo el cartel… (puede tardar un poco)
+              } @else {
+                <ion-icon slot="start" name="sparkles" aria-hidden="true"></ion-icon> Rellenar los datos por mí
+              }
+            </ion-button>
+            <p class="campo-ayuda centrado">Después podrás revisar y cambiar todo antes de enviarlo.</p>
+          </section>
+        }
 
-    <ion-item [color]="faltaCampo('starts_at') ? 'warning' : undefined">
-      <ion-input type="datetime-local" label="Fecha y hora de inicio *" labelPlacement="stacked" [(ngModel)]="startsAtLocal"></ion-input>
-    </ion-item>
+        <p class="asistente-nota">
+          <ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon>
+          Una persona del equipo lo revisa antes de publicarlo, así que no te preocupes si algo no queda perfecto.
+        </p>
+      }
 
-    <ion-item>
-      <ion-input type="datetime-local" label="Fecha límite de inscripción (opcional)" labelPlacement="stacked" [(ngModel)]="inscripcionHastaLocal"></ion-input>
-    </ion-item>
+      <!-- ============================================ 1 · QUÉ -->
+      @case (1) {
+        <div class="pregunta">
+          <h1>¿Qué plan es?</h1>
+          <p>Ponle un nombre corto y elige de qué tipo es.</p>
+        </div>
 
-    <ion-item [color]="faltaCampo('duration_minutes') ? 'warning' : undefined">
-      <ion-input type="number" label="Duración aproximada (minutos)" labelPlacement="stacked" [(ngModel)]="durationMinutes"></ion-input>
-    </ion-item>
+        <section class="bloque">
+          <label class="campo" [class.falta]="falta('title')" [class.con-error]="error('title')">
+            <span>Nombre del plan</span>
+            <input
+              id="f-title"
+              class="campo-grande"
+              type="text"
+              maxlength="140"
+              [(ngModel)]="title"
+              (ngModelChange)="limpiarServidor('title')"
+              [attr.aria-invalid]="error('title') ? true : null"
+              [attr.aria-describedby]="error('title') ? 'err-title' : 'ayuda-title'"
+              placeholder="Ej. Ruta por las minas de Lucainena" />
+            <small class="campo-ayuda" id="ayuda-title">Así lo verá la gente en la agenda.</small>
+            @if (error('title'); as m) {
+              <span class="campo-error" id="err-title"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </label>
 
-    <ion-item [color]="faltaCampo('location_name') ? 'warning' : undefined">
-      <ion-input label="Punto de encuentro / Lugar" labelPlacement="stacked" [(ngModel)]="locationName" placeholder="Ej. Plaza del Ayuntamiento"></ion-input>
-    </ion-item>
+          <div class="campo" role="group" aria-labelledby="etiqueta-actividad">
+            <span id="etiqueta-actividad">¿De qué tipo es?</span>
+            <div class="cat-opciones">
+              @for (c of sb.categorias; track c.slug) {
+                <button
+                  type="button"
+                  class="cat-chip grande"
+                  [class.on]="category === c.slug"
+                  [attr.aria-pressed]="category === c.slug"
+                  [style.--cat-fondo]="estiloCategoria(c.slug).fondo"
+                  [style.--cat-tinta]="estiloCategoria(c.slug).tinta"
+                  (click)="category = c.slug">
+                  {{ c.nombre }}
+                </button>
+              }
+            </div>
+          </div>
 
-    <ion-item [color]="faltaCampo('price') ? 'warning' : undefined">
-      <ion-input type="number" label="Precio en € (0 = Gratis)" labelPlacement="stacked" [(ngModel)]="price"></ion-input>
-    </ion-item>
+          <label class="campo">
+            <span>Cuéntalo con tus palabras <span class="opcional">(opcional)</span></span>
+            <textarea rows="4" [(ngModel)]="description" placeholder="Qué vais a hacer, qué hay que llevar, si se pueden traer mascotas…"></textarea>
+          </label>
+        </section>
+      }
 
-    <ion-item [color]="faltaCampo('max_capacity') ? 'warning' : undefined">
-      <ion-input type="number" label="Plazas máximas (vacío = sin límite)" labelPlacement="stacked" [(ngModel)]="maxCapacity"></ion-input>
-    </ion-item>
+      <!-- ============================================ 2 · CUÁNDO -->
+      @case (2) {
+        <div class="pregunta">
+          <h1>¿Cuándo es?</h1>
+          <p>Toca un día y una hora, o escríbelos tú.</p>
+        </div>
 
-    <ion-item>
-      <ion-input type="number" label="Edad mínima (opcional)" labelPlacement="stacked" [(ngModel)]="minAge"></ion-input>
-    </ion-item>
+        <section class="bloque">
+          <div class="campo" role="group" aria-labelledby="etiqueta-dia" [class.con-error]="error('starts_at')">
+            <span id="etiqueta-dia">¿Qué día?</span>
+            <div class="atajos-eleccion">
+              @for (d of opcionesDia; track d.valor) {
+                <button type="button" class="eleccion" [class.on]="fecha === d.valor" [attr.aria-pressed]="fecha === d.valor" (click)="fecha = d.valor; limpiarServidor('starts_at')">
+                  {{ d.texto }}
+                </button>
+              }
+            </div>
+            <label class="sub-campo">
+              <span>Otro día</span>
+              <span class="campo-icono">
+                <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon>
+                <input id="f-fecha" type="date" [(ngModel)]="fecha" (ngModelChange)="limpiarServidor('starts_at')" [attr.aria-invalid]="error('starts_at') ? true : null" />
+              </span>
+            </label>
+          </div>
 
-    <ion-item>
-      <ion-input type="number" label="Edad máxima (opcional)" labelPlacement="stacked" [(ngModel)]="maxAge"></ion-input>
-    </ion-item>
+          <div class="campo" role="group" aria-labelledby="etiqueta-hora" [class.con-error]="error('starts_at')">
+            <span id="etiqueta-hora">¿A qué hora empieza?</span>
+            <div class="atajos-eleccion">
+              @for (h of opcionesHora; track h.valor) {
+                <button type="button" class="eleccion" [class.on]="hora === h.valor" [attr.aria-pressed]="hora === h.valor" (click)="hora = h.valor; limpiarServidor('starts_at')">
+                  {{ h.texto }}
+                </button>
+              }
+            </div>
+            <label class="sub-campo">
+              <span>Otra hora</span>
+              <span class="campo-icono">
+                <ion-icon name="time-outline" aria-hidden="true"></ion-icon>
+                <input id="f-hora" type="time" [(ngModel)]="hora" (ngModelChange)="limpiarServidor('starts_at')" />
+              </span>
+            </label>
+            @if (error('starts_at'); as m) {
+              <span class="campo-error" id="err-starts_at"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
 
-    <ion-item [color]="faltaCampo('description') ? 'warning' : undefined">
-      <ion-textarea
-        label="Descripción y detalles"
-        labelPlacement="stacked"
-        rows="4"
-        [(ngModel)]="description"
-        placeholder="Qué hay que llevar, dificultad, si se admiten mascotas..."></ion-textarea>
-    </ion-item>
+          <div class="campo" role="group" aria-labelledby="etiqueta-duracion" [class.con-error]="error('duration_minutes')">
+            <span id="etiqueta-duracion">¿Cuánto dura más o menos?</span>
+            <div class="atajos-eleccion">
+              @for (d of opcionesDuracion; track d.valor) {
+                <button type="button" class="eleccion" [class.on]="durationMinutes === d.valor" [attr.aria-pressed]="durationMinutes === d.valor" (click)="durationMinutes = d.valor">
+                  {{ d.texto }}
+                </button>
+              }
+            </div>
+            <label class="sub-campo">
+              <span>Otra duración (en minutos)</span>
+              <input id="f-duracion" type="number" min="0" step="15" [(ngModel)]="durationMinutes" (ngModelChange)="limpiarServidor('duration_minutes')" />
+            </label>
+            @if (error('duration_minutes'); as m) {
+              <span class="campo-error" id="err-duration_minutes"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
 
-    <ion-item>
-      <ion-toggle [(ngModel)]="isAccessible">
-        Actividad accesible (movilidad reducida / mayores)
-      </ion-toggle>
-    </ion-item>
-  </ion-list>
+          <button type="button" class="mas-opciones" [attr.aria-expanded]="verMasFecha || !!inscripcionHastaLocal" (click)="verMasFecha = !verMasFecha">
+            <ion-icon [name]="verMasFecha || inscripcionHastaLocal ? 'remove-circle-outline' : 'add-circle-outline'" aria-hidden="true"></ion-icon>
+            ¿Hay que apuntarse antes de una fecha?
+          </button>
+          @if (verMasFecha || inscripcionHastaLocal || error('inscripcion_hasta')) {
+            <div class="campo plegable" role="group" aria-labelledby="etiqueta-limite" [class.con-error]="error('inscripcion_hasta')">
+              <span id="etiqueta-limite">¿Hasta cuándo se puede apuntar la gente?</span>
+              <div class="atajos-eleccion">
+                @for (o of opcionesLimite; track o.texto) {
+                  <button type="button" class="eleccion" [class.on]="limiteFecha === o.valor" [attr.aria-pressed]="limiteFecha === o.valor" (click)="limiteFecha = o.valor">
+                    {{ o.texto }}
+                  </button>
+                }
+              </div>
+              <label class="sub-campo">
+                <span>Otro día</span>
+                <span class="campo-icono">
+                  <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon>
+                  <input id="f-limite" type="date" [max]="fecha || null" [ngModel]="limiteFecha" (ngModelChange)="limiteFecha = $event" [attr.aria-invalid]="error('inscripcion_hasta') ? true : null" />
+                </span>
+              </label>
+              @if (textoLimite) {
+                <p class="eleccion-resumen"><ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon> {{ textoLimite }}</p>
+              } @else {
+                <small class="campo-ayuda">La gente podrá apuntarse hasta que empiece el plan.</small>
+              }
+              @if (error('inscripcion_hasta'); as m) {
+                <span class="campo-error" id="err-inscripcion_hasta"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+              }
+            </div>
+          }
+        </section>
+      }
 
-  <ion-button expand="block" class="ion-margin-top ion-margin-bottom" (click)="guardarEvento()" [disabled]="guardando">
-    <ion-icon slot="start" name="save-outline"></ion-icon>
-    {{ guardando ? 'Enviando...' : 'Enviar propuesta' }}
-  </ion-button>
+      <!-- ============================================ 3 · DÓNDE -->
+      @case (3) {
+        <div class="pregunta">
+          <h1>¿Dónde es?</h1>
+          <p>Elige el pueblo y, si quieres, el sitio exacto donde quedáis.</p>
+        </div>
+
+        <section class="bloque">
+          <div class="campo" role="group" aria-labelledby="etiqueta-pueblo" [class.con-error]="error('municipio')">
+            <span id="etiqueta-pueblo">¿En qué pueblo?</span>
+            <div class="atajos-eleccion" id="f-pueblo" tabindex="-1">
+              @for (m of sb.municipios; track m.id) {
+                <button
+                  type="button"
+                  class="chip-pueblo grande"
+                  [class.on]="municipioId === m.id"
+                  [attr.aria-pressed]="municipioId === m.id"
+                  [style.--pueblo]="colorPuebloDe(m.nombre)"
+                  (click)="elegirPueblo(m.id)">
+                  {{ m.nombre }}
+                </button>
+              }
+            </div>
+            @if (error('municipio'); as m) {
+              <span class="campo-error" id="err-municipio"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
+
+          <label class="campo" [class.con-error]="error('location_name')">
+            <span>Sitio exacto <span class="opcional">(opcional)</span></span>
+            <span class="campo-con-boton">
+              <input
+                id="f-lugar"
+                type="text"
+                [(ngModel)]="locationName"
+                (ngModelChange)="limpiarServidor('location_name')"
+                (change)="buscarCoordenadas()"
+                placeholder="Ej. Plaza de la Iglesia" />
+              <button type="button" class="boton-sec" (click)="buscarCoordenadas()" [disabled]="buscandoLugar()" aria-label="Buscar el sitio en el mapa">
+                <ion-icon name="search" aria-hidden="true"></ion-icon>
+              </button>
+            </span>
+            <small class="campo-ayuda">Si no lo sabes aún, déjalo vacío y pondremos «Por confirmar».</small>
+            @if (error('location_name'); as m) {
+              <span class="campo-error" id="err-location_name"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </label>
+
+          <div id="mapa-proponer" class="mapa-mini" role="region" aria-label="Mapa para situar el punto de encuentro. Puedes tocar el mapa o arrastrar la chincheta para ajustarlo."></div>
+
+          <p class="estado-lugar" role="status">
+            @switch (estadoLugar()) {
+              @case ('encontrado') {
+                <ion-icon name="checkmark-circle" aria-hidden="true" class="ok"></ion-icon>
+                Sitio marcado en el mapa. Si no es exacto, toca el mapa o arrastra la chincheta.
+              }
+              @case ('pueblo') {
+                <ion-icon name="alert-circle" aria-hidden="true" class="medio"></ion-icon>
+                No encontramos ese sitio exacto; hemos puesto el centro del pueblo. Toca el mapa para afinarlo.
+              }
+              @case ('no-encontrado') {
+                <ion-icon name="alert-circle" aria-hidden="true" class="medio"></ion-icon>
+                No encontramos el sitio. Toca el mapa para marcarlo (si no, usaremos el centro del pueblo).
+              }
+              @default {
+                Al elegir el pueblo o escribir el sitio, lo marcamos solo en el mapa.
+              }
+            }
+            @if (buscandoLugar()) {
+              <ion-spinner name="dots"></ion-spinner>
+            }
+          </p>
+        </section>
+      }
+
+      <!-- ============================================ 4 · DETALLES -->
+      @case (4) {
+        <div class="pregunta">
+          <h1>Últimos detalles</h1>
+          <p>Contesta con un toque. Si algo no aplica, deja la primera opción.</p>
+        </div>
+
+        <section class="bloque">
+          <div class="campo" role="group" aria-labelledby="etiqueta-precio" [class.con-error]="error('price')">
+            <span id="etiqueta-precio">¿Cuesta dinero?</span>
+            <div class="eleccion-doble">
+              <button type="button" class="eleccion" [class.on]="esGratis" [attr.aria-pressed]="esGratis" (click)="elegirGratis(true)">Es gratis</button>
+              <button type="button" class="eleccion" [class.on]="!esGratis" [attr.aria-pressed]="!esGratis" (click)="elegirGratis(false)">Hay que pagar</button>
+            </div>
+            @if (!esGratis) {
+              <label class="sub-campo">
+                <span>¿Cuánto cuesta por persona? (€)</span>
+                <input id="f-precio" type="number" min="0" step="0.5" inputmode="decimal" [(ngModel)]="price" (ngModelChange)="limpiarServidor('price')" [attr.aria-invalid]="error('price') ? true : null" placeholder="Ej. 5" />
+              </label>
+            }
+            @if (error('price'); as m) {
+              <span class="campo-error" id="err-price"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
+
+          <div class="campo" role="group" aria-labelledby="etiqueta-plazas" [class.con-error]="error('max_capacity')">
+            <span id="etiqueta-plazas">¿Hay plazas limitadas?</span>
+            <div class="eleccion-doble">
+              <button type="button" class="eleccion" [class.on]="!hayLimite" [attr.aria-pressed]="!hayLimite" (click)="elegirLimite(false)">Puede venir todo el mundo</button>
+              <button type="button" class="eleccion" [class.on]="hayLimite" [attr.aria-pressed]="hayLimite" (click)="elegirLimite(true)">Sí, hay un máximo</button>
+            </div>
+            @if (hayLimite) {
+              <label class="sub-campo">
+                <span>¿Cuántas plazas hay?</span>
+                <input id="f-plazas" type="number" min="1" inputmode="numeric" [(ngModel)]="maxCapacity" (ngModelChange)="limpiarServidor('max_capacity')" [attr.aria-invalid]="error('max_capacity') ? true : null" placeholder="Ej. 20" />
+              </label>
+            }
+            @if (error('max_capacity'); as m) {
+              <span class="campo-error" id="err-max_capacity"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
+
+          <div class="campo" role="group" aria-labelledby="etiqueta-edades" [class.con-error]="error('min_age') || error('max_age')">
+            <span id="etiqueta-edades">¿Para qué edades es?</span>
+            <div class="eleccion-doble">
+              <button type="button" class="eleccion" [class.on]="todasEdades" [attr.aria-pressed]="todasEdades" (click)="elegirEdades(true)">Todas las edades</button>
+              <button type="button" class="eleccion" [class.on]="!todasEdades" [attr.aria-pressed]="!todasEdades" (click)="elegirEdades(false)">Solo algunas edades</button>
+            </div>
+            @if (!todasEdades) {
+              <div class="sub-fila">
+                <label class="sub-campo">
+                  <span>Desde (años)</span>
+                  <input id="f-edad-min" type="number" min="0" inputmode="numeric" [(ngModel)]="minAge" (ngModelChange)="limpiarServidor('min_age')" placeholder="Ej. 8" />
+                </label>
+                <label class="sub-campo">
+                  <span>Hasta (años)</span>
+                  <input id="f-edad-max" type="number" min="0" inputmode="numeric" [(ngModel)]="maxAge" (ngModelChange)="limpiarServidor('max_age')" placeholder="Ej. 14" />
+                </label>
+              </div>
+            }
+            @if (error('min_age'); as m) {
+              <span class="campo-error" id="err-min_age"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+            @if (error('max_age'); as m) {
+              <span class="campo-error" id="err-max_age"><ion-icon name="alert-circle" aria-hidden="true"></ion-icon>{{ m }}</span>
+            }
+          </div>
+
+          <div class="campo" role="group" aria-labelledby="etiqueta-accesible">
+            <span id="etiqueta-accesible">¿Pueden venir personas en silla de ruedas o con andador?</span>
+            <div class="eleccion-doble">
+              <button type="button" class="eleccion" [class.on]="isAccessible" [attr.aria-pressed]="isAccessible" (click)="isAccessible = true">
+                <ion-icon name="accessibility" aria-hidden="true"></ion-icon> Sí, es accesible
+              </button>
+              <button type="button" class="eleccion" [class.on]="!isAccessible" [attr.aria-pressed]="!isAccessible" (click)="isAccessible = false">No o no lo sé</button>
+            </div>
+          </div>
+        </section>
+      }
+
+      <!-- ============================================ 5 · REVISAR -->
+      @case (5) {
+        <div class="pregunta">
+          <h1>Revisa tu plan</h1>
+          <p>Así lo verán los vecinos. Si algo no está bien, pulsa «Cambiar».</p>
+        </div>
+
+        @if (camposFaltantes().length) {
+          <p class="aviso-faltan" role="status">
+            <ion-icon name="alert-circle" aria-hidden="true"></ion-icon>
+            El cartel no decía: <strong>{{ faltantesTexto() }}</strong>. Pulsa «Cambiar» para completarlo.
+          </p>
+        }
+
+        <section class="resumen-plan" [style.--cat-fondo]="estiloCategoria(category).fondo" [style.--cat-tinta]="estiloCategoria(category).tinta">
+          <div class="resumen-plan-cabecera">
+            @if (posterUrl()) {
+              <img [src]="posterUrl()" alt="Cartel del plan" />
+            }
+            <span class="ev-etiqueta-cat">{{ nombreCategoria }}</span>
+            <h2>{{ title || 'Sin nombre todavía' }}</h2>
+          </div>
+
+          <dl class="resumen-lista">
+            <div [class.con-error]="pasoConError(1)">
+              <dt><ion-icon name="create-outline" aria-hidden="true"></ion-icon> Qué</dt>
+              <dd>{{ description || 'Sin descripción' }}</dd>
+              <button type="button" class="cambiar" (click)="irAPaso(1)" aria-label="Cambiar qué plan es">Cambiar</button>
+            </div>
+            <div [class.con-error]="pasoConError(2)">
+              <dt><ion-icon name="calendar-outline" aria-hidden="true"></ion-icon> Cuándo</dt>
+              <dd>
+                {{ textoCuando }} · {{ textoDuracion }}
+                @if (textoLimite) {
+                  <br /><span class="texto-suave">{{ textoLimite }}</span>
+                }
+              </dd>
+              <button type="button" class="cambiar" (click)="irAPaso(2)" aria-label="Cambiar cuándo es">Cambiar</button>
+            </div>
+            <div [class.con-error]="pasoConError(3)">
+              <dt><ion-icon name="location-outline" aria-hidden="true"></ion-icon> Dónde</dt>
+              <dd>{{ municipioId ? vistaPreviaLugar : 'Sin pueblo' }}</dd>
+              <button type="button" class="cambiar" (click)="irAPaso(3)" aria-label="Cambiar dónde es">Cambiar</button>
+            </div>
+            <div [class.con-error]="pasoConError(4)">
+              <dt><ion-icon name="people-outline" aria-hidden="true"></ion-icon> Detalles</dt>
+              <dd>
+                {{ esGratis ? 'Gratis' : textoPrecio(price) }} · {{ textoPlazas }} · {{ textoEdades }}{{ isAccessible ? ' · Accesible' : '' }}
+              </dd>
+              <button type="button" class="cambiar" (click)="irAPaso(4)" aria-label="Cambiar los detalles">Cambiar</button>
+            </div>
+          </dl>
+        </section>
+
+        <p class="asistente-nota">
+          <ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon>
+          Lo revisará una persona del equipo y te avisaremos cuando esté publicado.
+        </p>
+      }
+    }
+  </div>
 </ion-content>
+
+@if (paso() > 0) {
+  <ion-footer class="asistente-pie">
+    <div class="asistente-pie-botones">
+      <button type="button" class="boton-atras" (click)="atras()">
+        <ion-icon name="arrow-back" aria-hidden="true"></ion-icon> Atrás
+      </button>
+      @if (paso() < 5) {
+        <button type="button" class="boton-siguiente" (click)="siguiente()">
+          Siguiente <ion-icon name="arrow-forward" aria-hidden="true"></ion-icon>
+        </button>
+      } @else {
+        <button type="button" class="boton-siguiente enviar" (click)="guardarEvento()" [disabled]="guardando()">
+          <ion-icon name="paper-plane-outline" aria-hidden="true"></ion-icon>
+          {{ guardando() ? 'Enviando…' : 'Enviar el plan' }}
+        </button>
+      }
+    </div>
+  </ion-footer>
+}

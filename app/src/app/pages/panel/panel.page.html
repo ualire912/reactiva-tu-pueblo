@@ -1,419 +1,916 @@
-<ion-header>
-  <ion-toolbar color="primary">
-    <ion-title>Panel Moderador</ion-title>
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>
+      <span class="marca">
+        <span class="marca-logo oscuro" aria-hidden="true"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
+        <span class="marca-texto">Panel de moderación</span>
+      </span>
+    </ion-title>
     <ion-buttons slot="end">
-      <ion-button (click)="cargarTodo()" aria-label="Actualizar datos del panel">
-        <ion-icon slot="icon-only" name="refresh-outline"></ion-icon>
+      <ion-button class="boton-cabecera" (click)="cargarTodo()">
+        <ion-icon slot="start" name="refresh-outline" aria-hidden="true"></ion-icon>
+        Actualizar
       </ion-button>
     </ion-buttons>
   </ion-toolbar>
-
-  <ion-toolbar>
-    <ion-segment [(ngModel)]="pestana" scrollable="true">
-      <ion-segment-button value="pendientes">
-        <ion-label>Pendientes ({{ pendientes.length }})</ion-label>
-      </ion-segment-button>
-      <ion-segment-button value="ia">
-        <ion-label>IA ({{ ingestas.length }})</ion-label>
-      </ion-segment-button>
-      <ion-segment-button value="incidencias">
-        <ion-label>Incidencias ({{ incidencias.length }})</ion-label>
-      </ion-segment-button>
-      <ion-segment-button value="publicadores">
-        <ion-label>Publicadores</ion-label>
-      </ion-segment-button>
-      <ion-segment-button value="estadisticas">
-        <ion-label>Estadísticas</ion-label>
-      </ion-segment-button>
-      <ion-segment-button value="demo">
-        <ion-label>Demo</ion-label>
-      </ion-segment-button>
-    </ion-segment>
-  </ion-toolbar>
 </ion-header>
 
-<ion-content class="ion-padding">
-  <div *ngIf="cargando" class="ion-text-center ion-padding">
-    <ion-spinner></ion-spinner>
-  </div>
+<ion-content [scrollY]="false" class="rp-fondo">
+  <div class="panel-layout">
+    <!-- BARRA LATERAL (en móvil pasa a ser una tira horizontal) -->
+    <nav class="panel-nav" aria-label="Secciones del panel">
+      @for (s of secciones; track s.id) {
+        <button
+          type="button"
+          class="panel-nav-item"
+          [style.--seccion]="s.color"
+          [style.--seccion-fondo]="s.fondo"
+          [class.activo]="pestana === s.id"
+          [attr.aria-current]="pestana === s.id ? 'page' : null"
+          (click)="irA(s.id)">
+          <ion-icon [name]="s.icono" aria-hidden="true"></ion-icon>
+          <span class="panel-nav-texto">{{ s.texto }}</span>
+          @if (contador(s.id); as n) {
+            <span class="panel-nav-contador" [attr.aria-label]="n + ' pendientes'">{{ n }}</span>
+          }
+        </button>
+      }
+    </nav>
 
-  <!-- 1. PENDIENTES Y GESTIÓN DE EVENTOS -->
-  <div *ngIf="pestana === 'pendientes'">
-    <h3>Propuestas pendientes de revisión ({{ pendientes.length }})</h3>
+    <main class="panel-main">
+      @if (cargando) {
+        <div class="cargando-centro"><ion-spinner name="crescent"></ion-spinner></div>
+      }
 
-    <div *ngIf="pendientes.length === 0" class="ion-padding-bottom">
-      <ion-note>No hay eventos pendientes de aprobación ahora mismo.</ion-note>
-    </div>
-
-    <ion-card *ngFor="let ev of pendientes" class="ion-no-margin ion-margin-bottom">
-      <img *ngIf="ev.poster_url" [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" style="width: 100%; max-height: 180px; object-fit: cover;" />
-      <ion-card-header>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <ion-badge color="warning">{{ ev.status }}</ion-badge>
-          <ion-badge color="medium">Origen: {{ ev.origen || 'web' }}</ion-badge>
-          <ion-badge *ngIf="ev.ai_confidence" color="secondary">
-            IA: {{ (ev.ai_confidence * 100) | number:'1.0-0' }}%
-          </ion-badge>
+      @if (pestana !== 'demo') {
+        <div class="buscador-fila" role="search" aria-label="Buscar en esta sección">
+          <label class="buscador">
+            <ion-icon name="search" aria-hidden="true"></ion-icon>
+            <span class="sr-only">Buscar en esta sección</span>
+            <input
+              type="search"
+              [value]="busqueda"
+              (input)="cambiarBusqueda($any($event.target).value)"
+              [placeholder]="placeholderBusqueda[pestana]"
+              autocomplete="off" />
+            @if (busqueda) {
+              <button type="button" class="buscador-limpiar" (click)="cambiarBusqueda('')" aria-label="Borrar la búsqueda">
+                <ion-icon name="close" aria-hidden="true"></ion-icon>
+              </button>
+            }
+          </label>
+          @if (busqueda) {
+            <p class="buscador-resumen" role="status">Mostrando {{ resumenBusqueda.visibles }} de {{ resumenBusqueda.total }}</p>
+          }
         </div>
-        <ion-card-title class="ion-margin-top">{{ ev.title }}</ion-card-title>
-        <ion-card-subtitle>
-          {{ ev.municipios?.nombre }} · {{ formatearFecha(ev.starts_at) }} · {{ ev.price === 0 ? 'Gratis' : ev.price + ' €' }}
-        </ion-card-subtitle>
-      </ion-card-header>
+        @if (busqueda && resumenBusqueda.visibles === 0 && resumenBusqueda.total > 0) {
+          <div class="sin-resultados">
+            <p>No hay nada en esta sección que coincida con «{{ busqueda }}».</p>
+            <ion-button size="small" (click)="cambiarBusqueda('')">Quitar la búsqueda</ion-button>
+          </div>
+        }
+      }
 
-      <ion-card-content>
-        <p *ngIf="ev.description">{{ ev.description }}</p>
-
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
-          <ion-button color="success" (click)="aprobarEvento(ev)">
-            <ion-icon slot="start" name="checkmark-circle-outline"></ion-icon>
-            Aprobar
-          </ion-button>
-
-          <ion-button color="primary" fill="outline" (click)="editarEventoModal(ev, false)">
-            <ion-icon slot="start" name="create-outline"></ion-icon>
-            Editar
-          </ion-button>
-
-          <ion-button color="danger" fill="outline" (click)="rechazarEvento(ev)">
-            <ion-icon slot="start" name="close-circle-outline"></ion-icon>
-            Rechazar
-          </ion-button>
+      <!-- 1. PENDIENTES -->
+      @if (pestana === 'pendientes') {
+        <div class="panel-saludo">
+          <h1 class="panel-titulo">{{ saludo }}, equipo</h1>
+          <p>Hay planes esperando. Cuanto antes se revisen, antes llegan a la agenda.</p>
         </div>
-      </ion-card-content>
-    </ion-card>
-
-    <h3 class="ion-margin-top">Eventos publicados (gestionar cambios / avisar)</h3>
-    <ion-card *ngFor="let ev of eventosActivos" class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>{{ ev.title }}</ion-card-title>
-        <ion-card-subtitle>
-          {{ ev.municipios?.nombre }} · {{ formatearFecha(ev.starts_at) }} ·
-          <strong>{{ ev.status | uppercase }}</strong>
-        </ion-card-subtitle>
-      </ion-card-header>
-      <ion-card-content>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <ion-button size="small" (click)="editarEventoModal(ev, true)">
-            <ion-icon slot="start" name="time-outline"></ion-icon>
-            Cambiar hora / lugar
-          </ion-button>
-          <ion-button *ngIf="ev.status === 'pospuesto'" size="small" color="success" fill="outline" (click)="cambiarEstadoManual(ev, 'abierto')">
-            Reabrir
-          </ion-button>
-          <ion-button size="small" color="warning" fill="outline" (click)="cambiarEstadoManual(ev, 'pospuesto')">
-            Posponer
-          </ion-button>
-          <ion-button size="small" color="danger" fill="outline" (click)="cambiarEstadoManual(ev, 'cancelado')">
-            Cancelar y avisar
-          </ion-button>
+        <div class="panel-cifras">
+          <button type="button" class="panel-cifra sol" (click)="irA('pendientes')">
+            <span>Pendientes</span><strong>{{ pendientes.length }}</strong>
+          </button>
+          <button type="button" class="panel-cifra lavanda" (click)="irA('ia')">
+            <span>Detectados por IA</span><strong>{{ contador('ia') ?? 0 }}</strong>
+          </button>
+          <button type="button" class="panel-cifra melocoton" (click)="irA('incidencias')">
+            <span>Incidencias abiertas</span><strong>{{ contador('incidencias') ?? 0 }}</strong>
+          </button>
+          <div class="panel-cifra verde">
+            <span>Planes publicados</span><strong>{{ eventosActivos.length }}</strong>
+          </div>
         </div>
-      </ion-card-content>
-    </ion-card>
-  </div>
+        <h2 class="panel-subtitulo primero">Planes pendientes de revisión</h2>
 
-  <!-- 2. DETECTADOS POR IA (INGESTAS) -->
-  <div *ngIf="pestana === 'ia'">
-    <h3>Bandeja de entrada de Facebook y Telegram</h3>
+        @if (pendientes.length === 0) {
+          <p class="texto-suave">No hay planes pendientes ahora mismo. ¡Todo al día!</p>
+        }
 
-    <div *ngIf="ingestas.length === 0">
-      <ion-note>No hay publicaciones detectadas aún. Prueba a lanzar una desde la pestaña Demo.</ion-note>
-    </div>
-
-    <ion-card
-      *ngFor="let ing of ingestas"
-      [color]="ing.estado === 'spam' ? 'light' : undefined"
-      class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-          <ion-badge [color]="colorEstadoIngesta(ing.estado)">{{ ing.estado | uppercase }}</ion-badge>
-          <ion-badge color="medium">{{ ing.origen }}</ion-badge>
-          <ion-badge *ngIf="ing.spam_score != null" [color]="ing.spam_score >= 0.8 ? 'danger' : 'success'">
-            Spam: {{ (ing.spam_score * 100) | number:'1.0-0' }}%
-          </ion-badge>
-        </div>
-        <ion-card-title class="ion-margin-top">
-          {{ ing.extracted?.title || 'Publicación sin título extraído' }}
-        </ion-card-title>
-        <ion-card-subtitle *ngIf="ing.spam_reason" style="color: var(--ion-color-danger);">
-          Motivo antispam: {{ ing.spam_reason }}
-        </ion-card-subtitle>
-      </ion-card-header>
-
-      <ion-card-content>
-        <p *ngIf="ing.raw_text" style="font-style: italic; background: rgba(0,0,0,0.04); padding: 8px; border-radius: 6px;">
-          "{{ ing.raw_text }}"
-        </p>
-
-        <div *ngIf="ing.missing && ing.missing.length > 0" class="ion-margin-top">
-          <ion-badge color="warning">Faltan datos: {{ ing.missing.join(', ') }}</ion-badge>
-        </div>
-
-        <div *ngIf="ing.estado !== 'confirmada' && ing.estado !== 'descartada'" style="display: flex; gap: 8px; margin-top: 12px;">
-          <ion-button color="success" (click)="rescatarIngesta(ing)">
-            <ion-icon slot="start" name="checkmark-circle-outline"></ion-icon>
-            {{ ing.estado === 'spam' ? 'No es spam, crear evento' : 'Crear evento' }}
-          </ion-button>
-          <ion-button color="medium" fill="outline" (click)="descartarIngesta(ing)">
-            Descartar
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-  </div>
-
-  <!-- 3. INCIDENCIAS -->
-  <div *ngIf="pestana === 'incidencias'">
-    <h3>Incidencias reportadas por vecinos</h3>
-
-    <div *ngIf="incidencias.length === 0">
-      <ion-note>No hay incidencias registradas.</ion-note>
-    </div>
-
-    <ion-card *ngFor="let inc of incidencias" class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <div style="display: flex; justify-content: space-between;">
-          <ion-badge [color]="inc.estado === 'abierta' ? 'danger' : 'success'">
-            {{ inc.estado | uppercase }}
-          </ion-badge>
-        </div>
-        <ion-card-title class="ion-margin-top">{{ inc.eventos?.title || 'Evento' }}</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <p>{{ inc.comentario }}</p>
-        <div style="display: flex; gap: 8px; margin-top: 10px;">
-          <ion-button *ngIf="inc.estado === 'abierta'" color="success" (click)="resolverIncidencia(inc)">
-            Marcar como resuelta
-          </ion-button>
-          <ion-button fill="outline" [routerLink]="['/evento', inc.event_id]">
-            Ver evento
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-  </div>
-
-  <!-- 4. PUBLICADORES, CANDIDATOS IA Y ENTIDADES -->
-  <div *ngIf="pestana === 'publicadores'">
-    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
-      <h3 class="ion-no-margin">Candidatos a Publicador</h3>
-      <ion-button size="small" color="secondary" (click)="revisarCandidatosConIa()" [disabled]="revisandoIa">
-        <ion-icon slot="start" name="sparkles-outline"></ion-icon>
-        {{ revisandoIa ? 'Revisando...' : 'Revisar con IA ahora' }}
-      </ion-button>
-    </div>
-
-    <div *ngIf="candidatos.length === 0" class="ion-margin-top ion-margin-bottom">
-      <ion-note>No hay candidatos pendientes de revisión ahora mismo.</ion-note>
-    </div>
-
-    <ion-card *ngFor="let c of candidatos" color="light" class="ion-no-margin ion-margin-top ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>{{ c.full_name || 'Vecino candidato' }}</ion-card-title>
-        <ion-card-subtitle>
-          Reputación: <strong>{{ c.reputation_score }} pts</strong> ·
-          Telegram: {{ c.telegram_linked ? 'Vinculado' : 'Sin vincular' }}
-        </ion-card-subtitle>
-      </ion-card-header>
-      <ion-card-content>
-        <p style="margin-bottom: 10px;">
-          <strong>Estado IA:</strong>
-          {{ c.promocion_revisada_at ? (c.promocion_motivo || 'Revisado') : 'Pendiente de revisión automática' }}
-        </p>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-          <ion-button color="success" (click)="decidirCandidato(c.id, 'promover')">
-            Hacer Publicador
-          </ion-button>
-          <ion-button color="medium" fill="outline" (click)="decidirCandidato(c.id, 'descartar')">
-            Descartar
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-
-    <h3 class="ion-margin-top">Publicadores activos ({{ publicadoresActivos.length }})</h3>
-    <ion-list lines="full" class="ion-margin-bottom">
-      <ion-item *ngFor="let u of publicadoresActivos">
-        <ion-label class="ion-text-wrap">
-          <h3>{{ u.full_name || u.email }}</h3>
-          <p>Reputación: {{ u.reputation_score }} pts {{ u.promocion_motivo ? '· ' + u.promocion_motivo : '' }}</p>
-        </ion-label>
-        <ion-button slot="end" size="small" color="danger" fill="outline" (click)="decidirCandidato(u.id, 'revocar')">
-          Revocar
-        </ion-button>
-      </ion-item>
-    </ion-list>
-
-    <h3>Asociaciones y Entidades</h3>
-    <ion-list lines="full">
-      <ion-item *ngFor="let ent of entidades">
-        <ion-label class="ion-text-wrap">
-          <h3>{{ ent.nombre }}</h3>
-          <p>{{ ent.facebook_page_url || 'Sin página de Facebook asociada' }}</p>
-        </ion-label>
-        <ion-toggle
-          slot="end"
-          [checked]="ent.auto_approve"
-          (ionChange)="toggleAutoApproveEntidad(ent, $event.detail.checked)">
-          Aprobar auto
-        </ion-toggle>
-      </ion-item>
-    </ion-list>
-  </div>
-
-  <!-- 5. ESTADÍSTICAS -->
-  <div *ngIf="pestana === 'estadisticas'">
-    <ion-grid class="ion-no-padding">
-      <ion-row>
-        <ion-col size="6">
-          <ion-card class="ion-text-center">
-            <ion-card-header>
-              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.abiertos }}</ion-card-title>
-              <ion-card-subtitle>Eventos activos</ion-card-subtitle>
-            </ion-card-header>
-          </ion-card>
-        </ion-col>
-        <ion-col size="6">
-          <ion-card class="ion-text-center">
-            <ion-card-header>
-              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.inscripciones }}</ion-card-title>
-              <ion-card-subtitle>Total inscritos</ion-card-subtitle>
-            </ion-card-header>
-          </ion-card>
-        </ion-col>
-        <ion-col size="6">
-          <ion-card class="ion-text-center">
-            <ion-card-header>
-              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.porcentajeAsistencia }}%</ion-card-title>
-              <ion-card-subtitle>Asistencia real</ion-card-subtitle>
-            </ion-card-header>
-          </ion-card>
-        </ion-col>
-        <ion-col size="6">
-          <ion-card class="ion-text-center">
-            <ion-card-header>
-              <ion-card-title style="font-size: 1.8rem;">{{ resumenCifras.avisosEnviados }}</ion-card-title>
-              <ion-card-subtitle>Avisos enviados</ion-card-subtitle>
-            </ion-card-header>
-          </ion-card>
-        </ion-col>
-      </ion-row>
-    </ion-grid>
-
-    <ion-card *ngIf="consumoIa" color="light" class="ion-no-margin ion-margin-top">
-      <ion-card-content>
-        <strong><ion-icon name="sparkles-outline"></ion-icon> Consumo de IA (eficiencia):</strong>
-        {{ consumoIa.llamadas }} llamadas realizadas · {{ consumoIa.tokens }} tokens usados.
-      </ion-card-content>
-    </ion-card>
-
-    <h3 class="ion-margin-top">Aviso de solapamientos horarios ({{ solapamientos.length }})</h3>
-    <div *ngIf="solapamientos.length === 0">
-      <ion-note>Ningún evento se pisa en horario ahora mismo.</ion-note>
-    </div>
-    <ion-card *ngFor="let sol of solapamientos" color="warning" class="ion-no-margin ion-margin-bottom">
-      <ion-card-content>
-        <strong>⚠️ Estos eventos coinciden en horario:</strong>
-        <p>{{ sol | json }}</p>
-      </ion-card-content>
-    </ion-card>
-
-    <h3 class="ion-margin-top">Detalle por actividad</h3>
-    <ion-card *ngFor="let st of statsEventos" class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>{{ st.title || 'Evento' }}</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <p>
-          Inscritos: <strong>{{ st.inscritos || 0 }}</strong> ·
-          En espera: <strong>{{ st.en_espera || 0 }}</strong> ·
-          Asistieron: <strong>{{ st.asistieron || 0 }}</strong>
-        </p>
-        <p>
-          🚗 Coches ofrecidos: <strong>{{ st.coches_ofrecidos || 0 }}</strong> ·
-          Buscan coche: <strong>{{ st.buscan_coche || 0 }}</strong> ·
-          ⭐ Media: <strong>{{ st.media_estrellas || '-' }}</strong>
-        </p>
-      </ion-card-content>
-    </ion-card>
-  </div>
-
-  <!-- 6. DEMO -->
-  <div *ngIf="pestana === 'demo'">
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>1. Simular post detectado en Facebook</ion-card-title>
-        <ion-card-subtitle>Carga uno de los 3 ejemplos preparados o pega un post real</ion-card-subtitle>
-      </ion-card-header>
-      <ion-card-content>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
-          <ion-button size="small" color="success" fill="outline" (click)="cargarEjemploDemo('real')">
-            Ejemplo 1: Real
-          </ion-button>
-          <ion-button size="small" color="warning" fill="outline" (click)="cargarEjemploDemo('incompleto')">
-            Ejemplo 2: Falta precio
-          </ion-button>
-          <ion-button size="small" color="danger" fill="outline" (click)="cargarEjemploDemo('spam')">
-            Ejemplo 3: Spam
-          </ion-button>
+        <div class="panel-rejilla">
+          @for (ev of filtrar(pendientes); track ev.id) {
+            <article class="panel-card" [style.--pueblo]="colorPueblo(ev.municipios?.nombre)">
+              @if (ev.poster_url) {
+                <img [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" class="panel-card-img" />
+              }
+              <div class="panel-card-cuerpo">
+                <div class="ficha-etiquetas">
+                  <span class="etiqueta-categoria" [style.--cat-fondo]="estiloCategoria(ev.category).fondo" [style.--cat-tinta]="estiloCategoria(ev.category).tinta">{{ nombreCategoria(ev.category) }}</span>
+                  <span class="etiqueta-pueblo">{{ ev.municipios?.nombre || 'Comarca' }}</span>
+                  <span class="chip-mini">{{ etiquetaEstado(ev.status) }}</span>
+                  <span class="chip-mini">Desde {{ etiquetaOrigen(ev.origen) }}</span>
+                  @if (ev.ai_confidence) {
+                    <span class="chip-mini">Lectura automática: {{ (ev.ai_confidence * 100).toFixed(0) }}% segura</span>
+                  }
+                </div>
+                <h2>{{ ev.title }}</h2>
+                <p class="panel-meta">{{ fechaCorta(ev.starts_at) }} · <span class="precio-verde">{{ textoPrecio(ev.price) }}</span></p>
+                @if (ev.description) {
+                  <p class="panel-desc corta">{{ ev.description }}</p>
+                }
+                <div class="panel-acciones">
+                  <ion-button color="danger" fill="outline" (click)="rechazarEvento(ev)">Rechazar</ion-button>
+                  <ion-button color="medium" fill="outline" (click)="editarEventoModal(ev, false)">
+                    <ion-icon slot="start" name="create-outline" aria-hidden="true"></ion-icon> Editar
+                  </ion-button>
+                  <ion-button color="primary" (click)="aprobarEvento(ev)">
+                    <ion-icon slot="start" name="checkmark-circle-outline" aria-hidden="true"></ion-icon> Aprobar
+                  </ion-button>
+                </div>
+              </div>
+            </article>
+          }
         </div>
 
-        <ion-list lines="full">
-          <ion-item>
-            <ion-input label="URL de la página de Facebook" labelPlacement="stacked" [(ngModel)]="demoPageUrl"></ion-input>
-          </ion-item>
-          <ion-item>
-            <ion-textarea label="Texto del post" labelPlacement="stacked" rows="3" [(ngModel)]="demoText"></ion-textarea>
-          </ion-item>
-          <ion-item>
-            <ion-input label="URL de la imagen del cartel (opcional)" labelPlacement="stacked" [(ngModel)]="demoImageUrl"></ion-input>
-          </ion-item>
-        </ion-list>
+        <h2 class="panel-subtitulo">Planes publicados</h2>
+        <p class="texto-suave">Cambia la hora o el lugar, aplaza o cancela. Las personas apuntadas reciben el aviso.</p>
+        <div class="panel-lista">
+          @for (ev of filtrar(eventosActivos); track ev.id) {
+            <div class="panel-fila" [style.--pueblo]="colorPueblo(ev.municipios?.nombre)">
+              <div class="panel-fila-info">
+                <strong>{{ ev.title }}</strong>
+                <span>{{ ev.municipios?.nombre }} · {{ fechaCorta(ev.starts_at) }}</span>
+                <ion-badge [color]="colorEstado(ev.status)">{{ etiquetaEstado(ev.status) }}</ion-badge>
+              </div>
+              <div class="panel-acciones">
+                <ion-button size="small" fill="outline" (click)="editarEventoModal(ev, true)">
+                  <ion-icon slot="start" name="time-outline" aria-hidden="true"></ion-icon> Cambiar hora o lugar
+                </ion-button>
+                @if (ev.status === 'pospuesto') {
+                  <ion-button size="small" color="success" fill="outline" (click)="cambiarEstadoManual(ev, 'abierto')">Reabrir</ion-button>
+                } @else if (ev.status !== 'finalizado') {
+                  <ion-button size="small" color="warning" fill="outline" (click)="cambiarEstadoManual(ev, 'pospuesto')">Aplazar</ion-button>
+                }
+                @if (ev.status !== 'finalizado') {
+                  <ion-button size="small" color="danger" fill="outline" (click)="cambiarEstadoManual(ev, 'cancelado')">Cancelar</ion-button>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      }
 
-        <ion-button expand="block" class="ion-margin-top" (click)="ejecutarDemo('facebook')" [disabled]="ejecutandoDemo">
-          <ion-icon slot="start" name="play-circle-outline"></ion-icon>
-          Enviar post al motor IA
-        </ion-button>
-      </ion-card-content>
-    </ion-card>
+      <!-- 2. DETECTADOS POR IA -->
+      @if (pestana === 'ia') {
+        <h1 class="panel-titulo">Publicaciones detectadas en Facebook y Telegram</h1>
+        @if (ingestas.length === 0) {
+          <p class="texto-suave">Aún no hay publicaciones. Prueba a lanzar una desde la sección Demo.</p>
+        }
+        <div class="panel-rejilla">
+          @for (ing of filtrar(ingestas); track ing.id) {
+            @let ex = ing.extracted;
+            <article class="panel-card" [class.spam]="ing.estado === 'spam'">
+              <div class="panel-card-cuerpo">
+                <div class="ficha-etiquetas">
+                  <span class="chip-mini estado-ingesta" [attr.data-estado]="ing.estado">{{ etiquetaIngesta(ing.estado) }}</span>
+                  <span class="chip-mini">{{ etiquetaOrigen(ing.origen) }}</span>
+                  @if (esPublicidad(ing)) {
+                    <span class="chip-mini rojo">Puede ser publicidad</span>
+                  } @else {
+                    <span class="chip-mini ok">Parece un plan real</span>
+                  }
+                </div>
+                <h2>{{ ex?.title || 'Publicación sin título' }}</h2>
 
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>2. Disparadores del sistema (Telegram y Reputación)</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <ion-button expand="block" color="secondary" (click)="ejecutarDemo('recomendaciones')" [disabled]="ejecutandoDemo">
-          Enviar recomendaciones a vecinos
-        </ion-button>
+                <!-- Resumen corto de lo que ha captado la IA -->
+                <ul class="ia-resumen">
+                  <li>
+                    <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon>
+                    {{ ex?.starts_at ? fechaCorta(ex!.starts_at) : 'Sin fecha' }}
+                  </li>
+                  <li>
+                    <ion-icon name="location-outline" aria-hidden="true"></ion-icon>
+                    {{ lugarIngesta(ing) }}
+                  </li>
+                  @if (ex?.price != null) {
+                    <li>
+                      <ion-icon name="cash-outline" aria-hidden="true"></ion-icon>
+                      {{ textoPrecio(ex!.price) }}
+                    </li>
+                  }
+                </ul>
+                @if (ex?.description) {
+                  <p class="panel-desc corta">{{ ex!.description }}</p>
+                }
+                @if (ing.missing && ing.missing.length > 0) {
+                  <p class="ia-falta"><ion-icon name="alert-circle-outline" aria-hidden="true"></ion-icon> Le falta: <strong>{{ listaCampos(ing.missing) }}</strong></p>
+                }
 
-        <ion-item lines="outline" class="ion-margin-top">
-          <ion-select label="Evento para pedir reseñas" labelPlacement="stacked" [(ngModel)]="demoEventIdSeleccionado">
-            <ion-select-option *ngFor="let ev of eventosActivos" [value]="ev.id">
-              {{ ev.title }}
-            </ion-select-option>
-          </ion-select>
-        </ion-item>
-        <ion-button expand="block" fill="outline" class="ion-margin-top" (click)="ejecutarDemo('resenas')" [disabled]="ejecutandoDemo">
-          Pedir reseñas por Telegram
-        </ion-button>
+                <!-- El texto completo solo si se quiere ver -->
+                <details class="ia-detalles">
+                  <summary>Ver detalles y texto original</summary>
+                  @if (ing.spam_score != null) {
+                    <p><strong>Probabilidad de que sea publicidad:</strong> {{ (ing.spam_score * 100).toFixed(0) }} %</p>
+                  }
+                  @if (ing.spam_reason) {
+                    <p><strong>Por qué lo cree la IA:</strong> {{ ing.spam_reason }}</p>
+                  }
+                  @if (ing.source_url) {
+                    <p><a [href]="ing.source_url" target="_blank" rel="noopener">Abrir la publicación original</a></p>
+                  }
+                  @if (ing.raw_text) {
+                    <blockquote class="cita">{{ ing.raw_text }}</blockquote>
+                  }
+                </details>
+                @if (ing.estado !== 'confirmada' && ing.estado !== 'descartada') {
+                  <div class="panel-acciones">
+                    <ion-button color="success" (click)="rescatarIngesta(ing)">
+                      <ion-icon slot="start" name="checkmark-circle-outline" aria-hidden="true"></ion-icon>
+                      {{ ing.estado === 'spam' ? 'No es publicidad: crear plan' : 'Crear plan' }}
+                    </ion-button>
+                    <ion-button color="medium" fill="outline" (click)="descartarIngesta(ing)">Descartar</ion-button>
+                  </div>
+                }
+              </div>
+            </article>
+          }
+        </div>
+      }
 
-        <ion-button expand="block" fill="outline" color="tertiary" class="ion-margin-top" (click)="ejecutarDemo('promociones')" [disabled]="ejecutandoDemo">
-          Revisar promociones a Publicador
-        </ion-button>
+      <!-- 3. INCIDENCIAS -->
+      @if (pestana === 'incidencias') {
+        <h1 class="panel-titulo">Problemas avisados por los vecinos</h1>
+        @if (incidencias.length === 0) {
+          <p class="texto-suave">No hay avisos de problemas.</p>
+        }
+        <div class="panel-lista">
+          @for (inc of filtrar(incidencias); track inc.id) {
+            <div class="panel-fila">
+              <div class="panel-fila-info">
+                <strong>{{ inc.eventos?.title || 'Plan' }}</strong>
+                <span>{{ inc.comentario }}</span>
+                <span class="chip-mini" [class.rojo]="inc.estado === 'abierta'">{{ inc.estado === 'abierta' ? 'Pendiente' : 'Resuelta' }}</span>
+              </div>
+              <div class="panel-acciones">
+                @if (inc.estado === 'abierta') {
+                  <ion-button size="small" color="success" (click)="resolverIncidencia(inc)">Marcar como resuelta</ion-button>
+                }
+                <ion-button size="small" fill="outline" [routerLink]="['/evento', inc.event_id]">Ver plan</ion-button>
+              </div>
+            </div>
+          }
+        </div>
+      }
 
-        <ion-button expand="block" fill="clear" class="ion-margin-top" (click)="ejecutarDemo('health')" [disabled]="ejecutandoDemo">
-          Despertar servidor (/health)
-        </ion-button>
-      </ion-card-content>
-    </ion-card>
+      <!-- 4. PUBLICADORES -->
+      @if (pestana === 'publicadores') {
+        <div class="panel-cabecera-seccion">
+          <h1 class="panel-titulo">Candidatos a Publicador</h1>
+          <ion-button color="tertiary" (click)="revisarCandidatosConIa()" [disabled]="revisandoIa">
+            <ion-icon slot="start" name="sparkles-outline" aria-hidden="true"></ion-icon>
+            {{ revisandoIa ? 'Revisando…' : 'Revisar con IA ahora' }}
+          </ion-button>
+        </div>
+        <p class="texto-suave">Personas con buenas valoraciones. Si las haces Publicadoras, sus planes se publican sin revisión.</p>
 
-    <ion-card *ngIf="demoResultadoJson" color="dark" class="ion-no-margin">
-      <ion-card-header>
-        <ion-card-title>Respuesta del servidor</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <pre style="white-space: pre-wrap; font-size: 13px;">{{ demoResultadoJson }}</pre>
-      </ion-card-content>
-    </ion-card>
+        <!-- Buscar a cualquier vecino por nombre o correo -->
+        <section class="buscar-vecinos" aria-labelledby="titulo-buscar-vecinos">
+          <h2 id="titulo-buscar-vecinos">Buscar a cualquier vecino</h2>
+          <p class="texto-suave">Aunque no tenga reputación ni lo haya propuesto la IA.</p>
+          <label class="buscador">
+            <ion-icon name="search" aria-hidden="true"></ion-icon>
+            <span class="sr-only">Nombre o correo del vecino</span>
+            <input
+              type="search"
+              [value]="busquedaVecinos"
+              (input)="cambiarBusquedaVecinos($any($event.target).value)"
+              placeholder="Escribe un nombre o un correo (mínimo 2 letras)"
+              autocomplete="off" />
+          </label>
+          @if (buscandoVecinos) {
+            <p class="texto-suave">Buscando…</p>
+          } @else if (busquedaVecinos.trim().length >= 2) {
+            @if (resultadosVecinos.length === 0) {
+              <p class="texto-suave">No hay nadie con ese nombre o correo.</p>
+            } @else {
+              <div class="vecinos-lista">
+                @for (v of resultadosVecinos; track v.id) {
+                  <ng-container *ngTemplateOutlet="filaVecino; context: { $implicit: v }"></ng-container>
+                }
+              </div>
+            }
+          }
+        </section>
+
+        <!-- Directorio desplegable de todos los vecinos -->
+        <details class="directorio-vecinos" (toggle)="alAbrirDirectorio($any($event.target).open)">
+          <summary>
+            <ion-icon name="people-outline" aria-hidden="true"></ion-icon>
+            <span class="directorio-titulo">
+              <strong>Todos los vecinos</strong>
+              <small>Despliega para ver la lista completa y elegir Publicadores</small>
+            </span>
+            <ion-icon class="directorio-flecha" name="chevron-down-outline" aria-hidden="true"></ion-icon>
+          </summary>
+          <div class="directorio-cuerpo">
+            <div class="directorio-filtros">
+              <div class="filtro-rol" role="group" aria-label="Filtrar por tipo de cuenta">
+                <button type="button" [class.activo]="filtroRol === 'todos'" (click)="cambiarFiltroRol('todos')">Todos <span>{{ contarRol('todos') }}</span></button>
+                <button type="button" [class.activo]="filtroRol === 'vecinos'" (click)="cambiarFiltroRol('vecinos')">Vecinos <span>{{ contarRol('vecinos') }}</span></button>
+                <button type="button" [class.activo]="filtroRol === 'publicadores'" (click)="cambiarFiltroRol('publicadores')">Publicadores <span>{{ contarRol('publicadores') }}</span></button>
+              </div>
+              <label class="campo-filtro filtro-pueblo-vecinos" [class.activo]="!!filtroPueblo">
+                <span class="campo-etiqueta">Pueblo</span>
+                <select [value]="filtroPueblo" (change)="cambiarFiltroPueblo($any($event.target).value)">
+                  <option value="">Todos los pueblos</option>
+                  @for (m of sb.municipios; track m.id) {
+                    <option [value]="'' + m.id">{{ m.nombre }}</option>
+                  }
+                  <option value="sin">Sin pueblo indicado</option>
+                </select>
+              </label>
+            </div>
+            @if (cargandoDirectorio) {
+              <p class="texto-suave"><ion-spinner name="dots"></ion-spinner> Cargando vecinos…</p>
+            } @else if (directorioFiltrado.length === 0) {
+              <p class="texto-suave">No hay nadie en este grupo.</p>
+            } @else {
+              <div class="vecinos-lista">
+                @for (v of directorioPagina; track v.id) {
+                  <ng-container *ngTemplateOutlet="filaVecino; context: { $implicit: v }"></ng-container>
+                }
+              </div>
+              <nav class="directorio-paginas" aria-label="Páginas de vecinos">
+                <button type="button" class="pag-boton" [disabled]="paginaDirectorio <= 1" (click)="irAPaginaDirectorio(paginaDirectorio - 1)" aria-label="Página anterior">
+                  <ion-icon name="chevron-back" aria-hidden="true"></ion-icon> Anterior
+                </button>
+                <span class="directorio-rango" aria-live="polite">
+                  <strong>Página {{ paginaDirectorio > totalPaginasDirectorio ? totalPaginasDirectorio : paginaDirectorio }} de {{ totalPaginasDirectorio }}</strong>
+                  <small>{{ rangoDirectorio }} vecinos</small>
+                </span>
+                <button type="button" class="pag-boton" [disabled]="paginaDirectorio >= totalPaginasDirectorio" (click)="irAPaginaDirectorio(paginaDirectorio + 1)" aria-label="Página siguiente">
+                  Siguiente <ion-icon name="chevron-forward" aria-hidden="true"></ion-icon>
+                </button>
+              </nav>
+            }
+          </div>
+        </details>
+
+        <ng-template #filaVecino let-v>
+          <div class="vecino-fila" [class.es-publicador]="v.rol === 'publicador'">
+            <span class="vecino-inicial" aria-hidden="true">{{ (v.full_name || v.email || '?')[0].toUpperCase() }}</span>
+            <div class="vecino-info">
+              <strong>{{ v.full_name || 'Sin nombre' }}</strong>
+              <span>{{ v.email || 'Sin correo' }}</span>
+              <span class="vecino-meta">
+                <span class="rol-chip" [class]="'rol-chip rol-' + v.rol">{{ nombreRol(v.rol) }}</span>
+                @if (nombrePuebloDe(v.municipio_id); as pueblo) {
+                  <span class="etiqueta-pueblo pequena" [style.--pueblo]="colorPueblo(pueblo)">{{ pueblo }}</span>
+                }
+                ★ {{ v.reputation_score || 0 }} puntos de reputación
+              </span>
+            </div>
+            <div class="vecino-accion">
+              @if (puedeSerPublicador(v.rol)) {
+                <ion-button size="small" (click)="cambiarRolVecino(v, 'promover')" [disabled]="cambiandoRol === v.id">
+                  <ion-icon slot="start" name="person-add-outline" aria-hidden="true"></ion-icon>
+                  Hacer Publicador/a
+                </ion-button>
+              } @else if (v.rol === 'publicador') {
+                <ion-button size="small" color="danger" fill="outline" (click)="cambiarRolVecino(v, 'revocar')" [disabled]="cambiandoRol === v.id">
+                  <ion-icon slot="start" name="person-remove-outline" aria-hidden="true"></ion-icon>
+                  Quitar Publicador/a
+                </ion-button>
+              } @else {
+                <span class="texto-suave">Modera la plataforma</span>
+              }
+            </div>
+          </div>
+        </ng-template>
+
+        <h2 class="panel-subtitulo">Propuestos por su reputación</h2>
+
+        @if (candidatos.length === 0) {
+          <p class="texto-suave">No hay candidaturas ahora mismo.</p>
+        }
+        <div class="panel-lista">
+          @for (c of filtrar(candidatos); track c.id) {
+            <div class="panel-fila">
+              <div class="panel-fila-info">
+                <strong>{{ c.full_name || 'Vecino/a' }}</strong>
+                <span>Reputación: {{ c.reputation_score }} puntos · {{ c.telegram_linked ? 'Con Telegram' : 'Sin Telegram' }}</span>
+                <span>
+                  @if (c.promocion_revisada_at) {
+                    {{ c.promocion_motivo || 'Revisado' }}
+                  } @else {
+                    <em>Pendiente de revisión automática</em>
+                  }
+                </span>
+              </div>
+              <div class="panel-acciones">
+                <ion-button size="small" color="success" (click)="decidirCandidato(c.id, 'promover')">Hacer Publicador</ion-button>
+                <ion-button size="small" color="medium" fill="outline" (click)="decidirCandidato(c.id, 'descartar')">Descartar</ion-button>
+              </div>
+            </div>
+          }
+        </div>
+
+        <h2 class="panel-subtitulo">Publicadores activos ({{ publicadoresActivos.length }})</h2>
+        <div class="panel-lista">
+          @for (u of filtrar(publicadoresActivos); track u.id) {
+            <div class="panel-fila">
+              <div class="panel-fila-info">
+                <strong>{{ u.full_name || u.email }}</strong>
+                <span>Reputación: {{ u.reputation_score }} puntos</span>
+                @if (u.promocion_motivo) {
+                  <span>{{ u.promocion_motivo }}</span>
+                }
+              </div>
+              <div class="panel-acciones">
+                <ion-button size="small" color="danger" fill="outline" (click)="decidirCandidato(u.id, 'revocar')">Revocar</ion-button>
+              </div>
+            </div>
+          }
+        </div>
+
+        <h2 class="panel-subtitulo">Asociaciones</h2>
+        <div class="panel-lista">
+          @for (ent of filtrar(entidades); track ent.id) {
+            <div class="panel-fila">
+              <div class="panel-fila-info">
+                <strong>{{ ent.nombre }}</strong>
+                <span>{{ ent.facebook_page_url || 'Sin página de Facebook' }}</span>
+              </div>
+              <ion-toggle
+                [checked]="ent.auto_approve"
+                (ionChange)="toggleAutoApproveEntidad(ent, $event.detail.checked)"
+                labelPlacement="start">
+                Aprobar automáticamente
+              </ion-toggle>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- 5. ESTADÍSTICAS -->
+      @if (pestana === 'estadisticas') {
+        <h1 class="panel-titulo">Estadísticas</h1>
+        <p class="texto-suave">Qué planes funcionan, dónde se apunta la gente y qué conviene mejorar.</p>
+        <div class="cifras">
+          <div class="cifra-card naranja"><strong>{{ resumenCifras.abiertos }}</strong><span>Planes publicados</span></div>
+          <div class="cifra-card verde">
+            <strong>{{ resumenCifras.inscripciones }}</strong><span>Personas apuntadas</span>
+            <small class="cifra-extra">{{ graficos.ultimos7 }} en los últimos 7 días</small>
+          </div>
+          <div class="cifra-card azul">
+            <strong>{{ graficos.ocupacionMedia ?? '—' }}{{ graficos.ocupacionMedia != null ? '%' : '' }}</strong><span>Plazas ocupadas (media)</span>
+          </div>
+          <div class="cifra-card violeta">
+            <strong>{{ graficos.asistenciaTerminados ?? '—' }}{{ graficos.asistenciaTerminados != null ? '%' : '' }}</strong><span>Van de verdad</span>
+            <small class="cifra-extra">de los apuntados a planes ya terminados</small>
+          </div>
+        </div>
+
+        <!-- Qué dicen los datos -->
+        @if (graficos.consejos.length) {
+          <section class="grafico-card consejos" aria-labelledby="t-consejos">
+            <h2 id="t-consejos">Qué te dicen los datos</h2>
+            <ul>
+              @for (c of graficos.consejos; track $index) {
+                <li [class]="'consejo consejo-' + c.tipo">
+                  <span class="consejo-icono"><ion-icon [name]="c.icono" aria-hidden="true"></ion-icon></span>
+                  <span>{{ c.texto }}</span>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+
+        <div class="graficos-rejilla">
+          <!-- Inscripciones últimos 30 días -->
+          <section class="grafico-card ancho-completo" aria-labelledby="t-dias">
+            <div class="grafico-cabecera">
+              <div>
+                <h2 id="t-dias">Personas que se apuntan cada día</h2>
+                <p class="texto-suave">Últimos 30 días</p>
+              </div>
+              <span class="tendencia" [class.sube]="tendenciaSemanal.sube === true" [class.baja]="tendenciaSemanal.sube === false">
+                @if (tendenciaSemanal.sube !== null) {
+                  <ion-icon [name]="tendenciaSemanal.sube ? 'trending-up-outline' : 'trending-down-outline'" aria-hidden="true"></ion-icon>
+                }
+                {{ tendenciaSemanal.texto }}
+              </span>
+            </div>
+            @if (!hayDias) {
+              <div class="grafico-vacio">
+                <ion-icon name="stats-chart-outline" aria-hidden="true"></ion-icon>
+                <p>Nadie se ha apuntado a ningún plan en los últimos 30 días. Cuando lo hagan, aquí verás cada día como una columna.</p>
+              </div>
+            } @else {
+            <div class="columnas" role="img" [attr.aria-label]="'Inscripciones por día: ' + graficos.ultimos7 + ' en la última semana'">
+              @for (d of graficos.dias; track d.clave; let ultimo = $last) {
+                <div class="columna" [title]="etiquetaDia(d.fecha) + ': ' + d.cantidad">
+                  <span class="columna-valor">{{ d.cantidad || '' }}</span>
+                  <span class="columna-barra" [class.hoy]="ultimo" [style.height.%]="ancho(d.cantidad, graficos.maxDia)"></span>
+                </div>
+              }
+            </div>
+            <div class="columnas-eje">
+              <span>{{ graficos.dias.length ? etiquetaDia(graficos.dias[0].fecha) : '' }}</span>
+              <span>Hoy</span>
+            </div>
+            }
+          </section>
+
+          <!-- Por pueblo -->
+          <section class="grafico-card" aria-labelledby="t-pueblos">
+            <h2 id="t-pueblos">Gente apuntada por pueblo</h2>
+            <ul class="barras">
+              @for (p of graficos.porPueblo; track p.nombre) {
+                <li>
+                  <div class="barra-texto"><span>{{ p.nombre }}</span><strong>{{ p.apuntados }}</strong></div>
+                  <div class="barra-pista"><span class="barra-relleno" [style.width.%]="ancho(p.apuntados, graficos.maxPueblo)" [style.background]="p.color"></span></div>
+                  <small class="texto-suave">{{ p.planes }} {{ p.planes === 1 ? 'plan' : 'planes' }}</small>
+                </li>
+              }
+            </ul>
+          </section>
+
+          <!-- Por actividad -->
+          <section class="grafico-card" aria-labelledby="t-cats">
+            <h2 id="t-cats">Qué actividades atraen más</h2>
+            @if (graficos.porCategoria.length === 0) {
+              <p class="texto-suave">Aún no hay datos.</p>
+            }
+            <ul class="barras">
+              @for (c of graficos.porCategoria; track c.slug) {
+                <li>
+                  <div class="barra-texto"><span>{{ c.nombre }}</span><strong>{{ c.apuntados }}</strong></div>
+                  <div class="barra-pista" [style.background]="c.fondo"><span class="barra-relleno" [style.width.%]="ancho(c.apuntados, graficos.maxCategoria)" [style.background]="c.color"></span></div>
+                </li>
+              }
+            </ul>
+          </section>
+
+          <!-- Embudo -->
+          <section class="grafico-card" aria-labelledby="t-embudo">
+            <h2 id="t-embudo">De las plazas a la asistencia</h2>
+            <ul class="embudo">
+              @for (e of graficos.embudo; track e.texto) {
+                <li>
+                  <span class="embudo-barra" [style.width.%]="ancho(e.valor, graficos.maxEmbudo) || 2" [style.background]="e.color">
+                    <strong>{{ e.valor }}</strong>
+                  </span>
+                  <span class="embudo-texto">{{ e.texto }}</span>
+                </li>
+              }
+            </ul>
+          </section>
+
+          <!-- Estados (donut) -->
+          <section class="grafico-card" aria-labelledby="t-estados">
+            <h2 id="t-estados">Cómo están los planes</h2>
+            <div class="donut-caja">
+              <svg viewBox="0 0 42 42" class="donut" role="img" [attr.aria-label]="graficos.totalPlanes + ' planes en total'">
+                <circle cx="21" cy="21" r="15.915" fill="none" stroke="#f4efe6" stroke-width="6"></circle>
+                @for (t of graficos.estados; track t.estado) {
+                  <circle
+                    cx="21" cy="21" r="15.915" fill="none" stroke-width="6"
+                    [attr.stroke]="t.color"
+                    [attr.stroke-dasharray]="t.pct + ' ' + (100 - t.pct)"
+                    [attr.stroke-dashoffset]="25 - t.desde"></circle>
+                }
+                <text x="21" y="21" class="donut-numero">{{ graficos.totalPlanes }}</text>
+                <text x="21" y="26.5" class="donut-etiqueta">planes</text>
+              </svg>
+              <ul class="leyenda">
+                @for (t of graficos.estados; track t.estado) {
+                  <li><span class="punto" [style.background]="t.color"></span>{{ t.texto }} <strong>{{ t.cantidad }}</strong></li>
+                }
+              </ul>
+            </div>
+          </section>
+
+          <!-- Coche compartido -->
+          <section class="grafico-card" aria-labelledby="t-coche">
+            <h2 id="t-coche">Coche compartido</h2>
+            <div class="coche-comparar">
+              <div class="coche-dato">
+                <ion-icon name="car-outline" aria-hidden="true"></ion-icon>
+                <strong>{{ graficos.cochesOfrecidos }}</strong>
+                <span>ofrecen coche</span>
+              </div>
+              <div class="coche-dato busca">
+                <ion-icon name="people-outline" aria-hidden="true"></ion-icon>
+                <strong>{{ graficos.buscanCoche }}</strong>
+                <span>buscan coche</span>
+              </div>
+            </div>
+            <div class="barra-pista doble" role="img" [attr.aria-label]="graficos.cochesOfrecidos + ' ofrecen y ' + graficos.buscanCoche + ' buscan'">
+              <span class="barra-relleno" [style.width.%]="(graficos.cochesOfrecidos / ((graficos.cochesOfrecidos + graficos.buscanCoche) || 1)) * 100" style="background:#2b6f68"></span>
+              <span class="barra-relleno" [style.width.%]="(graficos.buscanCoche / ((graficos.cochesOfrecidos + graficos.buscanCoche) || 1)) * 100" style="background:#f4b740"></span>
+            </div>
+            <p class="texto-suave">
+              @if (graficos.buscanCoche > graficos.cochesOfrecidos) {
+                Faltan coches: hay más gente buscando que ofreciendo.
+              } @else if (graficos.cochesOfrecidos + graficos.buscanCoche === 0) {
+                Nadie ha usado todavía el coche compartido.
+              } @else {
+                Hay coches suficientes para quien los busca.
+              }
+            </p>
+          </section>
+        </div>
+
+        <!-- Planes con más gente -->
+        <section class="grafico-card" aria-labelledby="t-top">
+          <h2 id="t-top">Planes con más gente apuntada</h2>
+          <p class="texto-suave">La barra muestra cuántas plazas se han llenado. <span class="leyenda-inline"><span class="punto" style="background:#f4b740"></span>Flojo <span class="punto" style="background:#2b6f68"></span>Bien <span class="punto" style="background:#b42318"></span>Casi lleno</span></p>
+          @if (graficos.topPlanes.length === 0) {
+            <div class="grafico-vacio">
+              <ion-icon name="people-outline" aria-hidden="true"></ion-icon>
+              <p>Todavía no hay nadie apuntado a ningún plan.</p>
+            </div>
+          }
+          <ul class="top-planes">
+            @for (p of graficos.topPlanes; track p.id) {
+              <li>
+                <div class="top-cabecera">
+                  <strong>{{ p.titulo }}</strong>
+                  <span class="etiqueta-pueblo pequena" [style.--pueblo]="p.color">{{ p.pueblo }}</span>
+                </div>
+                <div class="barra-pista grande">
+                  <span class="barra-relleno"
+                    [style.width.%]="p.plazas ? p.ocupacion : ancho(p.apuntados, graficos.maxPlan)"
+                    [style.background]="colorOcupacion(p.ocupacion)"></span>
+                </div>
+                <div class="top-datos">
+                  <span><strong>{{ p.apuntados }}</strong>{{ p.plazas ? ' de ' + p.plazas + ' plazas' : ' apuntados · sin límite' }}{{ p.ocupacion != null ? ' (' + p.ocupacion + '%)' : '' }}</span>
+                  @if (p.espera) { <span class="chip-espera">{{ p.espera }} en espera</span> }
+                  @if (p.media) { <span>★ {{ formatoMedia(p.media).replace('★ ', '') }}</span> }
+                  <span class="texto-suave">{{ etiquetaEstado(p.estado) }}</span>
+                </div>
+              </li>
+            }
+          </ul>
+          @if (planesSinGente > 0 && graficos.topPlanes.length > 0) {
+            <p class="texto-suave nota-sin-gente">Y {{ planesSinGente }} {{ planesSinGente === 1 ? 'plan' : 'planes' }} sin nadie apuntado todavía.</p>
+          }
+        </section>
+
+        @if (consumoIa) {
+          <p class="nota-ia">
+            <ion-icon name="sparkles-outline" aria-hidden="true"></ion-icon>
+            Uso de la IA: <strong>{{ consumoIa.llamadas }}</strong> consultas y <strong>{{ consumoIa.tokens.toLocaleString('es-ES') }}</strong> unidades de texto procesadas.
+          </p>
+        }
+
+        <h2 class="panel-subtitulo">Planes que coinciden en horario ({{ solapamientos.length }})</h2>
+        @if (solapamientos.length === 0) {
+          <p class="texto-suave">Ningún plan coincide con otro ahora mismo.</p>
+        }
+        @for (sol of solapamientos; track $index) {
+          <p class="aviso-faltan"><ion-icon name="warning-outline" aria-hidden="true"></ion-icon> {{ textoSolapamiento(sol) }}</p>
+        }
+
+        <!-- Ficha de cada plan, plegada para no saturar -->
+        <details class="directorio-vecinos detalle-planes">
+          <summary>
+            <ion-icon name="stats-chart-outline" aria-hidden="true"></ion-icon>
+            <span class="directorio-titulo">
+              <strong>Ficha de cada plan ({{ filtrar(statsEventos).length }})</strong>
+              <small>Apuntados, espera, asistencia, coches y valoración de cada uno</small>
+            </span>
+            <ion-icon class="directorio-flecha" name="chevron-down-outline" aria-hidden="true"></ion-icon>
+          </summary>
+          <div class="fichas-plan">
+            @for (st of filtrar(statsEventos); track st.id) {
+              <article class="ficha-plan" [style.--pueblo]="colorPueblo(st.municipio)">
+                <header>
+                  <strong>{{ st.title }}</strong>
+                  <span class="etiqueta-pueblo pequena" [style.--pueblo]="colorPueblo(st.municipio)">{{ st.municipio }}</span>
+                </header>
+                <small class="texto-suave">{{ etiquetaEstado(st.status) }}</small>
+                @if (st.max_capacity) {
+                  <div class="barra-pista">
+                    <span class="barra-relleno"
+                      [style.width.%]="ancho(st.confirmed_count || 0, st.max_capacity)"
+                      [style.background]="colorOcupacion(((st.confirmed_count || 0) / st.max_capacity) * 100)"></span>
+                  </div>
+                }
+                <dl class="ficha-datos">
+                  <div><dt>Apuntados</dt><dd>{{ st.confirmed_count || 0 }}{{ st.max_capacity ? ' / ' + st.max_capacity : '' }}</dd></div>
+                  <div><dt>En espera</dt><dd>{{ st.en_espera || 0 }}</dd></div>
+                  <div><dt>Fueron</dt><dd>{{ st.asistieron || 0 }}</dd></div>
+                  <div><dt>Coches</dt><dd>{{ st.coches_ofrecidos || 0 }} / {{ st.buscan_coche || 0 }} buscan</dd></div>
+                  <div><dt>Valoración</dt><dd>{{ formatoMedia(st.media_estrellas) }}</dd></div>
+                </dl>
+              </article>
+            }
+          </div>
+        </details>
+      }
+
+      <!-- 6. DEMO -->
+      @if (pestana === 'demo') {
+        <h1 class="panel-titulo">Demo</h1>
+        <div class="panel-rejilla">
+          <section class="panel-card">
+            <div class="panel-card-cuerpo">
+              <h2>1. Simular una publicación de Facebook</h2>
+              <p class="texto-suave">Carga un ejemplo o pega una publicación real.</p>
+              <div class="panel-acciones">
+                <ion-button size="small" color="success" fill="outline" (click)="cargarEjemploDemo('real')">Ejemplo completo</ion-button>
+                <ion-button size="small" color="warning" fill="outline" (click)="cargarEjemploDemo('incompleto')">Sin precio</ion-button>
+                <ion-button size="small" color="danger" fill="outline" (click)="cargarEjemploDemo('spam')">Publicidad</ion-button>
+              </div>
+              <label class="campo">
+                <span>Página de Facebook</span>
+                <input type="url" [(ngModel)]="demoPageUrl" />
+              </label>
+              <label class="campo">
+                <span>Texto de la publicación</span>
+                <textarea rows="4" [(ngModel)]="demoText"></textarea>
+              </label>
+              <label class="campo">
+                <span>Enlace a la imagen del cartel (opcional)</span>
+                <input type="url" [(ngModel)]="demoImageUrl" />
+              </label>
+              <ion-button expand="block" (click)="ejecutarDemo('facebook')" [disabled]="ejecutandoDemo">
+                <ion-icon slot="start" name="play-circle-outline" aria-hidden="true"></ion-icon> Enviar publicación
+              </ion-button>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-card-cuerpo">
+              <h2>2. Avisos y reputación</h2>
+              <ion-button expand="block" color="secondary" (click)="ejecutarDemo('recomendaciones')" [disabled]="ejecutandoDemo">
+                Enviar recomendaciones a los vecinos
+              </ion-button>
+              <label class="campo">
+                <span>Plan para pedir opiniones</span>
+                <select [(ngModel)]="demoEventIdSeleccionado">
+                  @for (ev of eventosActivos; track ev.id) {
+                    <option [value]="ev.id">{{ ev.title }} · {{ etiquetaEstado(ev.status) }}</option>
+                  }
+                </select>
+              </label>
+              <ion-button expand="block" fill="outline" (click)="ejecutarDemo('resenas')" [disabled]="ejecutandoDemo">
+                Pedir opiniones por Telegram
+              </ion-button>
+              <ion-button expand="block" fill="outline" color="tertiary" (click)="ejecutarDemo('promociones')" [disabled]="ejecutandoDemo">
+                Revisar candidatos a Publicador
+              </ion-button>
+              <ion-button expand="block" fill="clear" (click)="ejecutarDemo('health')" [disabled]="ejecutandoDemo">
+                Despertar el servidor
+              </ion-button>
+            </div>
+          </section>
+        </div>
+
+        @if (demoResultado) {
+          <div class="resultado-demo" role="status">
+            @if (ejecutandoDemo) {
+              <ion-spinner name="dots"></ion-spinner>
+            }
+            {{ demoResultado }}
+          </div>
+        }
+      }
+    </main>
   </div>
 </ion-content>
+
+  <!-- Formulario completo para revisar o modificar un plan -->
+  <ion-modal [isOpen]="!!edicion" (didDismiss)="cerrarEdicion()" class="modal-edicion">
+    <ng-template>
+      @if (edicion; as e) {
+        <div class="edicion">
+          <header class="edicion-cabecera">
+            <div>
+              <h2>{{ tituloEdicion }}</h2>
+              <p>Cambia lo que haga falta. Los campos con <span class="obligatorio">*</span> son obligatorios.</p>
+            </div>
+            <button type="button" class="edicion-cerrar" (click)="cerrarEdicion()" aria-label="Cerrar sin guardar">
+              <ion-icon name="close" aria-hidden="true"></ion-icon>
+            </button>
+          </header>
+
+          <div class="edicion-cuerpo">
+            <fieldset class="edicion-grupo">
+              <legend>Qué</legend>
+              <div class="edicion-campos">
+              <label class="campo ancho" [class.con-error]="erroresEdicion.title">
+                <span>Título del plan <span class="obligatorio">*</span></span>
+                <input type="text" [(ngModel)]="e.title" maxlength="140" />
+                <small class="campo-ayuda">El nombre que verá la gente en la agenda.</small>
+                @if (erroresEdicion.title) { <span class="campo-error">{{ erroresEdicion.title }}</span> }
+              </label>
+              <label class="campo">
+                <span>Tipo de actividad</span>
+                <select [(ngModel)]="e.category">
+                  @for (c of sb.categorias; track c.slug) {
+                    <option [value]="c.slug">{{ c.nombre }}</option>
+                  }
+                </select>
+              </label>
+              <label class="campo ancho">
+                <span>Descripción</span>
+                <textarea rows="3" [(ngModel)]="e.description" placeholder="Qué se va a hacer, qué hay que llevar…"></textarea>
+              </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="edicion-grupo">
+              <legend>Cuándo</legend>
+              <div class="edicion-campos">
+              <label class="campo" [class.con-error]="erroresEdicion.fecha">
+                <span>Día <span class="obligatorio">*</span></span>
+                <input type="date" [(ngModel)]="e.fecha" />
+                @if (erroresEdicion.fecha) { <span class="campo-error">{{ erroresEdicion.fecha }}</span> }
+              </label>
+              <label class="campo" [class.con-error]="erroresEdicion.hora">
+                <span>Hora de inicio <span class="obligatorio">*</span></span>
+                <input type="time" [(ngModel)]="e.hora" />
+                @if (erroresEdicion.hora) { <span class="campo-error">{{ erroresEdicion.hora }}</span> }
+              </label>
+              <label class="campo" [class.con-error]="erroresEdicion.duration_minutes">
+                <span>Duración (minutos)</span>
+                <input type="number" min="0" step="15" [(ngModel)]="e.duration_minutes" />
+                <small class="campo-ayuda">Por ejemplo, 120 son 2 horas.</small>
+                @if (erroresEdicion.duration_minutes) { <span class="campo-error">{{ erroresEdicion.duration_minutes }}</span> }
+              </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="edicion-grupo">
+              <legend>Dónde</legend>
+              <div class="edicion-campos">
+              <label class="campo" [class.con-error]="erroresEdicion.municipio_id">
+                <span>Pueblo <span class="obligatorio">*</span></span>
+                <select [(ngModel)]="e.municipio_id">
+                  <option [ngValue]="null" disabled>Elige el pueblo</option>
+                  @for (m of sb.municipios; track m.id) {
+                    <option [ngValue]="m.id">{{ m.nombre }}</option>
+                  }
+                </select>
+                @if (erroresEdicion.municipio_id) { <span class="campo-error">{{ erroresEdicion.municipio_id }}</span> }
+              </label>
+              <label class="campo">
+                <span>Lugar o punto de encuentro</span>
+                <input type="text" [(ngModel)]="e.location_name" placeholder="Ej. Plaza de la Iglesia" />
+                <small class="campo-ayuda">Si cambia, volvemos a situarlo en el mapa.</small>
+              </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="edicion-grupo">
+              <legend>Condiciones</legend>
+              <div class="edicion-campos">
+              <label class="campo" [class.con-error]="erroresEdicion.price">
+                <span>Precio (€)</span>
+                <input type="number" min="0" step="0.5" [(ngModel)]="e.price" />
+                <small class="campo-ayuda">Pon 0 si es gratis.</small>
+                @if (erroresEdicion.price) { <span class="campo-error">{{ erroresEdicion.price }}</span> }
+              </label>
+              <label class="campo" [class.con-error]="erroresEdicion.max_capacity">
+                <span>Número de plazas</span>
+                <input type="number" min="1" [(ngModel)]="e.max_capacity" placeholder="Sin límite" />
+                <small class="campo-ayuda">Vacío si puede venir todo el que quiera.</small>
+                @if (erroresEdicion.max_capacity) { <span class="campo-error">{{ erroresEdicion.max_capacity }}</span> }
+              </label>
+              <label class="campo" [class.con-error]="erroresEdicion.min_age">
+                <span>Edad mínima</span>
+                <input type="number" min="0" [(ngModel)]="e.min_age" placeholder="Sin mínimo" />
+                @if (erroresEdicion.min_age) { <span class="campo-error">{{ erroresEdicion.min_age }}</span> }
+              </label>
+              <label class="campo" [class.con-error]="erroresEdicion.max_age">
+                <span>Edad máxima</span>
+                <input type="number" min="0" [(ngModel)]="e.max_age" placeholder="Sin máximo" />
+                @if (erroresEdicion.max_age) { <span class="campo-error">{{ erroresEdicion.max_age }}</span> }
+              </label>
+              <label class="edicion-casilla ancho">
+                <input type="checkbox" [(ngModel)]="e.is_accessible" />
+                <span>Accesible para personas en silla de ruedas o con andador</span>
+              </label>
+              </div>
+            </fieldset>
+          </div>
+
+          <footer class="edicion-pie">
+            <button type="button" class="boton-atras" (click)="cerrarEdicion()">Cancelar</button>
+            <button type="button" class="boton-atras guardar" (click)="guardarEdicion(false)" [disabled]="guardandoEdicion">
+              {{ guardandoEdicion ? 'Guardando…' : 'Guardar cambios' }}
+            </button>
+            @if (edicionEsDePendiente) {
+              <button type="button" class="boton-siguiente" (click)="guardarEdicion(true)" [disabled]="guardandoEdicion">
+                <ion-icon name="checkmark-circle-outline" aria-hidden="true"></ion-icon> Guardar y aprobar
+              </button>
+            }
+          </footer>
+        </div>
+      }
+    </ng-template>
+  </ion-modal>
+
