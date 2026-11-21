@@ -169,11 +169,12 @@ _GENERAL = re.compile(r"iniciar sesion|registr|cuenta|contrasena|telegram|vincul
 _PASADO = re.compile(r"\b(hubo|ha habido|habia|pasad[oa]s?|se hizo|se hicieron|se celebro|se celebraron|"
                      r"celebrad[oa]s|fue|fueron|cuantas veces|historial|anteriores|antiguos?|"
                      r"desde cuando|finalizad[oa]s?|terminad[oa]s?|acabad[oa]s?|ya pasaron|"
-                     r"que ya han|que se han hecho|ultimos eventos)\b")
+                     r"que ya han|que se han hecho|ultimos eventos|realizad[oa]s?|se realizo|"
+                     r"se realizaron|hechos|organizad[oa]s|tuvieron lugar|ha habido)\b")
 
 
 _NUM_PALABRA = {"un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6}
-_FINALIZADOS = re.compile(r"\b(finalizad|terminad|acabad|celebrad)[oa]s?\b")
+_FINALIZADOS = re.compile(r"\b(finalizad|terminad|acabad|celebrad|realizad)[oa]s?\b")
 
 # Palabras que no dicen QUÉ evento se busca (solo cuándo, dónde o que se quiere una lista).
 # Si la pregunta solo tiene estas, se lista por fecha en vez de por parecido.
@@ -184,6 +185,7 @@ unas de del al a en para por con y o mi me mis se ya algun alguno alguna
 evento eventos plan planes actividad actividades cosa cosas algo hacer
 finalizado finalizados finalizadas terminado terminados terminadas pasado pasados pasadas
 celebrado celebrados celebradas anteriores antiguo antiguos acabado acabados acabadas hizo
+realizado realizados realizadas hechos organizados organizadas
 hicieron celebro celebraron fue fueron proximo proximos proxima proximas siguiente
 siguientes nuevos futuro futuros hoy manana semana semanas mes meses ano dia dias finde fin
 viene este esta esto dentro durante ultimos ultimas uno dos tres cuatro cinco seis pueblo

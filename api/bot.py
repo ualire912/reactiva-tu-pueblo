@@ -1716,10 +1716,28 @@ async def _procesar_texto_o_voz(
         if not propuesta and es_audio and ia_mod and hasattr(ia_mod, "entender_mensaje"):
             parsed = await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))
             propuesta = (parsed or {}).get("texto") or ""
-        if propuesta and not await _charla(chat_id, perfil, propuesta, force_audio=es_audio):
+        n_prop = _norm_txt(propuesta)
+        cancela = re.search(r"\b(olvida\w*|cancela\w*|deja\w*|no quiero|ya no|mejor no|nada)\b", n_prop)
+        if cancela:
+            # "olvídate de lo de crear eventos, dime los eventos realizados": se sale del modo
+            # proponer y, si pide algo más en la misma frase, se atiende eso
+            resto = re.split(r",|\by\b|\bpero\b", propuesta, maxsplit=1)
+            resto = resto[1].strip(" .") if len(resto) > 1 else ""
+            if len(resto.split()) < 2:
+                await _enviar_respuesta(chat_id, "👌 Vale, lo dejamos. ¿En qué más puedo ayudarte?",
+                                        buttons=MENU_PRINCIPAL, perfil=perfil, force_audio=es_audio)
+                return
+            texto, audio_bytes, es_audio = resto, None, False  # sigue con lo que pide
+        elif propuesta and not _tiene_detalles_de_plan(propuesta) and (
+                propuesta.rstrip().endswith("?") or re.match(
+                    r"(dame|dime|que |cual|cuando|donde|hay |busca|muestrame|ensename|quiero ver|"
+                    r"recomienda|mis |a que|en que)", n_prop)):
+            texto = propuesta  # es una pregunta, no la propuesta: se contesta como siempre
+            audio_bytes, es_audio = None, False
+        elif propuesta and not await _charla(chat_id, perfil, propuesta, force_audio=es_audio):
             await _crear_propuesta(chat_id, perfil, propuesta, es_audio)
             return
-        if propuesta:
+        elif propuesta:
             return
 
     if chat_id in ESPERANDO_CAMPO:
