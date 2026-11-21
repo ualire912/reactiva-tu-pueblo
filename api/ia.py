@@ -629,7 +629,7 @@ _DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "
 # Palabras que delatan cada categoría (las usan las reglas y el RAG)
 SINONIMOS_CATEGORIA = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
                        "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
-                       "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
+                       "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "exposicion"],
                        "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
                        "fiestas": ["fiesta", "verbena", "feria", "baile"],
                        "taller": ["taller", "curso", "manualidad", "esparto"],
