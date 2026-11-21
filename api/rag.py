@@ -301,13 +301,17 @@ def _linea(e: dict, con_anio: bool = False) -> str:
 
 
 _PROMPT_RESPUESTA = """Eres el asistente de la agenda de unos pueblos de Almería. Responde en español,
-en 1-4 frases sencillas, usando SOLO estos datos. Si no bastan, dilo. No inventes.
+en 1-4 frases sencillas y cercanas, como un vecino que conoce la agenda, usando SOLO estos datos.
+Responde directamente a la pregunta. No digas "según los datos", "eventos mostrados" ni copies
+etiquetas como "(ya celebrado)": si un evento ya pasó, dilo con naturalidad ("se celebró el...").
+Si los datos no bastan para responder, dilo. No inventes.
 
 {contexto}
 
 PREGUNTA: {pregunta}
 """
-_LISTAR = re.compile(r"^(que|hay|cuales|dime|ensena|muestrame|busca|algo|planes|eventos|alguna|algun)")
+_LISTAR = re.compile(r"^(que|hay|cuales|dime|ensena|muestrame|busca|algo|planes|eventos|alguna|algun|"
+                     r"lista|listame|quiero ver|ver)")
 
 
 def preguntar_agenda(pregunta: str) -> dict:
@@ -352,11 +356,17 @@ def preguntar_agenda(pregunta: str) -> dict:
                     "eventos": [], "tipo": "eventos"}
 
         n = re.sub(r"^[¿¡\s]+", "", ia._norm(pregunta))
-        if _LISTAR.match(n) and not f["pasado"]:  # "¿qué hay…?" -> lista directa, 0 tokens
-            cab = "Esto es lo que he encontrado:" if total <= len(eventos) else \
-                  f"Hay {total} planes; estos son los que mejor encajan:"
-            return {"respuesta": cab + "\n" + "\n".join(_linea(e) for e in eventos[:5]),
-                    "eventos": salida[:5], "tipo": "eventos"}
+        if _LISTAR.match(n):  # "¿qué hay…?" / "¿qué eventos hubo…?" -> lista directa, 0 tokens
+            if f["pasado"]:
+                eventos.sort(key=lambda e: e.get("starts_at") or "", reverse=True)
+                cab = (f"Se celebraron {total} eventos así. Los más relacionados:" if total > len(eventos[:6])
+                       else "Estos son los que se celebraron:")
+                lineas = [_linea(e, con_anio=True).replace(" (ya celebrado)", "") for e in eventos[:6]]
+            else:
+                cab = "Esto es lo que he encontrado:" if total <= len(eventos) else \
+                      f"Hay {total} planes; estos son los que mejor encajan:"
+                lineas = [_linea(e) for e in eventos[:5]]
+            return {"respuesta": cab + "\n" + "\n".join(lineas), "eventos": salida[:6], "tipo": "eventos"}
 
         contexto = (f"HOY ES {ia._hoy_texto()}.\n"
                     f"EVENTOS QUE CUMPLEN LOS FILTROS: {total} en total. "
@@ -373,6 +383,105 @@ def preguntar_agenda(pregunta: str) -> dict:
         log.exception("preguntar_agenda falló")
         return {"respuesta": "Ahora mismo no puedo buscar. Mira la agenda en la app.",
                 "eventos": [], "tipo": "eventos"}
+
+
+# ══════════════════════════════════════════════════════════════
+#  Para el bot (B2): UNA sola función para cualquier texto libre o nota de voz
+# ══════════════════════════════════════════════════════════════
+_SALUDO = re.compile(r"^(hola|buenas|buenos dias|buenas tardes|buenas noches|hey|ey|saludos|"
+                     r"que tal|holi)\b")
+_GRACIAS = re.compile(r"^(gracias|muchas gracias|vale|ok|perfecto|genial|estupendo)\b")
+
+TEXTO_AYUDA = ("Puedes preguntarme cosas como:\n"
+               "• ¿Qué hay este fin de semana en Tahal?\n"
+               "• ¿Qué rutas de senderismo hay?\n"
+               "• ¿Cómo vinculo Telegram?\n"
+               "También puedes mandarme una nota de voz.")
+
+
+_RE_ESTRELLAS = re.compile(r"\b([1-5]|un[oa]?|dos|tres|cuatro|cinco)\s*(?:de\s*5\s*)?(?:estrellas?|★|⭐)|"
+                           r"\b(?:un|una|le pongo un|le doy un|nota de|puntu\w* (?:con )?un?)\s*([1-5])\b")
+_NUMEROS = {"un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5}
+
+
+def _detectar_resena(dicho: str) -> dict | None:
+    """'al torneo de fútbol sala le pongo un 4 de 5 y fue muy divertido' ->
+    propone valorar ese evento (B2 enseña el botón rate:{id}:{n})."""
+    n = ia._norm(dicho)
+    if not re.search(r"estrella|puntu|valor|resena|nota|le pongo|le doy", n):
+        return None
+    m = _RE_ESTRELLAS.search(n)
+    if not m:
+        return None
+    crudo = m.group(1) or m.group(2)
+    estrellas = int(crudo) if crudo.isdigit() else _NUMEROS.get(crudo)
+    if not estrellas:
+        return None
+    # Comentario: lo que va detrás de "diciendo que", "comentario", "porque"...
+    c = re.search(r"(?:comentario|diciendo que|diciendo|porque|que ha sido|que fue|y que)\s*:?\s*(.+)$",
+                  dicho, re.I)
+    comentario = c.group(1).strip(" .") if c else None
+    if comentario:
+        comentario = re.sub(r"^(diciendo que|diciendo|que ha sido|que fue|que)\s+", "", comentario, flags=re.I)
+        comentario = comentario[:1].upper() + comentario[1:] if comentario else None
+    # Buscar el evento entre los ya celebrados
+    f = extraer_filtros(dicho)
+    f.update({"tipo": "eventos", "pasado": True, "desde": None,
+              "hasta": datetime.now(ia.TZ) + timedelta(days=1)})
+    candidatos = [e for e in buscar_eventos(dicho, f, limite=3) if e.get("status") == "finalizado"]
+    if not candidatos:
+        return {"texto": "Quieres valorar un evento, pero no encuentro cuál. "
+                         "Usa el botón de estrellas que te llega cuando termina un evento.",
+                "eventos": [], "intencion": "resena", "resena": None}
+    e0 = candidatos[0]
+    texto = (f"¿Quieres valorar «{e0['title']}» ({e0.get('municipio')}, "
+             f"{_fecha_con_anio(e0.get('starts_at'))}) con {estrellas} ★"
+             + (f" y el comentario «{comentario}»" if comentario else "") + "? Pulsa para confirmar.")
+    return {"texto": texto, "intencion": "resena",
+            "eventos": [{"id": c["event_id"], "title": c["title"], "starts_at": c["starts_at"],
+                         "municipio": c["municipio"], "status": c["status"]} for c in candidatos],
+            "resena": {"event_id": e0["event_id"], "estrellas": estrellas, "comentario": comentario}}
+
+
+def responder_mensaje_libre(text: str | None = None, audio_bytes: bytes | None = None) -> dict:
+    """Todo lo que NO sea un comando (/agenda...) ni un botón pasa por aquí.
+    -> {"texto": respuesta para enviar,
+        "eventos": [{"id","title","starts_at","municipio","status"}] (para botones insc:{id}),
+        "intencion": ..., "transcripcion": lo que dijo (si era audio),
+        "resena"?: {"event_id","estrellas","comentario"} -> si viene, B2 enseña el botón
+                   rate:{event_id}:{estrellas} y, al pulsarlo, guarda también el comentario}
+    Nunca lanza excepciones."""
+    try:
+        e = ia.entender_mensaje(text=text, audio_bytes=audio_bytes)
+        dicho = (e.get("texto") or text or "").strip()
+        n = re.sub(r"^[¿¡\s]+", "", ia._norm(dicho))
+        base = {"eventos": [], "intencion": e.get("intencion"), "transcripcion": dicho}
+
+        if not dicho:
+            return {**base, "texto": "No te he entendido bien. " + TEXTO_AYUDA}
+        if _SALUDO.match(n) and len(n.split()) <= 4:
+            return {**base, "texto": "¡Hola! Soy el asistente de la agenda de los pueblos. " + TEXTO_AYUDA}
+        if _GRACIAS.match(n) and len(n.split()) <= 4:
+            return {**base, "texto": "¡De nada! Aquí estoy para lo que necesites."}
+        resena = _detectar_resena(dicho)
+        if resena:
+            return {**base, **resena}
+        if e.get("intencion") == "proponer":
+            return {**base, "texto": "¡Qué buena idea! Para proponer un plan escribe /proponer, "
+                                     "o mándame el cartel o una nota de voz con qué, dónde y cuándo."}
+        if e.get("intencion") == "otro" and len(n.split()) <= 2:
+            return {**base, "texto": "No te he entendido bien. " + TEXTO_AYUDA}
+
+        # buscar / pregunta / apuntarse / otro largo -> asistente de la agenda
+        r = preguntar_agenda(dicho)
+        texto = r["respuesta"]
+        if e.get("intencion") == "apuntarse" and r["eventos"]:
+            texto += "\n\nPulsa el botón del que quieras para apuntarte."
+        return {**base, "texto": texto, "eventos": r["eventos"][:5]}
+    except Exception:
+        log.exception("responder_mensaje_libre falló")
+        return {"texto": "Ahora mismo no puedo responder. Prueba con /agenda.",
+                "eventos": [], "intencion": "otro", "transcripcion": text or ""}
 
 
 # ══════════════════════════════════════════════════════════════
