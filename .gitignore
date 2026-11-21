@@ -23,3 +23,7 @@ dist/
 .env
 __pycache__/
 *.pyc
+
+# Se generan al usar el agente y el extractor (no se suben)
+api/pruebas/ia_llamadas.csv
+api/pruebas/apify_*.json

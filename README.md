@@ -52,6 +52,33 @@ Están en `api/.env.example`. **Ninguna clave está en el código ni en el repos
 
 **Automático en segundo plano** (`api/tareas.py`, cada 5 min): estados de los eventos, petición de reseñas al terminar un evento y revisión con IA de los candidatos a Publicador. Si la IA aprueba con seguridad, el candidato se promueve solo; si duda, lo decide el moderador.
 
+También: avisar al autor cuando un moderador aprueba o rechaza su propuesta y, cada 6 horas, el agente de eventos reales.
+
+## Eventos reales: agente de Facebook y noticias (arranque en 5 minutos)
+La agenda se llena con eventos **reales** de los pueblos, nunca inventados. La IA propone; el sistema valida; una persona decide.
+
+1. En `api/.env` pon `APIFY_TOKEN=` (apify.com → Settings → API & Integrations) y al menos una clave de visión (`GEMINI_API_KEY` vale).
+2. En `api/scraper/fuentes_eventos.json` pon las URL de las páginas **públicas** de Facebook (ayuntamientos, asociaciones, negocios; nunca perfiles personales ni grupos privados) y, si quieres, más noticias en `articulos`.
+3. Desde `api/`:
+```bash
+python scraper/agente_eventos.py --dry-run      # qué haría, sin escribir nada
+python scraper/agente_eventos.py                # guarda ingestas y eventos en Supabase
+python scraper/agente_eventos.py --archivo pruebas/apify_XXXX.json   # repetir sin gastar crédito
+```
+Cómo decide: cada post pasa por reglas, spam e IA (texto con freellmpool → Gemini; carteles con `extractor_vlm.py`). Las fechas relativas ("este sábado") se calculan desde la fecha de publicación. Los recordatorios del mismo evento no se duplican. Fuente oficial y la IA segura → **publicado**; si falta algo o la IA duda → **borrador_ia**; completo → **pendiente_moderacion**. Las webs de los ayuntamientos bloquean los programas automáticos y no se intenta saltar esa protección.
+
+**Extractor de carteles** (`api/extractor_vlm.py`): cascada de modelos de visión gratuitos (Gemini, NVIDIA, Mistral, Groq, OpenRouter) con segunda opinión si la confianza es baja; nunca inventa (lo que no sale en el cartel va a `missing`). Registra cada llamada en `api/pruebas/ia_llamadas.csv`.
+```bash
+python extractor_vlm.py --healthcheck              # qué proveedores responden y cuánto tardan
+python extractor_vlm.py --listar-modelos nvidia    # los catálogos gratuitos cambian: compruébalos
+python extractor_vlm.py cartel.jpg --municipio Senés
+python tests/test_extractor.py                     # 8 carteles de prueba vs tests/golden.json (o: python -m pytest tests/)
+```
+
+## Proponer y gestionar planes por Telegram
+Proponer (texto, nota de voz o foto del cartel) → resumen → «Sí, publícalo». **Usuario** → siempre lo revisa un moderador. **Publicador** → se publica solo si su reputación por reseñas es buena y la IA no duda; si no, al moderador. Spam y planes de fuera de la Mancomunidad se rechazan explicando el porqué.
+`/mis_propuestas` (estado, ✏️ editar fecha/lugar/precio/plazas, ❌ cancelar; se avisa a los apuntados) · `/moderar` (moderadores: ✅ aprobar / 🚫 rechazar con motivo / ✏️ editar; el autor recibe el aviso, también si se decide en el panel web).
+
 **Robustez:** todas las llamadas a Telegram (10 s) y a la IA (15 s) tienen límite de tiempo. Si fallan, el servidor sigue con un plan B sin IA y nunca se queda esperando. Sin IA, los candidatos esperan al moderador en vez de promoverse.
 
 Documentación interactiva: `/docs` en la URL de la API.

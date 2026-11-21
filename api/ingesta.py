@@ -158,6 +158,44 @@ def ingesta_facebook(post: PostFacebook, bg: BackgroundTasks):
 # ══════════════════════════════════════════════════════════════
 #  procesar_ingesta  (se ejecuta en segundo plano)
 # ══════════════════════════════════════════════════════════════
+_OTROS_SITIOS = re.compile(
+    r"\b(almeria capital|en almeria\b|nijar|tabernas|sorbas|gergal|roquetas|el ejido|vicar|huercal|"
+    r"carboneras|mojacar|garrucha|macael|olula del rio|purchena|tijola|seron|baza|guadix|"
+    r"granada|madrid|sevilla|malaga|murcia|valencia|barcelona|cordoba|jaen|cadiz|huelva|"
+    r"aguadulce|adra|berja|cuevas del almanzora|huercal-overa|pulpi|benahadux|rioja|gador)\b")
+
+
+def fuera_de_la_mancomunidad(texto: str, extraido: dict) -> bool:
+    """¿Propone un plan de otro sitio? Solo si nombra otro pueblo/ciudad y NINGUNO de los
+    nuestros (si no dice el pueblo, se le pregunta; no se descarta)."""
+    if extraido.get("municipio") or ia._pueblo_en_texto(texto):
+        return False
+    return bool(_OTROS_SITIOS.search(ia._norm(texto or "")))
+
+
+def _extraer_con_cartel(texto: str, imagen: bytes, entidad: dict | None) -> dict | None:
+    """Cartel -> extractor_vlm (Gemini, NVIDIA, Mistral, Groq, OpenRouter en cascada).
+    None si no hay proveedores o todos fallan (entonces se usa ia.extraer_evento)."""
+    try:
+        import extractor_vlm
+    except Exception:
+        return None
+    m = re.search(r"\[Publicado el (\d{2})/(\d{2})/(\d{4})\]", texto or "")
+    fecha_pub = f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else None
+    muni = None
+    if entidad and entidad.get("municipio_id"):
+        fila = _una("municipios", "id", entidad["municipio_id"])
+        muni = (fila or {}).get("nombre")
+    try:
+        d = extractor_vlm.extraer_cartel([imagen], texto, muni, fecha_pub)
+    except Exception as e:
+        log.info("extractor_vlm sin respuesta (%s) -> extractor de siempre", str(e)[:120])
+        return None
+    if not d.get("municipio") and muni:
+        d["municipio"] = muni
+    return d
+
+
 def procesar_ingesta(ingesta_id: str) -> None:
     try:
         ing = _una("ingestas", "id", ingesta_id)
@@ -182,15 +220,25 @@ def procesar_ingesta(ingesta_id: str) -> None:
             log.info("Ingesta %s -> descartada por reglas (%s)", ingesta_id, no_evento)
             return
 
-        # 2. Extraer con IA (texto + cartel)
+        # 2. Extraer con IA (texto + cartel). Con cartel: cascada de modelos de visión
+        #    gratuitos (extractor_vlm); si ninguno responde, el extractor de siempre.
         imagen = descargar_imagen(ing.get("image_url"))
-        extraido = ia.extraer_evento(texto, imagen)
+        extraido = _extraer_con_cartel(texto, imagen, entidad) if imagen else None
+        if extraido is None:
+            extraido = ia.extraer_evento(texto, imagen)
 
         # 2a. Había cartel pero la IA no pudo leerlo (Gemini caído/saturado) -> se reintenta luego
         if imagen and extraido.get("confidence", 0) == 0 and extraido.get("es_evento") is None:
             _actualizar_ingesta(ingesta_id, estado="error",
                                 spam_reason="no se pudo leer el cartel (IA no disponible); se reintentará")
             log.info("Ingesta %s -> error temporal: cartel sin leer, se reintentará", ingesta_id)
+            return
+
+        # 2a-bis. Propuesta por Telegram de un plan de OTRO sitio (no de la Mancomunidad)
+        if ing.get("origen") == "telegram" and fuera_de_la_mancomunidad(texto, extraido):
+            _actualizar_ingesta(ingesta_id, estado="descartada", extracted=extraido, spam_score=0,
+                                spam_reason="fuera de la Mancomunidad: no es de estos pueblos")
+            log.info("Ingesta %s -> descartada (fuera de la Mancomunidad)", ingesta_id)
             return
 
         # 2b. La IA dice que no es un evento -> descartada (visible en el panel, sin molestar a nadie)
@@ -339,7 +387,8 @@ _CAMPOS_EVENTO = ["title", "category", "starts_at", "ends_at", "duration_minutes
 def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) -> dict:
     """Crea el evento. Devuelve la fila creada, o {"error", "missing"} si no se puede.
     publicar=None: decide la entidad/rol (auto_approve, publicador, moderador).
-    publicar=False: siempre a revisión del moderador (p. ej. la IA no está segura)."""
+    publicar=False: siempre a revisión del moderador (p. ej. la IA no está segura).
+    publicar=True: se publica (fuente verificada o publicador con buena reputación)."""
     ing = _una("ingestas", "id", ingesta_id)
     if not ing:
         return {"error": "No existe esa ingesta", "missing": []}
@@ -358,28 +407,50 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) ->
     if faltan:
         return {"error": "Faltan datos imprescindibles", "missing": faltan}
 
-    # Quién lo publica y con qué estado
+    # ¿Lo dudoso? (incompleto, con dudas o la IA poco segura)
+    faltan_datos = [c for c in (ing.get("missing") or ex.get("missing") or [])
+                    if c not in ("max_capacity", "inscripcion_hasta", "min_age", "max_age")]
+    dudoso = bool(faltan_datos or ex.get("dudas") or float(ex.get("confidence") or 0) < 0.7)
+
+    # Quién lo publica y con qué estado:
+    #   entidad con auto_approve o moderador -> se publica
+    #   publicador -> se publica si su reputación es buena y no hay dudas; si no, moderador
+    #   usuario normal -> siempre pasa por el moderador
     autor_id = ing.get("user_id") or (entidad or {}).get("owner_user_id")
     rol = (perfil(autor_id) or {}).get("rol") if autor_id else None
-    publica_directo = bool((entidad or {}).get("auto_approve")) or rol in ("publicador", "moderador")
-    if publicar is False:
-        publica_directo = False
+    motivo_revision = None
+    if publicar is not None:  # quien llama ya ha decidido (agente, fuente verificada...)
+        publica_directo = publicar
+    elif (entidad or {}).get("auto_approve") or rol == "moderador":
+        publica_directo = True
+    elif rol == "publicador":
+        if dudoso:
+            publica_directo, motivo_revision = False, "faltan datos o la IA tiene dudas"
+        else:
+            publica_directo, motivo_revision = publicador_de_confianza(autor_id)
+    else:
+        publica_directo, motivo_revision = False, "lo propone un usuario: lo revisa un moderador"
 
     fila = {c: ex.get(c) for c in _CAMPOS_EVENTO if ex.get(c) is not None}
     if fila.get("category") not in ia.CATEGORIAS:
         fila["category"] = "otro"
     if fila.get("ends_at"):
         fila.pop("duration_minutes", None)  # la BD calcula uno a partir del otro
+    # Sin publicar: incompleto o dudoso -> borrador_ia; completo -> pendiente_moderacion
+    estado = "abierto" if publica_directo else ("borrador_ia" if dudoso else "pendiente_moderacion")
     fila.update({
         "municipio_id": municipio_id,
         "entidad_organizadora_id": ing.get("entidad_id"),
         "created_by": autor_id,
-        "status": "abierto" if publica_directo else "pendiente_moderacion",
+        "status": estado,
         "origen": ing.get("origen") or "facebook",
         "source_url": ing.get("source_url"),
         "poster_url": ing.get("image_url"),
         "ai_confidence": ex.get("confidence"),
         "ai_flags": {"missing": ing.get("missing") or ex.get("missing") or [],
+                     "dudas": ex.get("dudas") or [],
+                     "proveedor": ex.get("_proveedor"),
+                     "revision": None if publica_directo else (motivo_revision or "la IA tiene dudas"),
                      "spam_score": ing.get("spam_score")},
     })
     if fila.get("poster_url") and re.search(r"fbcdn|facebook\.com|fbsbx", fila["poster_url"]):
@@ -397,7 +468,43 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) ->
 
     _actualizar_ingesta(ingesta_id, estado="confirmada", event_id=ev["id"])
     log.info("Ingesta %s -> evento %s (%s)", ingesta_id, ev["id"], ev.get("status"))
+    if ev.get("status") in ("pendiente_moderacion", "borrador_ia") and ing.get("origen") == "telegram":
+        try:  # los moderadores lo reciben por Telegram con botones Aprobar / Rechazar
+            from puentes import avisar_moderadores
+            avisar_moderadores(ev["id"])
+        except Exception as e:
+            log.warning("No se pudo avisar a los moderadores: %r", e)
     return ev
+
+
+def publicador_de_confianza(autor_id: str) -> tuple[bool, str | None]:
+    """¿Un publicador puede publicar sin revisión? Por su reputación (reseñas de sus eventos):
+    reglas de la BD primero (media >= 4, >= 2 eventos valorados, sin incidencias abiertas) y,
+    si no está claro, la IA (ia.revisar_confianza). -> (publicar, motivo si va a revisión)."""
+    try:
+        p = perfil(autor_id) or {}
+        evs = sb.table("eventos").select("id,title,status,description,municipio_id") \
+            .eq("created_by", autor_id).execute().data or []
+        ids = [e["id"] for e in evs]
+        res = sb.table("resenas").select("estrellas,comentario").in_("event_id", ids).execute().data \
+            if ids else []
+        inc = sb.table("incidencias").select("id").in_("event_id", ids).eq("estado", "abierta") \
+            .execute().data if ids else []
+        if inc:
+            return False, "tiene incidencias abiertas en sus eventos"
+        media = sum(r["estrellas"] for r in res) / len(res) if res else 0
+        valorados = len(res)
+        if valorados >= 2 and media >= 4 and float(p.get("reputation_score") or 0) >= 2:
+            return True, None
+        if valorados and media < 3:
+            return False, f"sus eventos tienen una media baja ({media:.1f}★)"
+        veredicto = ia.revisar_confianza(p, evs, res)  # la IA decide en los casos dudosos
+        if veredicto.get("aprobar") and float(veredicto.get("confianza") or 0) >= 0.7:
+            return True, None
+        return False, f"la IA duda: {veredicto.get('motivo')}"
+    except Exception as e:
+        log.warning("publicador_de_confianza falló: %r", e)
+        return False, "no se pudo revisar su reputación"
 
 
 # ══════════════════════════════════════════════════════════════

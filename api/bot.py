@@ -79,7 +79,7 @@ MESES_ES = (
 PREGUNTAS_CAMPOS: dict[str, str] = {
     "title": "📝 ¿Cuál es el título del plan?",
     "starts_at": "🕒 ¿Qué día y a qué hora es?",
-    "municipio": "🏘️ ¿En qué pueblo es?",
+    "municipio": "🏘️ ¿En qué pueblo es? (Lucainena de las Torres, Senés, Tahal, Uleila del Campo o Velefique)",
     "location_name": "📍 ¿Dónde es exactamente?",
     "price": "💶 ¿Cuánto cuesta? (o escribe 'gratis')",
     "max_capacity": "👥 ¿Cuántas plazas hay? (o 'sin límite')",
@@ -664,6 +664,292 @@ async def _cmd_mis_planes(
         await _enviar_audio(chat_id, " ".join(partes) or "Todavía no has participado en ningún plan.")
 
 
+# ══════════════════════════════════════════════════════════════
+#  Gestión de propuestas: mis propuestas, editar, cancelar y moderar por Telegram
+# ══════════════════════════════════════════════════════════════
+_ESTADO_PROPUESTA = {
+    "borrador_ia": "🕓 En revisión: un moderador tiene que completarlo o confirmarlo",
+    "pendiente_moderacion": "🕓 En revisión del moderador",
+    "abierto": "✅ Publicado", "completo": "✅ Publicado (completo)",
+    "inscripcion_cerrada": "✅ Publicado (inscripción cerrada)", "en_curso": "▶️ En curso",
+    "finalizado": "🏁 Ya se celebró", "cancelado": "❌ Cancelado", "pospuesto": "⏸️ Aplazado",
+    "rechazado": "🚫 No se ha publicado",
+}
+_CAMPOS_EDITABLES = {
+    "starts_at": ("📅 Fecha y hora", "📅 ¿Cuál es la nueva fecha y hora? (por ejemplo: «sábado 12 de diciembre a las 18:00»)"),
+    "location_name": ("📍 Lugar", "📍 ¿Dónde es ahora?"),
+    "price": ("💶 Precio", "💶 ¿Cuánto cuesta? (o «gratis»)"),
+    "max_capacity": ("👥 Plazas", "👥 ¿Cuántas plazas hay? (o «sin límite»)"),
+    "title": ("🏷️ Título", "🏷️ ¿Qué título le ponemos?"),
+    "description": ("📝 Descripción", "📝 Escribe la nueva descripción."),
+}
+ESPERANDO_EDICION: dict[int, dict[str, str]] = {}   # chat -> {event_id, campo}
+ESPERANDO_MOTIVO: dict[int, str] = {}                # chat (moderador) -> event_id a rechazar
+
+
+def _es_moderador(perfil: dict[str, Any] | None) -> bool:
+    return bool(perfil) and perfil.get("rol") == "moderador"
+
+
+def _puede_gestionar(perfil: dict[str, Any] | None, ev: dict[str, Any] | None) -> bool:
+    return bool(perfil and ev) and (ev.get("created_by") == perfil.get("id") or _es_moderador(perfil))
+
+
+def _ya_empezo(ev: dict[str, Any]) -> bool:
+    inicio = _parse_dt(ev.get("starts_at"))
+    return bool(inicio and inicio <= datetime.now(timezone.utc))
+
+
+async def _avisar_a(user_id: str | None, texto: str,
+                    buttons: list[list[tuple[str, str]]] | None = None) -> bool:
+    if not user_id:
+        return False
+    try:
+        return await avisar_usuario(str(user_id), texto, buttons)
+    except Exception:
+        return False
+
+
+async def _avisar_apuntados(event_id: str, texto: str) -> int:
+    """Avisa a todos los apuntados (confirmados y en lista de espera) de un cambio."""
+    filas = sb.table("inscripciones").select("user_id").eq("event_id", event_id) \
+        .in_("status", ["confirmada", "lista_de_espera"]).execute().data or []
+    n = 0
+    for f in filas:
+        if await _avisar_a(f.get("user_id"), texto):
+            n += 1
+    return n
+
+
+def _tarjeta_propuesta(ev: dict[str, Any], para_moderador: bool = False) -> str:
+    html_txt = _render_tarjeta_evento_html(ev)
+    estado = _ESTADO_PROPUESTA.get(str(ev.get("status")), str(ev.get("status")))
+    extra = f"\n\n<b>{escape_html(estado)}</b>"
+    if ev.get("status") == "rechazado" and ev.get("moderation_note"):
+        extra += f"\n<i>Motivo: {escape_html(str(ev['moderation_note']))}</i>"
+    if para_moderador:
+        flags = ev.get("ai_flags") or {}
+        if isinstance(flags, dict):
+            if flags.get("revision"):
+                extra += f"\n<i>Por qué se revisa: {escape_html(str(flags['revision']))}</i>"
+            falta = [c for c in (flags.get("missing") or []) if c not in ("max_capacity",)]
+            if falta:
+                extra += f"\n<i>Falta: {escape_html(', '.join(falta))}</i>"
+            if flags.get("dudas"):
+                extra += f"\n<i>Dudas de la IA: {escape_html('; '.join(map(str, flags['dudas']))[:200])}</i>"
+        if ev.get("source_url"):
+            extra += f"\n🔗 {escape_html(str(ev['source_url']))}"
+    return html_txt + extra
+
+
+def _botones_propuesta(ev: dict[str, Any]) -> list[list[tuple[str, str]]] | None:
+    if ev.get("status") in ("cancelado", "rechazado", "finalizado") or _ya_empezo(ev):
+        return None
+    return [[("✏️ Editar", f"edit:{ev['id']}"), ("❌ Cancelar evento", f"cancelev:{ev['id']}")]]
+
+
+async def _cmd_mis_propuestas(chat_id: int, perfil: dict[str, Any] | None,
+                              force_audio: bool = False) -> None:
+    if not perfil:
+        await send_message(chat_id, "⚠️ Primero escribe /start para empezar.")
+        return
+    evs = sb.table("eventos").select("*").eq("created_by", perfil["id"]) \
+        .order("starts_at", desc=True).limit(10).execute().data or []
+    sin_confirmar = sb.table("ingestas").select("id,extracted,estado").eq("user_id", perfil["id"]) \
+        .eq("origen", "telegram").in_("estado", ["esperando_confirmacion", "extraida"]) \
+        .is_("event_id", "null").order("created_at", desc=True).limit(5).execute().data or []
+    if not evs and not sin_confirmar:
+        await _enviar_respuesta(chat_id, "📝 Todavía no has propuesto ningún plan. "
+                                         "¿Quieres proponer uno?",
+                                buttons=[[("📝 Proponer un plan", "cmd:proponer")]],
+                                perfil=perfil, force_audio=force_audio)
+        return
+    await send_message(chat_id, f"🗂️ <b>Tus propuestas</b> ({len(evs) + len(sin_confirmar)})", escape=False)
+    for ev in evs:
+        await send_message(chat_id, _tarjeta_propuesta(ev), buttons=_botones_propuesta(ev), escape=False)
+    for ing in sin_confirmar:
+        titulo = (ing.get("extracted") or {}).get("title") or "Plan sin título"
+        await send_message(chat_id, f"📝 «{titulo}»: aún no lo has confirmado. "
+                                    "Revisa el resumen que te mandé y pulsa «Sí, publícalo».")
+    if force_audio:
+        resumen = " ".join(f"{e.get('title')}: {_ESTADO_PROPUESTA.get(str(e.get('status')), '')}."
+                           for e in evs[:5])
+        await _enviar_audio(chat_id, f"Tienes {len(evs)} propuestas. {resumen}")
+
+
+async def _menu_editar(chat_id: int, perfil: dict[str, Any] | None, event_id: str) -> None:
+    ev = _get_evento(event_id)
+    if not _puede_gestionar(perfil, ev):
+        await send_message(chat_id, "⚠️ Solo quien organiza el plan (o un moderador) puede cambiarlo.")
+        return
+    if ev.get("status") in ("cancelado", "finalizado") or _ya_empezo(ev):
+        await send_message(chat_id, "⚠️ Este plan ya empezó, terminó o está cancelado: no se puede cambiar.")
+        return
+    botones = [[(etq, f"editc:{event_id}:{campo}")] for campo, (etq, _) in _CAMPOS_EDITABLES.items()]
+    await send_message(chat_id, f"✏️ ¿Qué quieres cambiar de «{ev.get('title')}»?", buttons=botones)
+
+
+async def _aplicar_edicion(chat_id: int, perfil: dict[str, Any] | None, respuesta: str,
+                           force_audio: bool = False) -> None:
+    pendiente = ESPERANDO_EDICION.pop(chat_id, None)
+    if not pendiente:
+        return
+    ev = _get_evento(pendiente["event_id"])
+    campo = pendiente["campo"]
+    if not _puede_gestionar(perfil, ev):
+        await send_message(chat_id, "⚠️ No puedes cambiar este plan.")
+        return
+    respuesta = (respuesta or "").strip()
+    ingesta_mod = _get_ingesta_module()
+    cambios: dict[str, Any] = {}
+    if campo == "price" and ingesta_mod:
+        v = ingesta_mod.interpretar_precio(respuesta)
+        if v is not None:
+            cambios["price"] = v
+    elif campo == "max_capacity" and ingesta_mod:
+        v = ingesta_mod.interpretar_plazas(respuesta)
+        if v == getattr(ingesta_mod, "_SIN_LIMITE", object()):
+            cambios["max_capacity"] = None
+        elif v is not None:
+            cambios["max_capacity"] = v
+    elif campo in ("title", "location_name", "description") and respuesta:
+        cambios[campo] = respuesta[:500 if campo == "description" else 200]
+    elif campo == "starts_at" and respuesta:
+        ia_mod = _get_ia_module()
+        nuevo = ia_mod.extraer_evento(f"{ev.get('title')}. Nueva fecha y hora: {respuesta}") if ia_mod else {}
+        if nuevo.get("starts_at"):
+            cambios["starts_at"] = nuevo["starts_at"]
+            antes, despues = _parse_dt(ev.get("starts_at")), _parse_dt(nuevo["starts_at"])
+            if ev.get("ends_at") and antes and despues:  # misma duración
+                fin = _parse_dt(ev["ends_at"])
+                cambios["ends_at"] = (fin + (despues - antes)).isoformat() if fin else None
+    if not cambios:
+        ESPERANDO_EDICION[chat_id] = pendiente  # se le vuelve a preguntar
+        await _enviar_respuesta(chat_id, "🤔 No lo he entendido. " + _CAMPOS_EDITABLES[campo][1],
+                                perfil=perfil, force_audio=force_audio)
+        return
+    cambios["sequence"] = int(ev.get("sequence") or 0) + 1  # el .ics del calendario se actualiza
+    sb.table("eventos").update(cambios).eq("id", ev["id"]).execute()
+    ev = _get_evento(ev["id"]) or ev
+    await send_message(chat_id, "✅ Cambio guardado:\n\n" + _render_tarjeta_evento_html(ev),
+                       buttons=_botones_propuesta(ev), escape=False)
+    if force_audio:
+        await _enviar_audio(chat_id, f"Cambio guardado en {ev.get('title')}.")
+    if ev.get("status") not in ("pendiente_moderacion", "borrador_ia", "rechazado"):
+        que = _CAMPOS_EDITABLES[campo][0].split(" ", 1)[1].lower()
+        n = await _avisar_apuntados(ev["id"], f"ℹ️ Ha cambiado {que} de «{ev.get('title')}»:\n\n"
+                                              + re.sub(r"<[^>]+>", "", _render_tarjeta_evento_html(ev)))
+        if n:
+            await send_message(chat_id, f"📣 He avisado a {n} persona(s) apuntada(s).")
+
+
+async def _cancelar_evento(chat_id: int, perfil: dict[str, Any] | None, event_id: str) -> None:
+    ev = _get_evento(event_id)
+    if not _puede_gestionar(perfil, ev):
+        await send_message(chat_id, "⚠️ Solo quien organiza el plan (o un moderador) puede cancelarlo.")
+        return
+    if ev.get("status") in ("cancelado", "finalizado") or _ya_empezo(ev):
+        await send_message(chat_id, "⚠️ Este plan ya empezó, terminó o estaba cancelado.")
+        return
+    sb.table("eventos").update({"status": "cancelado", "sequence": int(ev.get("sequence") or 0) + 1}) \
+        .eq("id", event_id).execute()
+    n = await _avisar_apuntados(event_id, f"❌ Se ha cancelado «{ev.get('title')}» "
+                                          f"({_format_fecha_es(ev.get('starts_at'))}). Sentimos las molestias.")
+    await send_message(chat_id, f"❌ «{ev.get('title')}» cancelado."
+                                + (f" He avisado a {n} persona(s) apuntada(s)." if n else ""))
+
+
+# ── Moderar por Telegram ──────────────────────────────────────
+def _moderadores_con_telegram() -> list[dict[str, Any]]:
+    return sb.table("profiles").select("id,telegram_chat_id,full_name").eq("rol", "moderador") \
+        .not_.is_("telegram_chat_id", "null").execute().data or []
+
+
+def _botones_moderar(event_id: str) -> list[list[tuple[str, str]]]:
+    return [[("✅ Aprobar", f"mod_ok:{event_id}"), ("🚫 Rechazar", f"mod_no:{event_id}")],
+            [("✏️ Editar antes", f"edit:{event_id}")]]
+
+
+async def avisar_moderadores(event_id: str) -> int:
+    """Una propuesta queda pendiente -> los moderadores la reciben con botones. -> nº avisados."""
+    ev = _get_evento(event_id)
+    if not ev:
+        return 0
+    n = 0
+    for m in _moderadores_con_telegram():
+        if str(m.get("id")) == str(ev.get("created_by")):
+            continue  # no se modera a sí mismo
+        try:
+            await send_message(int(m["telegram_chat_id"]),
+                               "🛡️ <b>Propuesta para revisar</b>\n\n" + _tarjeta_propuesta(ev, True),
+                               buttons=_botones_moderar(event_id), escape=False)
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+async def _cmd_moderar(chat_id: int, perfil: dict[str, Any] | None) -> None:
+    if not _es_moderador(perfil):
+        await send_message(chat_id, "⚠️ Esta opción es solo para moderadores.")
+        return
+    evs = sb.table("eventos").select("*").in_("status", ["pendiente_moderacion", "borrador_ia"]) \
+        .order("created_at").limit(10).execute().data or []
+    if not evs:
+        await send_message(chat_id, "🛡️ No hay propuestas pendientes de revisar. ¡Todo al día!")
+        return
+    await send_message(chat_id, f"🛡️ <b>Propuestas pendientes</b> ({len(evs)})", escape=False)
+    for ev in evs:
+        await send_message(chat_id, _tarjeta_propuesta(ev, True),
+                           buttons=_botones_moderar(ev["id"]), escape=False)
+
+
+def _marcar_aviso_moderacion(ev: dict[str, Any]) -> None:
+    if ev.get("created_by"):
+        try:
+            sb.table("notificaciones").upsert(
+                {"user_id": ev["created_by"], "event_id": ev["id"], "tipo": "moderacion",
+                 "canal": "telegram", "motivo": ev.get("status")},
+                on_conflict="user_id,event_id,tipo").execute()
+        except Exception:
+            pass
+
+
+async def _moderar(chat_id: int, perfil: dict[str, Any] | None, event_id: str,
+                   aprobar: bool, motivo: str | None = None) -> None:
+    if not _es_moderador(perfil):
+        await send_message(chat_id, "⚠️ Solo los moderadores pueden aprobar o rechazar.")
+        return
+    ev = _get_evento(event_id)
+    if not ev or ev.get("status") not in ("pendiente_moderacion", "borrador_ia"):
+        await send_message(chat_id, "ℹ️ Esta propuesta ya la ha revisado otra persona.")
+        return
+    if aprobar:
+        if not (ev.get("title") and ev.get("starts_at") and ev.get("municipio_id")):
+            await send_message(chat_id, "⚠️ Le faltan datos (título, fecha u hora, pueblo). "
+                                        "Edítalo antes de aprobarlo.", buttons=[[("✏️ Editar", f"edit:{event_id}")]])
+            return
+        sb.table("eventos").update({"status": "abierto", "moderation_note": f"Aprobado por {perfil.get('full_name') or 'un moderador'}"}) \
+            .eq("id", event_id).execute()
+        try:
+            sb.rpc("actualizar_estados_eventos", {}).execute()  # por si ya está completo, etc.
+        except Exception:
+            pass
+        ev = _get_evento(event_id) or ev
+        await send_message(chat_id, f"✅ «{ev.get('title')}» aprobado y publicado.")
+        await _avisar_a(ev.get("created_by"), f"🎉 ¡Tu plan «{ev.get('title')}» ya está publicado! "
+                                              "Los vecinos ya pueden verlo y apuntarse.")
+    else:
+        motivo = (motivo or "").strip() or "No cumple las normas de la agenda"
+        sb.table("eventos").update({"status": "rechazado", "moderation_note": motivo[:300]}) \
+            .eq("id", event_id).execute()
+        ev = _get_evento(event_id) or ev
+        await send_message(chat_id, f"🚫 «{ev.get('title')}» rechazado. Se lo he explicado a quien lo propuso.")
+        await _avisar_a(ev.get("created_by"), f"🚫 Tu plan «{ev.get('title')}» no se ha publicado.\n"
+                                              f"Motivo: {motivo}\n\nSi quieres, corrígelo y vuelve a proponerlo.")
+    _marcar_aviso_moderacion(ev)
+
+
 async def _toggle_audio(
     chat_id: int, perfil: dict[str, Any] | None, enabled: bool | None = None
 ) -> None:
@@ -974,6 +1260,11 @@ _RE_MIS_EVENTOS = re.compile(
     r"me he apuntado|me apunte|estoy inscrit[oa]|me inscribi|mis planes|mis eventos|"
     r"mis actividades|mis inscripciones)\b"
 )
+_RE_MIS_PROPUESTAS = re.compile(
+    r"\b(mis propuestas|lo que he propuesto|que he propuesto|planes que he propuesto|"
+    r"eventos que he (creado|propuesto|organizado)|mis eventos (creados|propuestos)|"
+    r"(editar|cambiar|modificar|cancelar|anular) (mi|el) (evento|plan))\b"
+)
 _RE_INTERESAN = re.compile(
     r"(me interes|me gustar|me pueden gustar|me podrian gustar|para mi\b|recomiend|"
     r"recomendac|mis gustos|a mi gusto|que me va)"
@@ -1067,7 +1358,8 @@ async def _recomendar_eventos(
 MENU_PRINCIPAL: list[list[tuple[str, str]]] = [
     [("📅 Próximos planes", "cmd:agenda"), ("✨ Recomiéndame", "cmd:recomendar")],
     [("📋 Mis planes", "cmd:mis_planes"), ("⭐ Valorar un plan", "cmd:valorar")],
-    [("📝 Proponer un plan", "cmd:proponer"), ("❓ Ayuda", "cmd:ayuda")],
+    [("📝 Proponer un plan", "cmd:proponer"), ("🗂️ Mis propuestas", "cmd:mis_propuestas")],
+    [("❓ Ayuda", "cmd:ayuda")],
 ]
 _RE_SALUDO = re.compile(r"^(hola+|holi|buenas|buenos dias|buenas tardes|buenas noches|hey|ey|"
                         r"saludos|que tal|que pasa|wenas)\b")
@@ -1113,7 +1405,8 @@ async def _saludar(chat_id: int, perfil: dict[str, Any] | None, force_audio: boo
 async def _mostrar_ayuda(chat_id: int, force_audio: bool = False) -> None:
     texto = ("ℹ️ <b>Esto es lo que puedo hacer por ti</b>\n\n" + escape_html(TEXTO_EJEMPLOS)
              + "\n\n<b>Comandos</b>\n/agenda · próximos planes\n/mis_planes · tus planes\n"
-             "/proponer · proponer un plan\n/ayuda · esta ayuda")
+             "/proponer · proponer un plan\n/mis_propuestas · lo que has propuesto (editar o cancelar)\n"
+             "/moderar · propuestas por revisar (moderadores)\n/ayuda · esta ayuda")
     await send_message(chat_id, texto, buttons=MENU_PRINCIPAL, escape=False)
     if force_audio:
         await _enviar_audio(chat_id, AUDIO_EJEMPLOS)
@@ -1182,6 +1475,23 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
     if estado == "esperando_confirmacion":
         return  # ya le ha llegado el resumen con "¿Publico este plan?"
     CHATS_CON_VOZ.discard(chat_id)
+    if estado == "spam":
+        await _enviar_respuesta(
+            chat_id,
+            "🚫 Tu mensaje parece publicidad o spam, así que no lo publico. Aquí solo se "
+            "comparten planes y actividades de los pueblos de la Mancomunidad "
+            "(Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique).",
+            perfil=perfil, force_audio=es_audio)
+        return
+    if estado == "descartada":
+        motivo = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data
+                  or [{}])[0].get("spam_reason") or ""
+        if re.search(r"fuera|mancomunidad|otro pueblo|no es de", motivo, re.I):
+            await _enviar_respuesta(
+                chat_id, "📍 Solo puedo publicar planes de los pueblos de la Mancomunidad: "
+                         "Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique.",
+                perfil=perfil, force_audio=es_audio)
+            return
     if estado in ("descartada", "spam"):
         ESPERANDO_PROPUESTA.add(chat_id)
         await _enviar_respuesta(
@@ -1381,6 +1691,24 @@ async def _procesar_texto_o_voz(
             await send_message(chat_id, "⚠️ No he podido leer el comentario.")
         return
 
+    # Respuestas que el bot estaba esperando: un dato a editar o el motivo de un rechazo
+    if chat_id in ESPERANDO_EDICION or chat_id in ESPERANDO_MOTIVO:
+        dicho = (texto or "").strip()
+        if not dicho and es_audio:
+            ia_mod = _get_ia_module()
+            if ia_mod and hasattr(ia_mod, "entender_mensaje"):
+                dicho = ((await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))) or {}).get("texto") or ""
+        if _norm_txt(dicho).strip(" .!") in {"cancelar", "nada", "dejalo", "olvidalo"}:
+            ESPERANDO_EDICION.pop(chat_id, None)
+            ESPERANDO_MOTIVO.pop(chat_id, None)
+            await send_message(chat_id, "👌 Vale, lo dejamos como estaba.")
+            return
+        if chat_id in ESPERANDO_MOTIVO:
+            await _moderar(chat_id, perfil, ESPERANDO_MOTIVO.pop(chat_id), aprobar=False, motivo=dicho)
+        else:
+            await _aplicar_edicion(chat_id, perfil, dicho, force_audio=es_audio)
+        return
+
     if chat_id in ESPERANDO_PROPUESTA:  # le pedimos los datos del plan: esto es la propuesta
         ESPERANDO_PROPUESTA.discard(chat_id)
         propuesta = (texto or "").strip()
@@ -1478,6 +1806,11 @@ async def _procesar_texto_o_voz(
 
     # Preguntas sobre lo suyo: "en los que he participado", "a qué estoy apuntado"
     norm = _norm_txt(texto_reconocido)
+    if _RE_MIS_PROPUESTAS.search(norm):
+        if not perfil:
+            perfil = await _asegurar_perfil_telegram(chat_id)
+        await _cmd_mis_propuestas(chat_id, perfil, force_audio=es_audio)
+        return
     if _RE_MIS_EVENTOS.search(norm):
         if not perfil:
             perfil = await _asegurar_perfil_telegram(chat_id)
@@ -1625,6 +1958,39 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         await send_message(chat_id_int, TEXTO_PROPONER)
     elif data == "cmd:ayuda":
         await _mostrar_ayuda(chat_id_int)
+    elif data == "cmd:mis_propuestas":
+        await _cmd_mis_propuestas(chat_id_int, perfil)
+    elif data == "cmd:moderar":
+        await _cmd_moderar(chat_id_int, perfil)
+    elif data.startswith("edit:"):
+        await _menu_editar(chat_id_int, perfil, data.split(":", 1)[1])
+    elif data.startswith("editc:"):
+        _, ev_id, campo = data.split(":", 2)
+        if campo in _CAMPOS_EDITABLES and _puede_gestionar(perfil, _get_evento(ev_id)):
+            ESPERANDO_EDICION[chat_id_int] = {"event_id": ev_id, "campo": campo}
+            await send_message(chat_id_int, _CAMPOS_EDITABLES[campo][1]
+                               + "\n(Escribe «cancelar» para dejarlo como estaba.)")
+    elif data.startswith("cancelev:"):
+        ev_id = data.split(":", 1)[1]
+        ev = _get_evento(ev_id)
+        if _puede_gestionar(perfil, ev):
+            await send_message(chat_id_int, f"❓ ¿Seguro que quieres cancelar «{ev.get('title')}»? "
+                                            "Se avisará a todas las personas apuntadas.",
+                               buttons=[[("❌ Sí, cancelarlo", f"cancelev_si:{ev_id}"),
+                                         ("↩️ No", "cmd:mis_propuestas")]])
+    elif data.startswith("cancelev_si:"):
+        if msg_id_int:
+            await edit_message_reply_markup(chat_id_int, msg_id_int, [])
+        await _cancelar_evento(chat_id_int, perfil, data.split(":", 1)[1])
+    elif data.startswith("mod_ok:"):
+        if msg_id_int:
+            await edit_message_reply_markup(chat_id_int, msg_id_int, [])
+        await _moderar(chat_id_int, perfil, data.split(":", 1)[1], aprobar=True)
+    elif data.startswith("mod_no:"):
+        if _es_moderador(perfil):
+            ESPERANDO_MOTIVO[chat_id_int] = data.split(":", 1)[1]
+            await send_message(chat_id_int, "🚫 ¿Por qué no se publica? Escribe el motivo "
+                                            "(se lo diré a quien lo propuso).")
     elif data == "audio:on":
         await _toggle_audio(chat_id_int, perfil=perfil, enabled=True)
     elif data == "audio:off":
@@ -1847,6 +2213,10 @@ async def procesar_update(update: dict[str, Any]) -> None:
                 await _toggle_audio(chat_id_int, perfil=perfil, enabled=None)
             elif cmd in ("/ayuda", "/help", "/menu"):
                 await _mostrar_ayuda(chat_id_int)
+            elif cmd == "/mis_propuestas":
+                await _cmd_mis_propuestas(chat_id_int, perfil)
+            elif cmd == "/moderar":
+                await _cmd_moderar(chat_id_int, perfil)
             else:
                 await _procesar_texto_o_voz(chat_id_int, perfil, texto=clean)
         else:
