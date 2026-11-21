@@ -59,6 +59,24 @@ else:
     print("  (pon una nota de voz en pruebas/audio.ogg para probar el audio)")
 
 print("=" * 70)
+print("RECOMENDACIÓN")
+recs = [{"event_id": "1", "title": "Ruta de las Minas", "starts_at": "2026-11-29T08:30:00+00:00",
+         "municipio": "Lucainena de las Torres", "puntos": 8,
+         "motivos": ["te gusta el senderismo", "es gratis"]},
+        {"event_id": "2", "title": "Taller de esparto para mayores", "starts_at": "2026-12-05T10:00:00+00:00",
+         "municipio": "Tahal", "puntos": 6, "motivos": ["es en tu pueblo", "te gustan los talleres"]}]
+print(" ", ia.redactar_recomendacion("Luis Martínez", recs))
+
+print("=" * 70)
+print("CONFIANZA (promoción a Publicador)")
+ev = [{"title": "Ruta de las Minas", "municipio": "Lucainena de las Torres", "status": "finalizado"},
+      {"title": "Migas solidarias", "municipio": "Tahal", "status": "finalizado"}]
+print("  buena  :", ia.revisar_confianza({"full_name": "Ana", "reputation_score": 6}, ev,
+      [{"estrellas": 5, "comentario": "Muy bien organizado"}, {"estrellas": 4, "comentario": "Repetiré"}]))
+print("  alerta :", ia.revisar_confianza({"full_name": "Pepe", "reputation_score": 5}, ev,
+      [{"estrellas": 5, "comentario": "Genial"}, {"estrellas": 2, "comentario": "Una estafa, cobraron y no vino nadie"}]))
+
+print("=" * 70)
 print("VOZ")
 import voz  # noqa: E402
 mp3 = voz.texto_a_voz("Hola Luis, el domingo hay una ruta de senderismo en Tahal. ¿Te apuntas?")

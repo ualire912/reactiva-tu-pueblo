@@ -321,6 +321,8 @@ def crear_evento_desde_ingesta(ingesta_id: str) -> dict:
         "ai_flags": {"missing": ing.get("missing") or ex.get("missing") or [],
                      "spam_score": ing.get("spam_score")},
     })
+    if not fila.get("poster_url"):  # sin cartel original -> uno automático (sin IA)
+        fila["poster_url"] = subir_cartel({**ex, **fila})
     fila = {k: v for k, v in fila.items() if v is not None}
 
     try:
@@ -445,6 +447,64 @@ def chat_ia(event_id: str, body: PreguntaChat, user=Depends(require_user)):
     except Exception:
         log.exception("No se pudo guardar la respuesta del asistente")
     return {"respuesta": respuesta}
+
+
+# ══════════════════════════════════════════════════════════════
+#  Cartel automático (sin IA)  ·  POST /ia/cartel 🔒
+# ══════════════════════════════════════════════════════════════
+def subir_cartel(evento: dict, foto: bytes | None = None) -> str | None:
+    """Genera el cartel (con la foto dada, la del pueblo o de color), lo sube al bucket
+    público 'posters' y devuelve su URL (o None)."""
+    try:
+        import uuid as _uuid
+        from cartel import generar_cartel
+        img = generar_cartel(evento, foto)
+        es_jpg = img[:2] == b"\xff\xd8"
+        ruta = f"generados/{_uuid.uuid4()}.{'jpg' if es_jpg else 'png'}"
+        sb.storage.from_("posters").upload(
+            ruta, img, {"content-type": "image/jpeg" if es_jpg else "image/png"})
+        return sb.storage.from_("posters").get_public_url(ruta).rstrip("?")
+    except Exception:
+        log.exception("No se pudo generar/subir el cartel")
+        return None
+
+
+class PeticionCartel(BaseModel):
+    event_id: str | None = None      # evento ya creado -> se le pone el cartel
+    title: str | None = None         # o los datos sueltos (pantalla Proponer, antes de guardar)
+    category: str | None = None
+    starts_at: str | None = None
+    ends_at: str | None = None
+    location_name: str | None = None
+    municipio: str | None = None
+    price: float | None = None
+    max_capacity: int | None = None
+    is_accessible: bool | None = None
+    inscripcion_hasta: str | None = None
+    foto_url: str | None = None      # foto propia del organizador (opcional)
+
+
+@router.post("/ia/cartel")
+def ia_cartel(body: PeticionCartel, user=Depends(require_user)):
+    if body.event_id:
+        ev = db_evento(body.event_id)
+        if not ev:
+            raise HTTPException(404, "Evento no encontrado")
+        es_moderador = (perfil(user.id) or {}).get("rol") == "moderador"
+        if ev.get("created_by") != user.id and not es_moderador:
+            raise HTTPException(403, "Solo el autor o el moderador pueden cambiar el cartel")
+        url = subir_cartel(ev, descargar_imagen(body.foto_url))
+        if not url:
+            raise HTTPException(503, "No se pudo generar el cartel")
+        sb.table("eventos").update({"poster_url": url}).eq("id", body.event_id).execute()
+        return {"poster_url": url}
+    if not body.title:
+        raise HTTPException(400, "Manda event_id o al menos title")
+    url = subir_cartel(body.model_dump(exclude_none=True, exclude={"foto_url"}),
+                       descargar_imagen(body.foto_url))
+    if not url:
+        raise HTTPException(503, "No se pudo generar el cartel")
+    return {"poster_url": url}
 
 
 # ══════════════════════════════════════════════════════════════
