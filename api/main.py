@@ -9,16 +9,25 @@ load_dotenv()  # en local lee api/.env; en Render las variables ya existen (ante
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import tareas
 from routers import eventos, moderacion, recomendaciones, resenas
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("reactiva")
 
-app = FastAPI(title="Reactiva tu pueblo API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    tareas.arrancar()  # estados, reseñas y promociones automáticas cada 5 min
+    yield
+
+
+app = FastAPI(title="Reactiva tu pueblo API", lifespan=lifespan)
 
 origenes = ["http://localhost:8100", "http://localhost:4200"]
 if os.environ.get("FRONTEND_URL"):
@@ -27,10 +36,11 @@ if os.environ.get("FRONTEND_URL"):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origenes,
-    allow_origin_regex=r"https://.*\.vercel\.app",  # previews de Vercel
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Solo las previews de NUESTRO proyecto en Vercel (no cualquier web *.vercel.app)
+    allow_origin_regex=r"https://reactiva-tu-pueblo[a-z0-9-]*\.vercel\.app",
+    allow_credentials=False,  # usamos 'Authorization: Bearer', no cookies
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

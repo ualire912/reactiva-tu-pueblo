@@ -1,50 +1,64 @@
-"""B1 · Puente hacia B2 (bot) y C1 (ia) con PLAN B.
+"""B1 · Puente hacia B2 (bot) y C1 (ia) con PLAN B y LÍMITE DE TIEMPO.
 
 Mis routers llaman a estas funciones y no a bot/ia directamente. Así:
-  - Si B2 o C1 aún no han subido su código, el servidor arranca igual (stub).
-  - Si Telegram o Gemini fallan, se devuelve algo útil sin IA (lo pide el reto).
-En cuanto bot.py e ia.py tengan las funciones del contrato, se usan solas.
+  - Si B2 o C1 aún no han subido su código, el servidor arranca igual.
+  - Si Telegram o Gemini fallan o tardan demasiado, NO se queda esperando:
+    se corta a los X segundos y se sigue con un plan B sin IA.
+  - Ninguna función de aquí lanza excepciones.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 log = logging.getLogger("reactiva")
+
+LIMITE_TELEGRAM = 10  # segundos máximos por envío
+LIMITE_IA = 15        # segundos máximos por llamada a la IA
+
+_pool = ThreadPoolExecutor(max_workers=8)
+
+
+def _con_limite(segundos: int, fn, *args):
+    """Ejecuta fn(*args) y, si tarda más de 'segundos', lanza TimeoutError."""
+    return _pool.submit(fn, *args).result(timeout=segundos)
+
 
 # ---------- B2: bot.avisar_usuario ----------
 try:
     from bot import avisar_usuario as _avisar_usuario  # contrato B2
 except Exception as e:  # bot.py vacío, o falta TELEGRAM_BOT_TOKEN...
-    log.warning("bot.avisar_usuario no disponible (%s): uso stub con print", e)
+    log.warning("bot.avisar_usuario no disponible (%s): los avisos solo se imprimen", e)
     _avisar_usuario = None
 
 # ---------- C1: ia.redactar_recomendacion / ia.revisar_confianza ----------
 try:
     import ia as _ia
 except Exception as e:
-    log.warning("ia.py no disponible (%s): uso textos sin IA", e)
+    log.warning("ia.py no disponible (%s): uso plan B sin IA", e)
     _ia = None
 
 
 def avisar(user_id: str, texto: str, buttons=None) -> bool:
-    """Envía por Telegram. Nunca lanza excepción: devuelve True/False."""
+    """Envía por Telegram. True solo si se envió de verdad."""
     if _avisar_usuario is None:
-        print(f"[STUB avisar_usuario] {user_id}: {texto} | botones={buttons}")
-        return True  # para poder probar el flujo antes de que B2 termine
+        # Sin bot: se imprime pero NO cuenta como enviado (no ensucia 'notificaciones')
+        print(f"[SIN BOT, no enviado] {user_id}: {texto} | botones={buttons}")
+        return False
     try:
-        return bool(_avisar_usuario(user_id, texto, buttons))
+        return bool(_con_limite(LIMITE_TELEGRAM, _avisar_usuario, user_id, texto, buttons))
     except Exception as e:
-        log.error("avisar_usuario falló para %s: %s", user_id, e)
+        log.error("avisar_usuario falló o tardó demasiado para %s: %r", user_id, e)
         return False
 
 
 def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
-    """Texto amable con el porqué. Si la IA falla: motivos de la BD tal cual."""
+    """Texto amable con el porqué. Si la IA falla o tarda: motivos de la BD tal cual."""
     if _ia is not None and hasattr(_ia, "redactar_recomendacion"):
         try:
-            texto = _ia.redactar_recomendacion(nombre, eventos)
+            texto = _con_limite(LIMITE_IA, _ia.redactar_recomendacion, nombre, eventos)
             if texto:
                 return texto
         except Exception as e:
-            log.error("ia.redactar_recomendacion falló: %s", e)
+            log.error("ia.redactar_recomendacion falló o tardó demasiado: %r", e)
     # Plan B sin IA
     from ics import fecha_es
     lineas = [f"Hola {nombre} 👋, te proponemos estos planes:"]
@@ -57,13 +71,27 @@ def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
     return "\n".join(lineas)
 
 
+CONFIANZA_MINIMA = 0.7  # por debajo, aunque la IA diga que sí, lo decide el moderador
+
+
 def revisar_confianza(perfil: dict, eventos: list[dict], resenas: list[dict]) -> dict:
-    """{'aprobar': bool, 'motivo': str}. Plan B: la BD ya filtró por reglas."""
+    """{'aprobar': bool, 'motivo': str, 'con_ia': bool}
+
+    - La IA aprueba con seguridad -> aprobar True (promoción automática).
+    - La IA duda (aprobar False, o 'confianza' < 0.7 si la envía) -> moderador.
+    - La IA falla, tarda o responde algo raro -> moderador. NUNCA se aprueba solo.
+    """
     if _ia is not None and hasattr(_ia, "revisar_confianza"):
         try:
-            r = _ia.revisar_confianza(perfil, eventos, resenas)
-            if isinstance(r, dict) and "aprobar" in r:
-                return {"aprobar": bool(r["aprobar"]), "motivo": str(r.get("motivo", ""))}
+            r = _con_limite(LIMITE_IA, _ia.revisar_confianza, perfil, eventos, resenas)
+            if isinstance(r, dict) and isinstance(r.get("aprobar"), bool):
+                motivo = str(r.get("motivo") or "")
+                conf = r.get("confianza")  # opcional, 0..1
+                if r["aprobar"] and isinstance(conf, (int, float)) and conf < CONFIANZA_MINIMA:
+                    return {"aprobar": False, "con_ia": True,
+                            "motivo": f"Dudoso (confianza {conf:.2f}): {motivo}"}
+                return {"aprobar": r["aprobar"], "motivo": motivo, "con_ia": True}
         except Exception as e:
-            log.error("ia.revisar_confianza falló: %s", e)
-    return {"aprobar": True, "motivo": "Cumple las reglas de reputación (revisión sin IA)"}
+            log.error("ia.revisar_confianza falló o tardó demasiado: %r", e)
+    return {"aprobar": False, "con_ia": False,
+            "motivo": "La IA no está disponible: cumple las reglas de reputación, decide el moderador"}
