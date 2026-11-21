@@ -3,6 +3,7 @@
   1. Estados de eventos por tiempo/plazas/fecha límite  (plan B de pg_cron, que lo hace cada minuto)
   2. Pedir reseña de los eventos que acaban de terminar (últimas 24 h, una sola vez)
   3. Revisar con IA a los candidatos a Publicador nuevos (los dudosos van al moderador)
+  4. Indexar para el asistente (RAG de C1) los eventos nuevos o con contenido cambiado
 
 Cada paso va en su propio try/except: si uno falla, los demás siguen.
 Render gratuito se duerme sin visitas: cron-job.org a /health cada 10 min lo mantiene despierto.
@@ -58,8 +59,16 @@ def _paso_promociones():
         log.info("[tareas] promovidos=%s a_revisar=%s", len(r["promovidos"]), len(r["a_revisar"]))
 
 
+def _paso_rag():
+    """C1: indexar (embeddings) los eventos nuevos o con contenido cambiado."""
+    import rag  # si rag.py aún no está en main, el ImportError lo recoge ciclo()
+    n = rag.indexar_eventos_pendientes(100)
+    if n:
+        log.info("[tareas] %s eventos indexados para el asistente", n)
+
+
 def ciclo():
-    for paso in (_paso_estados, _paso_resenas, _paso_promociones):
+    for paso in (_paso_estados, _paso_resenas, _paso_promociones, _paso_rag):
         try:
             paso()
         except Exception as e:
