@@ -85,4 +85,9 @@ def cambiar_resena(event_id: str, body: CambiarResenaIn, user=Depends(require_us
     if body.comentario is not None:
         cambios["comentario"] = body.comentario.strip()[:500] or None
     fila = sb.table("resenas").update(cambios).eq("id", ya[0]["id"]).execute().data
+    try:  # puntos de reputación de quien organizó el evento
+        import reputacion
+        reputacion.recalcular_del_evento(event_id)
+    except Exception as e:
+        print(f"[resenas] reputación no recalculada: {e!r}")
     return fila[0] if fila else {"ok": True}

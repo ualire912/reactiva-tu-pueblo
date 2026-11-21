@@ -42,8 +42,9 @@ TZ = ZoneInfo("Europe/Madrid")
 NO_LO_SE = "No lo sé, se lo pregunto al organizador"
 
 # Campos que, si faltan, hay que preguntar al publicador
-# Lo que hay que preguntar si falta. Las plazas NO: si no se dicen, es "sin límite".
-CAMPOS_CLAVE = ["title", "starts_at", "municipio", "location_name", "price"]
+# Lo que hay que preguntar al organizador si falta (nunca se inventa). El título no hace falta
+# preguntarlo: la IA lo SUGIERE (como la categoría o la descripción, que no son datos clave).
+CAMPOS_CLAVE = ["title", "starts_at", "municipio", "location_name", "price", "max_capacity"]
 
 CONSUMO = {"llamadas": 0, "tokens": 0}   # lo expone GET /ia/consumo
 _CACHE: dict[str, str] = {}              # mismo prompt -> misma respuesta, sin pagar dos veces
@@ -398,8 +399,10 @@ inscripcion_hasta, description (máx. 300 caracteres, en español), is_accessibl
 confidence (0..1), missing (lista), es_evento (boolean), motivo_no_evento (string o null).
 
 Reglas:
-- NUNCA inventes datos (fecha, hora, lugar, precio, plazas). Si uno no aparece, pon null y añade
-  el nombre de la clave a "missing".
+- NUNCA inventes datos (fecha, hora, pueblo, lugar, precio, plazas). Si uno no aparece, pon null
+  y añade el nombre de la clave a "missing". "Por confirmar" o similares también son null.
+- price: 0 solo si dice gratis o entrada libre; si no dice nada del precio, null.
+- max_capacity: solo si dice cuántas plazas o personas; si dice "sin límite", null y NO en missing.
 - title SÍ lo pones siempre que sea un evento: si el texto no trae un título, escribe uno corto y
   descriptivo de lo que se va a hacer (p. ej. «Quedada para jugar a las canicas»), sin la fecha.
 - description: resume en una frase lo que se hará, con los datos que haya.
@@ -456,6 +459,19 @@ def _pueblo_en_texto(text: str | None) -> str | None:
 _RE_GRATIS = re.compile(r"gratis|gratuit|entrada libre|acceso libre|sin coste|\b0 ?(€|euros)")
 
 
+_RE_DIA = re.compile(
+    r"\b(hoy|manana|pasado manana|esta (tarde|noche|manana)|lunes|martes|miercoles|jueves|viernes|"
+    r"sabado|domingo|finde|fin de semana|semana que viene|proxima semana|dentro de|"
+    r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|"
+    r"navidad|nochebuena|nochevieja|reyes|dia \d{1,2}|el \d{1,2})\b|\b\d{1,2}[/-]\d{1,2}\b")
+
+
+def _dice_el_dia(text: str | None) -> bool:
+    """¿El texto dice qué día? (sin contar la cabecera "[Publicado el ...]" que añade el agente)."""
+    lineas = [l for l in (text or "").splitlines() if not l.strip().startswith("[Publicado el")]
+    return bool(_RE_DIA.search(_norm("\n".join(lineas))))
+
+
 def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict:
     """Limpia lo que devuelve el modelo y garantiza la forma de EventoExtraido."""
     ev = _evento_vacio(text)
@@ -471,6 +487,9 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
         ev["municipio"] = _pueblo(d.get("municipio")) or ev["municipio"]
         ev["location_name"] = (str(d.get("location_name")).strip()[:200]
                                if d.get("location_name") else None)
+        if ev["location_name"] and re.search(r"por confirmar|sin determinar|desconocid|^null$",
+                                             _norm(ev["location_name"])):
+            ev["location_name"] = None  # "Por confirmar" no es un lugar: se le pregunta
         ev["price"] = _num(d.get("price"))
         ev["max_capacity"] = _num(d.get("max_capacity"), entero=True) or None
         ev["min_age"] = _num(d.get("min_age"), entero=True)
@@ -535,8 +554,26 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
             datetime.fromisoformat(ev["inscripcion_hasta"]) > datetime.fromisoformat(ev["starts_at"])):
         ev["inscripcion_hasta"] = None
 
+    # Sin decir QUÉ DÍA ("a las 6 de la tarde" a secas) la IA no puede suponerlo (antes ponía
+    # "hoy", aunque ya hubiera pasado): se le pregunta. En un cartel la fecha va en la imagen.
+    if ev["starts_at"] and not hay_imagen and not _dice_el_dia(text):
+        ev["starts_at"] = ev["ends_at"] = ev["inscripcion_hasta"] = None
+    # Una propuesta con fecha ya pasada tampoco vale (salvo noticias de eventos ya celebrados,
+    # que llevan "[Publicado el ...]" o "Resumen de la noticia")
+    if ev["starts_at"] and not re.search(r"\[Publicado el|Resumen de la noticia|Noticia/agenda", text or ""):
+        try:
+            if datetime.fromisoformat(ev["starts_at"]) < datetime.now(TZ):
+                ev["starts_at"] = ev["ends_at"] = ev["inscripcion_hasta"] = None
+        except ValueError:
+            pass
+
     # missing se recalcula siempre en Python (el modelo a veces se olvida)
     ev["missing"] = [c for c in CAMPOS_CLAVE if ev[c] is None]
+    # "Sin límite de plazas" ya es una respuesta: no se vuelve a preguntar
+    if "max_capacity" in ev["missing"] and re.search(
+            r"sin limite|ilimitad|no hay limite|todas las que|las que quieran|no hay maximo",
+            _norm(text or "")):
+        ev["missing"].remove("max_capacity")
     return ev
 
 

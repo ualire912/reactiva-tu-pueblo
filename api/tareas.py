@@ -2,7 +2,7 @@
 
   1. Estados de eventos por tiempo/plazas/fecha límite  (plan B de pg_cron, que lo hace cada minuto)
   2. Pedir reseña de los eventos que acaban de terminar (últimas 24 h, una sola vez)
-  3. Revisar con IA a los candidatos a Publicador nuevos (los dudosos van al moderador)
+  3. Reputación de quien organiza (puntos por las reseñas) y paso a Publicador con 4 puntos
   4. Indexar para el asistente (RAG de C1) los eventos nuevos o con contenido cambiado
   5. Avisar al autor cuando un moderador aprueba o rechaza su propuesta (también desde el panel web)
   6. Recordatorio por Telegram el día antes a cada apuntado
@@ -69,6 +69,15 @@ def _paso_rag():
     n = rag.indexar_eventos_pendientes(100)
     if n:
         log.info("[tareas] %s eventos indexados para el asistente", n)
+
+
+def _paso_reputacion():
+    """Puntos de reputación de quien organiza (media por evento -> -1 / 0 / +0,5, y se suman)
+    y paso automático a publicador al llegar a 4. Sustituye a la promoción por IA anterior."""
+    import reputacion
+    n = reputacion.recalcular_todos()
+    if n:
+        log.debug("[tareas] reputación recalculada para %s organizadores", n)
 
 
 def _paso_propuestas_atascadas():
@@ -283,7 +292,7 @@ def _paso_agente():
 
 
 def ciclo():
-    for paso in (_paso_estados, _paso_resenas, _paso_promociones, _paso_rag,
+    for paso in (_paso_estados, _paso_resenas, _paso_reputacion, _paso_rag,
                  _paso_propuestas_atascadas, _paso_avisos_moderacion, _paso_recordatorios, _paso_recomendaciones, _paso_agente):
         try:
             paso()
