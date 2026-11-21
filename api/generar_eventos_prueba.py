@@ -7,6 +7,7 @@ Uso (desde la carpeta api):
     python generar_eventos_prueba.py          -> crea ~20 por categoría (≈160)
     python generar_eventos_prueba.py 50       -> ~50 por categoría (lo que sugirió el profesor)
     python generar_eventos_prueba.py limpiar  -> borra todos los eventos de prueba
+    python generar_eventos_prueba.py limpiar-variados -> borra los variados, deja los recurrentes
 
 Todos llevan source_url "https://prueba.local/sintetico/..." para poder borrarlos.
 OJO: aparecen en la agenda de la app. Bórralos antes de la demo si no los queréis ver.
@@ -22,6 +23,13 @@ from db import sb  # noqa: E402
 
 PREFIJO = "https://prueba.local/sintetico/"
 random.seed(2026)
+
+if len(sys.argv) > 1 and sys.argv[1] == "limpiar-variados":
+    # Deja solo los recurrentes (romería, fiestas patronales...) para la demo del historial
+    borrados = (sb.table("eventos").delete().like("source_url", PREFIJO + "%")
+                .like("description", "%Actividad de prueba%").execute().data)
+    print(f"Borrados {len(borrados)} eventos variados de prueba (se quedan los recurrentes)")
+    sys.exit()
 
 if len(sys.argv) > 1 and sys.argv[1] == "limpiar":
     borrados = sb.table("eventos").delete().like("source_url", PREFIJO + "%").execute().data

@@ -205,8 +205,8 @@ def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
 _PROMPT_FILTROS = """Analiza la pregunta de un vecino sobre la agenda de eventos de unos pueblos de Almería.
 Hoy es {hoy}. Devuelve SOLO JSON:
 {{"tipo": "eventos" (pregunta por eventos/planes) o "general" (cómo funciona la app, cuentas, Telegram...),
-  "categoria": una de {categorias} o null,
-  "municipio": uno de {pueblos} o null,
+  "categoria": una de {categorias} SOLO si la pregunta nombra ese tipo de plan; si no, null,
+  "municipio": uno de {pueblos} SOLO si se nombra; si no, null,
   "desde": "YYYY-MM-DD" o null, "hasta": "YYYY-MM-DD" (sin incluir) o null,
   "palabras": "1-3 palabras clave del nombre del evento (p. ej. romería, migas) o null",
   "pasado": true si pregunta por eventos que ya ocurrieron}}
@@ -282,12 +282,22 @@ def buscar_eventos(pregunta: str, filtros: dict, limite: int = 8) -> list[dict]:
     return sb.rpc("buscar_eventos_similares", params).execute().data or []
 
 
-def _linea(e: dict) -> str:
+def _fecha_con_anio(iso) -> str:
+    try:
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(ia.TZ)
+        return (f"el {ia._DIAS_ES[d.weekday()]} {d.day} de {ia._MESES_ES[d.month - 1]} "
+                f"de {d.year} a las {d:%H:%M}")
+    except Exception:
+        return ""
+
+
+def _linea(e: dict, con_anio: bool = False) -> str:
     precio = "" if e.get("price") is None else (" · gratis" if float(e["price"]) == 0
                                                  else f" · {float(e['price']):g} €")
     estado = {"cancelado": " (cancelado)", "pospuesto": " (aplazado)", "completo": " (completo)",
-              "finalizado": ""}.get(e.get("status"), "")
-    return f"• {e['title']} — {e.get('municipio')}, {ia.fecha_humana(e.get('starts_at'))}{precio}{estado}"
+              "finalizado": " (ya celebrado)", "en_curso": " (en curso)"}.get(e.get("status"), "")
+    fecha = _fecha_con_anio(e.get("starts_at")) if con_anio else ia.fecha_humana(e.get("starts_at"))
+    return f"• {e['title']} — {e.get('municipio')}, {fecha}{precio}{estado}"
 
 
 _PROMPT_RESPUESTA = """Eres el asistente de la agenda de unos pueblos de Almería. Responde en español,
@@ -330,6 +340,10 @@ def preguntar_agenda(pregunta: str) -> dict:
 
         # ── Eventos: fase 2
         eventos = buscar_eventos(pregunta, f)
+        if not eventos and f.get("con_ia") and (f.get("categoria") or f.get("municipio")):
+            # La IA eligió filtros demasiado estrechos ("algo con mis nietos" -> "otro"):
+            # se repite solo con las fechas y que decida el parecido (embedding)
+            eventos = buscar_eventos(pregunta, {**f, "categoria": None, "municipio": None})
         total = eventos[0]["total_filtrados"] if eventos else 0
         salida = [{"id": e["event_id"], "title": e["title"], "starts_at": e["starts_at"],
                    "municipio": e["municipio"], "status": e["status"]} for e in eventos]
@@ -344,9 +358,11 @@ def preguntar_agenda(pregunta: str) -> dict:
             return {"respuesta": cab + "\n" + "\n".join(_linea(e) for e in eventos[:5]),
                     "eventos": salida[:5], "tipo": "eventos"}
 
-        contexto = (f"EVENTOS QUE CUMPLEN LOS FILTROS: {total} en total. "
+        contexto = (f"HOY ES {ia._hoy_texto()}.\n"
+                    f"EVENTOS QUE CUMPLEN LOS FILTROS: {total} en total. "
                     f"Los {len(eventos)} más relacionados con la pregunta:\n"
-                    + "\n".join(_linea(e) + (f" — {e['description'][:150]}" if e.get("description") else "")
+                    + "\n".join(_linea(e, con_anio=True)
+                                + (f" — {e['description'][:150]}" if e.get("description") else "")
                                 for e in eventos))
         texto = ia._llamar(_PROMPT_RESPUESTA.format(contexto=contexto, pregunta=pregunta),
                            como_json=False)
