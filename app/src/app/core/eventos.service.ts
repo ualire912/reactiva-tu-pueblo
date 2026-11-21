@@ -10,6 +10,11 @@ export interface EventoVista extends Evento {
   organizador_nombre: string;
   organizador_media: number | null;
   organizador_resenas: number;
+  /** Valoración de ESTE plan (media de sus opiniones) y cuántas tiene. */
+  media_evento: number | null;
+  resenas_evento: number;
+  /** La opinión más útil para enseñar en la tarjeta (buena nota y con texto). */
+  resena_destacada: { estrellas: number; comentario: string } | null;
 }
 
 export type FiltroFecha = 'proximos' | 'hoy' | 'finde' | 'semana' | 'pasados' | 'cancelados' | 'todas';
@@ -72,7 +77,7 @@ export class EventosService {
     const consultas: PromiseLike<any>[] = [
       entidadIds.length ? this.sb.client.from('entidades').select('id, nombre').in('id', entidadIds) : Promise.resolve(vacio),
       autorIds.length ? this.sb.client.from('perfiles_publicos').select('id, full_name').in('id', autorIds) : Promise.resolve(vacio),
-      this.sb.client.from('resenas').select('event_id, estrellas').limit(5000),
+      this.sb.client.from('resenas').select('event_id, estrellas, comentario').limit(5000),
     ];
     const [entRes, perfRes, resRes]: any[] = await Promise.all(consultas).catch(() => [vacio, vacio, vacio]);
 
@@ -86,6 +91,23 @@ export class EventosService {
     for (const e of todos) {
       const k = claveOrg(e);
       if (k) orgDeEvento.set(e.id, k);
+    }
+
+    // Por plan: media, número de opiniones y la opinión destacada
+    const porEvento = new Map<string, { total: number; n: number; destacada: { estrellas: number; comentario: string } | null }>();
+    for (const r of (resRes?.data || []) as { event_id: string; estrellas: number; comentario: string | null }[]) {
+      const acc = porEvento.get(r.event_id) || { total: 0, n: 0, destacada: null };
+      acc.total += Number(r.estrellas) || 0;
+      acc.n += 1;
+      const texto = (r.comentario || '').trim();
+      if (texto.length >= 8) {
+        const mejor = acc.destacada;
+        // Gana la de más estrellas; a igualdad, la más explicada (hasta 160 letras)
+        if (!mejor || r.estrellas > mejor.estrellas || (r.estrellas === mejor.estrellas && Math.min(texto.length, 160) > Math.min(mejor.comentario.length, 160))) {
+          acc.destacada = { estrellas: r.estrellas, comentario: texto };
+        }
+      }
+      porEvento.set(r.event_id, acc);
     }
 
     const suma = new Map<string, { total: number; n: number }>();
@@ -113,6 +135,9 @@ export class EventosService {
         organizador_nombre: nombre,
         organizador_media: acc && acc.n ? acc.total / acc.n : null,
         organizador_resenas: acc?.n || 0,
+        media_evento: porEvento.get(e.id)?.n ? porEvento.get(e.id)!.total / porEvento.get(e.id)!.n : null,
+        resenas_evento: porEvento.get(e.id)?.n || 0,
+        resena_destacada: porEvento.get(e.id)?.destacada || null,
       };
     });
   }

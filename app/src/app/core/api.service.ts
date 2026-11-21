@@ -7,6 +7,7 @@ import { EventoExtraido } from './models';
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
+    this.name = 'ApiError';
   }
 }
 
@@ -40,7 +41,11 @@ export class ApiService {
         body: opciones.body !== undefined ? JSON.stringify(opciones.body) : undefined,
         signal: control.signal,
       });
-      if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+      if (!res.ok) {
+        // El servidor explica el motivo en "detail" (ya en español): se usa si viene
+        const detalle = await res.json().then((d) => (typeof d?.detail === 'string' ? d.detail : '')).catch(() => '');
+        throw new ApiError(res.status, detalle || `HTTP ${res.status}`);
+      }
       const texto = await res.text();
       return (texto ? JSON.parse(texto) : {}) as T;
     } finally {
@@ -92,6 +97,19 @@ export class ApiService {
 
   decidirPromocion(userId: string, accion: 'promover' | 'descartar' | 'revocar'): Promise<{ ok: boolean; rol: string }> {
     return this.peticion('/moderacion/promociones/decidir', { method: 'POST', body: { user_id: userId, accion } });
+  }
+
+  // Acceso: crear cuenta con teléfono y entrar con Telegram (sin sesión)
+  registroTelefono(datos: { telefono: string; password: string; nombre: string; email?: string | null }): Promise<{ email_acceso: string }> {
+    return this.peticion('/auth/registro', { method: 'POST', body: datos, auth: false });
+  }
+
+  telegramIniciar(): Promise<{ codigo: string; enlace: string }> {
+    return this.peticion('/auth/telegram/iniciar', { method: 'POST', auth: false });
+  }
+
+  telegramEstado(codigo: string): Promise<{ listo: boolean; token_hash?: string }> {
+    return this.peticion(`/auth/telegram/estado/${encodeURIComponent(codigo)}`, { auth: false });
   }
 
   getIaConsumo(): Promise<{ llamadas: number; tokens: number }> {

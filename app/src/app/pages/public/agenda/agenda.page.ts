@@ -77,6 +77,23 @@ export class AgendaPage implements OnInit, OnDestroy {
   /** En el calendario se ven todas las fechas: se navega por meses. */
   paraCalendario = computed(() => filtrarEventos(this.eventos(), { ...this.filtros(), fecha: 'todas' }, this.coords()));
 
+  // ---------- Cabecera que se encoge al bajar (solo queda el buscador) ----------
+  cabeceraCompacta = signal(false);
+  private ultimoScroll = 0;
+
+  alHacerScroll(ev: CustomEvent) {
+    const y = (ev.detail as { scrollTop: number }).scrollTop;
+    const salto = y - this.ultimoScroll;
+    if (y < 60) {
+      this.cabeceraCompacta.set(false);
+      this.ultimoScroll = y;
+    } else if (Math.abs(salto) > 14) {
+      // Bajando: se encoge; subiendo: vuelve a aparecer entera
+      this.cabeceraCompacta.set(salto > 0);
+      this.ultimoScroll = y;
+    }
+  }
+
   cambiarVista(v: 'cuadricula' | 'calendario') {
     this.vista.set(v);
     try {

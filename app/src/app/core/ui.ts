@@ -48,8 +48,22 @@ export function esOfensivo(texto: string | null | undefined): boolean {
   return INSULTOS_CHAT.test(normalizarFiltro(t)) || /coñ[oa]/i.test(t);
 }
 
+/**
+ * Modo daltonismo (Ajustes): paleta Okabe-Ito oscurecida para que el texto blanco
+ * siga leyéndose. Azul, bermellón, verde azulado, púrpura y gris se distinguen
+ * con protanopía, deuteranopía y tritanopía.
+ */
+const COLORES_PUEBLO_DALTONISMO: Record<string, string> = {
+  'lucainena de las torres': '#6a3d7a',
+  velefique: '#005a8c',
+  senes: '#a8480a',
+  'uleila del campo': '#3b3b3b',
+  tahal: '#00785a',
+};
+
 export function colorPueblo(nombre: string | null | undefined): string {
-  return COLORES_PUEBLO[normalizar(nombre)] || COLOR_PUEBLO_DEFECTO;
+  const daltonismo = typeof document !== 'undefined' && document.documentElement.classList.contains('modo-daltonismo');
+  return (daltonismo ? COLORES_PUEBLO_DALTONISMO : COLORES_PUEBLO)[normalizar(nombre)] || COLOR_PUEBLO_DEFECTO;
 }
 
 // ---------------------------------------------------------------------------

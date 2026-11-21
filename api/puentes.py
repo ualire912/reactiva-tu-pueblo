@@ -59,8 +59,25 @@ def avisar_moderadores(event_id: str) -> int:
         return 0
 
 
-def avisar(user_id: str, texto: str, buttons=None) -> bool:
-    """Envía por Telegram. True solo si se envió de verdad."""
+def quiere_aviso(user_id: str, tipo: str | None) -> bool:
+    """Ajustes de la web (preferencias.avisos): la persona puede apagar cada tipo de aviso.
+    Tipos: 'recordatorio', 'recomendacion', 'cambio', 'resena'. Sin ajuste -> sí."""
+    if not tipo:
+        return True
+    try:
+        from db import sb
+        fila = (sb.table("profiles").select("preferencias").eq("id", user_id).limit(1)
+                .execute().data or [{}])[0]
+        return (fila.get("preferencias") or {}).get("avisos", {}).get(tipo, True) is not False
+    except Exception:
+        return True
+
+
+def avisar(user_id: str, texto: str, buttons=None, tipo: str | None = None) -> bool:
+    """Envía por Telegram. True solo si se envió de verdad.
+    tipo: si la persona lo ha desactivado en Ajustes, no se envía (devuelve False)."""
+    if not quiere_aviso(user_id, tipo):
+        return False
     if _avisar_usuario is None:
         # Sin bot: se imprime pero NO cuenta como enviado (no ensucia 'notificaciones')
         print(f"[SIN BOT, no enviado] {user_id}: {texto} | botones={buttons}")

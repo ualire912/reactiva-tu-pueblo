@@ -292,7 +292,7 @@
                 </div>
               </div>
             } @else {
-              <p class="texto-suave"><a routerLink="/login">Entra</a> para preguntar en el chat.</p>
+              <p class="texto-suave"><a routerLink="/login">Inicia sesión</a> para preguntar en el chat.</p>
             }
           </section>
         </div>
@@ -303,8 +303,8 @@
             <h2 id="titulo-participar">Participa</h2>
 
             @if (!uid()) {
-              <p>Entra para apuntarte, compartir coche o preguntar.</p>
-              <ion-button expand="block" routerLink="/login" [disabled]="!puedeApuntarse()">Entrar para apuntarme</ion-button>
+              <p>Inicia sesión para apuntarte, compartir coche o preguntar.</p>
+              <ion-button expand="block" routerLink="/login" [disabled]="!puedeApuntarse()">Iniciar sesión para apuntarme</ion-button>
             } @else if (miInscripcion()) {
               @let insc = miInscripcion()!;
               <div class="estado-inscripcion" [class.espera]="insc.status !== 'confirmada'">

@@ -32,7 +32,9 @@ import {
   construct,
   heart,
   sparkles,
+  settingsOutline,
 } from 'ionicons/icons';
+import { AjustesService } from './core/ajustes.service';
 import { SupabaseService } from './core/supabase.service';
 
 @Component({
@@ -43,6 +45,8 @@ import { SupabaseService } from './core/supabase.service';
 })
 export class AppComponent {
   public sb = inject(SupabaseService);
+  /** Aplica tamaño, colores, letra… guardados en este dispositivo desde el primer momento. */
+  private ajustes = inject(AjustesService);
   private router = inject(Router);
 
   /** La ficha de un plan forma parte de la agenda: se marca esa pestaña abajo. */
@@ -79,6 +83,7 @@ export class AppComponent {
       construct,
       heart,
       sparkles,
+      settingsOutline,
     });
   }
 }

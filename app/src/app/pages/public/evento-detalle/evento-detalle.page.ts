@@ -52,6 +52,7 @@ import {
   createOutline,
 } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
+import { AjustesService } from '../../../core/ajustes.service';
 import { ApiService } from '../../../core/api.service';
 import { AvisosService } from '../../../core/avisos.service';
 import { EventoVista, EventosService } from '../../../core/eventos.service';
@@ -99,6 +100,7 @@ const TAMANO_MAX_FOTO = 5 * 1024 * 1024; // 5 MB
 export class EventoDetallePage implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   sb = inject(SupabaseService);
+  private ajustesSvc = inject(AjustesService);
   private api = inject(ApiService);
   private eventosSvc = inject(EventosService);
   private avisos = inject(AvisosService);
@@ -535,10 +537,8 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     const texto = `${ev.title}. ${fechaLarga(ev.starts_at)}. En ${this.ubicacion()}. ${
       this.gratis() ? 'Es gratis.' : 'Precio: ' + this.precio() + '.'
     } Organiza ${ev.organizador_nombre}. ${ev.description || ''}`;
-    const u = new SpeechSynthesisUtterance(texto);
-    u.lang = 'es-ES';
-    u.rate = 0.95;
-    window.speechSynthesis.speak(u);
+    // Velocidad y voz elegidas en Ajustes
+    this.ajustesSvc.leer(texto);
   }
 
   // ---------- Chat ----------

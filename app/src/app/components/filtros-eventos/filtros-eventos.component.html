@@ -10,7 +10,7 @@
       placeholder="Busca una ruta, una fiesta, un pueblo…"
       autocomplete="off" />
     @if (filtros().texto) {
-      <button type="button" class="buscador-limpiar" (click)="cambiarTexto('')" aria-label="Borrar la búsqueda">
+      <button type="button" class="buscador-limpiar" data-etiqueta="Borrar" (click)="cambiarTexto('')" aria-label="Borrar la búsqueda">
         <ion-icon name="close" aria-hidden="true"></ion-icon>
       </button>
     }

@@ -87,6 +87,17 @@ export class EventoCardComponent {
   libres = computed(() => plazasLibres(this.ev()));
   valoracion = computed(() => textoValoracion(this.ev().organizador_media));
 
+  // Planes pasados: valoración del propio plan y una opinión destacada
+  mediaEvento = computed(() => textoValoracion(this.ev().media_evento));
+  estrellasEvento = computed(() => {
+    const n = Math.round(this.ev().media_evento || 0);
+    return '★'.repeat(n) + '☆'.repeat(5 - n);
+  });
+  resenaCorta = computed(() => {
+    const t = this.ev().resena_destacada?.comentario || '';
+    return t.length > 110 ? t.slice(0, 107).trimEnd() + '…' : t;
+  });
+
   /** Cinta inferior del cartel (los finalizados llevan el sello rojo central). */
   cinta = computed<{ texto: string; clase: string } | null>(() => {
     const ev = this.ev();

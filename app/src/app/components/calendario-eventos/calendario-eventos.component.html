@@ -1,13 +1,13 @@
 <section class="calendario" aria-label="Calendario de planes">
   <header class="cal-cabecera">
-    <button type="button" class="cal-flecha" (click)="cambiarMes(-1)" aria-label="Mes anterior">
+    <button type="button" class="cal-flecha" (click)="cambiarMes(-1)" aria-label="Mes anterior" data-etiqueta="Anterior">
       <ion-icon name="chevron-back" aria-hidden="true"></ion-icon>
     </button>
     <div class="cal-titulo">
       <h2 aria-live="polite">{{ tituloMes() }}</h2>
       <small>{{ totalMes() }} {{ totalMes() === 1 ? 'plan' : 'planes' }} este mes</small>
     </div>
-    <button type="button" class="cal-flecha" (click)="cambiarMes(1)" aria-label="Mes siguiente">
+    <button type="button" class="cal-flecha" (click)="cambiarMes(1)" aria-label="Mes siguiente" data-etiqueta="Siguiente">
       <ion-icon name="chevron-forward" aria-hidden="true"></ion-icon>
     </button>
     <button type="button" class="cal-hoy" (click)="irAHoy()">

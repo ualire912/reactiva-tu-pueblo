@@ -10,7 +10,7 @@
       @if (!haySesion()) {
         <ion-button class="boton-cabecera" routerLink="/login">
           <ion-icon slot="start" name="log-in-outline" aria-hidden="true"></ion-icon>
-          Entrar
+          Iniciar sesión
         </ion-button>
       }
     </ion-buttons>
@@ -35,7 +35,7 @@
         @for (f of fotos; track f.src; let i = $index) {
           <button type="button" class="portada-punto" [class.on]="i === fotoActual()" [attr.aria-label]="'Ver foto de ' + f.pueblo" [attr.aria-current]="i === fotoActual()" (click)="irAFoto(i)"></button>
         }
-        <button type="button" class="portada-pausa" (click)="alternarFotos()" [attr.aria-label]="fotosPausadas() ? 'Reanudar las fotos' : 'Pausar las fotos'">
+        <button type="button" class="portada-pausa" [attr.data-etiqueta]="fotosPausadas() ? 'Reanudar' : 'Pausar'" (click)="alternarFotos()" [attr.aria-label]="fotosPausadas() ? 'Reanudar las fotos' : 'Pausar las fotos'">
           <ion-icon [name]="fotosPausadas() ? 'play' : 'pause'" aria-hidden="true"></ion-icon>
         </button>
       </span>
@@ -135,6 +135,24 @@
         }
       </ul>
     </section>
+
+    <!-- Lo que ya se ha celebrado (últimos 3 meses) -->
+    @if (recientes().length) {
+      <section class="seccion-recientes" aria-labelledby="titulo-recientes">
+        <div class="seccion-cabecera">
+          <div>
+            <h2 id="titulo-recientes" class="seccion-titulo">Así fueron los últimos planes</h2>
+            <p class="texto-suave seccion-sub">Lo que se ha celebrado en la comarca estos meses y qué opinaron los vecinos.</p>
+          </div>
+          <a routerLink="/agenda" [queryParams]="{ fecha: 'pasados' }" class="ver-todo">Ver todos los pasados <ion-icon name="arrow-forward" aria-hidden="true"></ion-icon></a>
+        </div>
+        <ul class="rejilla-eventos rejilla-compacta">
+          @for (ev of recientes(); track ev.id) {
+            <li><app-evento-card [ev]="ev"></app-evento-card></li>
+          }
+        </ul>
+      </section>
+    }
 
     <!-- Pueblos -->
     <section aria-labelledby="titulo-pueblos">

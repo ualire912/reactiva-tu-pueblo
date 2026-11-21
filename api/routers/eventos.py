@@ -76,7 +76,7 @@ def avisar_evento(event_id: str, body: AvisarIn, user=Depends(require_user)):
     enviados = 0
     for uid in destinatarios:
         try:
-            if not avisar(uid, texto, botones):
+            if not avisar(uid, texto, botones, tipo="cambio"):
                 continue
             enviados += 1
             # upsert: un segundo cambio de hora también queda registrado (y avisa)

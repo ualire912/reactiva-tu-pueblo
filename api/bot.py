@@ -391,10 +391,40 @@ async def _asegurar_perfil_telegram(
     return None
 
 
+async def _entrar_en_la_web(chat_id: int, codigo: str, first_name: str | None) -> None:
+    """La persona pulsó "Entrar con Telegram" en la web: se le abre la sesión allí
+    con la cuenta de este chat (si no tenía, se le crea)."""
+    perfil = await _asegurar_perfil_telegram(chat_id, first_name)
+    ok = False
+    if perfil:
+        try:
+            from routers.acceso import preparar_login_telegram
+            ok = preparar_login_telegram(codigo, str(perfil["id"]))
+        except Exception as e:
+            print(f"[bot] entrar en la web falló: {e!r}")
+    if ok:
+        nombre = (perfil or {}).get("full_name") or first_name or "vecino/a"
+        await send_message(chat_id, f"✅ ¡Hola, {nombre}! Ya puedes volver a la web: "
+                                    "has entrado con tu cuenta de Telegram.")
+    else:
+        await send_message(chat_id, "⚠️ Ese enlace para entrar ha caducado. Vuelve a la web y pulsa "
+                                    "otra vez «Entrar con Telegram».")
+
+
 async def _cmd_start(chat_id: int, args: str, first_name: str | None) -> None:
     code = args.strip()
-    if code.startswith("VINCULAR-"):
-        rpc_res = sb.rpc("vincular_telegram", {"p_code": code, "p_chat_id": chat_id}).execute()
+    if code.upper().startswith("ENTRAR-"):  # "Entrar con Telegram" desde la web
+        await _entrar_en_la_web(chat_id, code[7:], first_name)
+        return
+    if code.upper().startswith("VINCULAR-"):
+        # La BD guarda el código sin el prefijo "VINCULAR-"
+        try:
+            rpc_res = sb.rpc("vincular_telegram", {"p_code": code[9:], "p_chat_id": chat_id}).execute()
+        except Exception as e:
+            print(f"[bot] vincular_telegram falló: {e!r}")
+            await send_message(chat_id, "⚠️ No he podido conectar tu cuenta ahora mismo. "
+                                        "Vuelve a pulsar «Conectar con Telegram» en la web en unos minutos.")
+            return
         linked_user_id = rpc_res.data
         if linked_user_id:
             perfil = _get_perfil_by_user_id(str(linked_user_id))

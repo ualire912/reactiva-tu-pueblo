@@ -1,4 +1,4 @@
-<ion-header class="rp-header">
+<ion-header class="rp-header cabecera-agenda" [class.cabecera-compacta]="cabeceraCompacta()">
   <ion-toolbar class="rp-toolbar">
     <ion-title>
       <a routerLink="/inicio" class="marca" aria-label="Reactiva tu pueblo, ir al inicio">
@@ -14,7 +14,7 @@
       @if (!haySesion()) {
         <ion-button class="boton-cabecera" routerLink="/login">
           <ion-icon slot="start" name="log-in-outline" aria-hidden="true"></ion-icon>
-          Entrar
+          Iniciar sesión
         </ion-button>
       }
     </ion-buttons>
@@ -39,7 +39,7 @@
   </div>
 </ion-header>
 
-<ion-content class="rp-fondo">
+<ion-content class="rp-fondo" [scrollEvents]="true" (ionScroll)="alHacerScroll($event)">
   <ion-refresher slot="fixed" (ionRefresh)="cargarEventos($event)">
     <ion-refresher-content pullingText="Desliza para actualizar" refreshingText="Actualizando…"></ion-refresher-content>
   </ion-refresher>

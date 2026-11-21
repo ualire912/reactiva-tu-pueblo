@@ -60,6 +60,22 @@
     @if (!terminado() && ev().max_capacity) {
       <p class="ev-plazas-texto">{{ plazas() }}</p>
     }
+    @if (terminado()) {
+      <div class="ev-opiniones">
+        @if (ev().media_evento != null) {
+          <span class="ev-media" role="img" [attr.aria-label]="'Valorado con ' + mediaEvento() + ' de 5 por ' + ev().resenas_evento + (ev().resenas_evento === 1 ? ' persona' : ' personas')">
+            <span class="ev-media-estrellas" aria-hidden="true">{{ estrellasEvento() }}</span>
+            <strong aria-hidden="true">{{ mediaEvento() }}</strong>
+            <small aria-hidden="true">({{ ev().resenas_evento }} {{ ev().resenas_evento === 1 ? 'opinión' : 'opiniones' }})</small>
+          </span>
+          @if (resenaCorta(); as r) {
+            <p class="ev-resena"><span class="sr-only">Opinión destacada: </span>«{{ r }}»</p>
+          }
+        } @else {
+          <span class="ev-sin-opiniones">Aún sin opiniones</span>
+        }
+      </div>
+    }
     @if (!terminado()) {
       <app-tiempo-evento class="ev-tiempo" [lat]="ev().lat" [lng]="ev().lng" [inicio]="ev().starts_at" [compacto]="true"></app-tiempo-evento>
     }

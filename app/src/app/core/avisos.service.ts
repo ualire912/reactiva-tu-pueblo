@@ -1,5 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { ToastController } from '@ionic/angular';
+import { AjustesService } from './ajustes.service';
 
 /**
  * Avisos al usuario en lenguaje sencillo (sin códigos, tablas ni tipos de datos).
@@ -7,6 +8,7 @@ import { ToastController } from '@ionic/angular';
 @Injectable({ providedIn: 'root' })
 export class AvisosService {
   private toastCtrl = inject(ToastController);
+  private ajustes = inject(AjustesService);
 
   ok(mensaje: string) {
     return this.mostrar(mensaje, 'success', 'checkmark-circle');
@@ -26,6 +28,8 @@ export class AvisosService {
   }
 
   private async mostrar(message: string, color: string, icon: string) {
+    // Sonido y vibración, si están activados en Ajustes
+    this.ajustes.respuesta(color === 'danger' ? 'error' : color === 'warning' ? 'aviso' : 'ok');
     const toast = await this.toastCtrl.create({
       message,
       color,
@@ -51,6 +55,9 @@ export function mensajeAmigable(err: unknown, porDefecto = 'Algo no ha ido bien.
 
   if (!raw && !code) return porDefecto;
 
+  // Mensajes del servidor que ya vienen en español (ApiError con "detail")
+  if ((err as Error)?.name === 'ApiError' && e?.status && e.status < 500 && raw && !raw.startsWith('HTTP ')) return raw;
+
   // Mensajes propios de la BD al apuntarse (ya están en español)
   if (msg.includes('plazo de inscripción')) return 'El plazo para apuntarse a este plan ya ha terminado.';
   if (msg.includes('no admite inscripciones')) return 'Este plan ya no admite inscripciones.';
@@ -62,7 +69,7 @@ export function mensajeAmigable(err: unknown, porDefecto = 'Algo no ha ido bien.
 
   // Sesión
   if (msg.includes('jwt') || msg.includes('token') || e?.status === 401) return 'Tu sesión ha caducado. Vuelve a entrar, por favor.';
-  if (msg.includes('invalid login credentials')) return 'El correo o la contraseña no son correctos.';
+  if (msg.includes('invalid login credentials')) return 'El teléfono (o correo) o la contraseña no son correctos.';
   if (msg.includes('user already registered') || msg.includes('already been registered')) return 'Ya existe una cuenta con ese correo. Prueba a entrar.';
   if (msg.includes('password should be at least') || msg.includes('weak password')) return 'La contraseña debe tener al menos 6 caracteres.';
   if (msg.includes('email') && msg.includes('invalid')) return 'Revisa que el correo esté bien escrito.';

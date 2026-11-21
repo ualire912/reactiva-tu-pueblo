@@ -25,6 +25,7 @@ import {
   play,
 } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
+import { AjustesService } from '../../../core/ajustes.service';
 import { EventoVista, EventosService, FILTROS_INICIALES, filtrarEventos } from '../../../core/eventos.service';
 import { EventoCardComponent } from '../../../components/evento-card/evento-card.component';
 import { colorPueblo, estiloCategoria, iconoCategoria } from '../../../core/ui';
@@ -47,7 +48,8 @@ export class InicioPage implements OnInit, OnDestroy {
   // ---------- Portada: fotos de los pueblos que van rotando ----------
   readonly fotos = FOTOS_PUEBLOS;
   fotoActual = signal(0);
-  fotosPausadas = signal(prefiereSinMovimiento());
+  private ajustesSvc = inject(AjustesService);
+  fotosPausadas = signal(prefiereSinMovimiento() || this.ajustesSvc.valor.sinAutoplay);
   private temporizadorFotos?: ReturnType<typeof setInterval>;
 
   private arrancarFotos() {
@@ -90,6 +92,20 @@ export class InicioPage implements OnInit, OnDestroy {
 
   proximos = computed(() => filtrarEventos(this.eventos(), FILTROS_INICIALES));
   destacados = computed(() => this.proximos().slice(0, 4));
+
+  /** Planes celebrados en los últimos 3 meses (los más recientes y mejor valorados primero). */
+  recientes = computed(() => {
+    const desde = Date.now() - 92 * 86400000;
+    return filtrarEventos(this.eventos(), { ...FILTROS_INICIALES, fecha: 'pasados' })
+      .filter((e) => new Date(e.starts_at).getTime() >= desde)
+      .sort((a, b) => {
+        // Primero los que tienen opiniones; dentro, el más reciente
+        const conA = a.resenas_evento > 0 ? 1 : 0;
+        const conB = b.resenas_evento > 0 ? 1 : 0;
+        return conB - conA || b.starts_at.localeCompare(a.starts_at);
+      })
+      .slice(0, 4);
+  });
   planesFinde = computed(() => filtrarEventos(this.eventos(), { ...FILTROS_INICIALES, fecha: 'finde' }).length);
   estiloCategoria = estiloCategoria;
   nombre = computed(() => (this.perfil()?.full_name || '').split(' ')[0]);
@@ -123,7 +139,7 @@ export class InicioPage implements OnInit, OnDestroy {
         { titulo: 'Mi perfil', texto: 'Mis gustos y mi pueblo', icono: 'person', ruta: '/perfil', color: '#8a3b5c' }
       );
     } else {
-      lista.push({ titulo: 'Entrar o registrarme', texto: 'Para apuntarte y recibir avisos', icono: 'log-in-outline', ruta: '/login', color: '#4e4386' });
+      lista.push({ titulo: 'Iniciar sesión o crear cuenta', texto: 'Para apuntarte y recibir avisos', icono: 'log-in-outline', ruta: '/login', color: '#4e4386' });
     }
     if (this.esModerador()) {
       lista.push({ titulo: 'Panel de moderación', texto: 'Revisar y gestionar', icono: 'shield-checkmark', ruta: '/panel', color: '#24312f' });

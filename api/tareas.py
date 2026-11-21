@@ -180,7 +180,7 @@ def _paso_recordatorios():
             botones = [[("📅 Calendario", f"ics:{ev['id']}"), ("❌ Borrarme", f"cancel:{ev['id']}")],
                        [("🚗 Llevo coche", f"coche:ofrece:{ev['id']}"),
                         ("🙋 Busco coche", f"coche:busca:{ev['id']}")]]
-            if avisar(a["user_id"], texto, botones):
+            if avisar(a["user_id"], texto, botones, tipo="recordatorio"):
                 sb.table("notificaciones").upsert(
                     {"user_id": a["user_id"], "event_id": ev["id"], "tipo": "recordatorio",
                      "canal": "telegram", "motivo": "un día antes"},
@@ -264,7 +264,7 @@ def _paso_recomendaciones():
         texto = (f"✨ {'¡Hola, ' + nombre + '! ' if nombre else ''}Te pueden gustar estos planes:\n\n"
                  + "\n".join(lineas))
         botones = [[(f"✅ Apuntarme: {r['title'][:22]}", f"insc:{r['id']}")] for r in recs]
-        if avisar(u["id"], texto, botones):
+        if avisar(u["id"], texto, botones, tipo="recomendacion"):
             sb.table("notificaciones").upsert(
                 [{"user_id": u["id"], "event_id": r["id"], "tipo": "recomendacion",
                   "canal": "telegram", "motivo": r["motivo"]} for r in recs],
