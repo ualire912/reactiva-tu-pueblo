@@ -881,18 +881,94 @@ def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
     return _plantilla_recomendacion(nombre, eventos)
 
 
-_PROMPT_CHAT = """Eres el asistente del chat de un evento de un pueblo de Almería.
-Responde en español, en 1 a 3 frases cortas y amables, usando SOLO estos datos.
-Si la respuesta no está en los datos, responde exactamente: "{no_lo_se}"
-No inventes horarios, precios, material ni normas.
+# ── Chat público de cada evento ──────────────────────────────
+# Insultos y palabrotas que no se publican en el chat (texto normalizado: sin tildes,
+# en minúsculas y con las letras repetidas juntadas: "pollaaaa" -> "polla").
+# La misma lista está en la app (core/ui.ts) y en la BD (supabase/migracion_chat.sql).
+_INSULTOS_CHAT = re.compile(
+    r"\b(gilipollas?|imbeciles?|idiotas?|estupid[oa]s?|subnormal(es)?|retrasad[oa]s?|"
+    r"mierdas?|put[ao]s?|putada|cabron(es|a|as)?|cabrona?zo|hij[oa]s? de puta|maricon(es)?|"
+    r"bolleras?|zorras?|pollas?|pollon|follar|follamos|follando|capull[oa]s?|pendej[oa]s?|"
+    r"mamon(es|a|as)?|me cago en|cago en|joder|jodete|jodeos|coñ[oa]|"
+    r"panchit[oa]s?|sudac[oa]s?|negrat[ao]s?)\b")
 
-FICHA DEL EVENTO:
+
+def normalizar_filtro(texto: str | None) -> str:
+    """Minúsculas, sin tildes, sin letras repetidas de más y sin símbolos para disimular."""
+    n = _norm(texto or "")
+    n = n.translate(str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "@": "a", "$": "s"}))
+    return re.sub(r"(.)\1{2,}", r"\1", n)
+
+
+def es_ofensivo_chat(texto: str | None) -> bool:
+    n = normalizar_filtro(texto)
+    # "coño" pierde la tilde al normalizar: se mira también la forma con ñ original
+    return bool(_INSULTOS_CHAT.search(n) or _INSULTOS_CHAT.search((texto or "").lower()))
+
+
+AVISO_RESPETO = ("Este chat es público y lo leen vecinos de todas las edades. "
+                 "Por favor, escribe con respeto. 🙂")
+
+# Mensajes que no son preguntas: se contestan sin gastar IA
+_SALUDO = re.compile(r"^(h?ola+|buen[oa]s( dias| tardes| noches)?|hey|holi|saludos|que tal)\b")
+_GRACIAS = re.compile(r"\b(gracias|muchas gracias|genial|perfecto|vale|ok|de acuerdo|estupendo)\b")
+_ADIOS = re.compile(r"^(adios|hasta luego|nos vemos|chao|bye)\b")
+
+
+def respuesta_cortesia(evento: dict, pregunta: str) -> str | None:
+    """Saludos, gracias y despedidas. None si es otra cosa."""
+    n = normalizar_filtro(pregunta).strip(" !¡?¿.,")
+    titulo = evento.get("title") or "este plan"
+    if len(n.split()) <= 6 and not re.search(r"\?|cuando|donde|cuanto|que |como |hay ", n):
+        if _SALUDO.search(n):
+            return f"¡Hola! Pregúntame lo que quieras sobre «{titulo}»: fecha, lugar, precio, plazas…"
+        if _ADIOS.search(n):
+            return "¡Hasta pronto! Si te surge otra duda, aquí estaré."
+        if _GRACIAS.search(n):
+            return "¡De nada! Si tienes otra duda sobre el plan, pregúntame."
+    return None
+
+
+SIN_DATO = "[[SIN_DATO]]"  # la IA lo devuelve cuando la ficha no tiene ese dato concreto
+SIN_IA = ""  # ningún proveedor de IA ha respondido
+
+
+def parece_pregunta(texto: str | None) -> bool:
+    n = normalizar_filtro(texto)
+    return "?" in (texto or "") or bool(re.match(
+        r"^(que|cual|cuando|donde|cuanto|cuanta|como|quien|hay|se puede|puedo|podemos|"
+        r"tengo que|hace falta|es |son |habra|va a)\b", n))
+
+
+AYUDA_CHAT = ("Soy el asistente de este plan. Puedo decirte la fecha, el lugar, el precio, "
+              "las plazas o en qué consiste. ¿Qué te gustaría saber?")
+
+_PROMPT_CHAT = """Eres el asistente del chat PÚBLICO de un plan de un pueblo de Almería.
+Contestas en español, con 1 a 3 frases cortas, cercanas y claras. Sin markdown.
+
+QUIÉN ESCRIBE: {quien}
+
+CÓMO RESPONDER según el tipo de mensaje:
+1. Pregunta sobre ESTE plan (hora, lugar, precio, qué hay que llevar, normas, programa...):
+   usa SOLO la ficha. Si la ficha no tiene ese dato, responde exactamente {sin_dato}
+   y nada más. Nunca inventes horarios, precios, material, normas ni nombres.
+2. Pregunta de cultura general relacionada con el plan (qué es el rock, qué es el
+   senderismo, de qué va un taller de esparto...): explícalo en 1 o 2 frases sencillas
+   con tu conocimiento general y, si viene al caso, relaciónalo con el plan.
+3. Comentario, queja o mensaje que no es una pregunta: contesta con amabilidad y
+   reconduce a las dudas sobre el plan. No repitas la misma frase que ya dijiste antes.
+4. Algo que no tiene nada que ver con el plan: dilo con amabilidad en una frase y
+   ofrece ayuda con el plan.
+Si el que escribe es el organizador, háblale como tal: puede contestar en el chat o
+editar la ficha del plan; nunca le digas que "se lo preguntas al organizador".
+
+FICHA DEL PLAN:
 {ficha}
 
-ÚLTIMOS MENSAJES DEL CHAT:
+ÚLTIMOS MENSAJES DEL CHAT (del más antiguo al más reciente):
 {hilo}
 
-PREGUNTA: {pregunta}
+MENSAJE NUEVO: {pregunta}
 """
 
 _CAMPOS_FICHA = ["title", "category", "starts_at", "ends_at", "municipio", "location_name",
@@ -900,20 +976,33 @@ _CAMPOS_FICHA = ["title", "category", "starts_at", "ends_at", "municipio", "loca
                  "is_accessible", "inscripcion_hasta", "description", "status"]
 
 
-def responder_chat(evento: dict, hilo: list[dict], pregunta: str) -> str:
-    """Respuesta SOLO con la ficha + hilo. Si no lo sabe -> NO_LO_SE. Nunca falla."""
+def responder_chat(evento: dict, hilo: list[dict], pregunta: str,
+                   es_organizador: bool = False) -> str:
+    """Respuesta con la ficha + hilo. Devuelve SIN_DATO si la ficha no tiene el dato
+    concreto que se pide y SIN_IA si la IA no responde (quien llama decide qué decir).
+    Nunca falla."""
     try:
         ficha = "\n".join(f"- {c}: {evento.get(c)}" for c in _CAMPOS_FICHA
                           if evento.get(c) not in (None, ""))
-        mensajes = "\n".join(f"- [{m.get('tipo')}] {str(m.get('contenido'))[:300]}"
+        nombres = {"pregunta": "vecino", "respuesta": "vecino", "asistente_ia": "asistente",
+                   "anuncio_fijado": "organizador (anuncio)"}
+        mensajes = "\n".join(f"- [{nombres.get(m.get('tipo'), m.get('tipo'))}] "
+                             f"{str(m.get('contenido'))[:300]}"
                              for m in (hilo or [])[-10:]) or "(sin mensajes)"
-        texto = _llamar(_PROMPT_CHAT.format(no_lo_se=NO_LO_SE, ficha=ficha, hilo=mensajes,
-                                            pregunta=(pregunta or "")[:500]), como_json=False)
+        quien = ("el ORGANIZADOR de este plan" if es_organizador
+                 else "un vecino interesado en el plan")
+        texto = _llamar(_PROMPT_CHAT.format(sin_dato=SIN_DATO, ficha=ficha, hilo=mensajes,
+                                            quien=quien, pregunta=(pregunta or "")[:500]),
+                        como_json=False)
         texto = (texto or "").strip().strip('"')
-        return texto[:600] if texto else NO_LO_SE
+        if not texto:
+            return SIN_IA
+        if SIN_DATO in texto or texto.startswith(NO_LO_SE[:20]):
+            return SIN_DATO
+        return texto[:600]
     except Exception as e:
         print(f"[ia] responder_chat error: {e}")
-        return NO_LO_SE
+        return SIN_IA
 
 
 PALABRAS_ALERTA = ["estafa", "timo", "fraude", "spam", "mentira", "falso", "engaño", "engano",

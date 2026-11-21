@@ -64,7 +64,7 @@ export class ApiService {
     return `${this.baseUrl}/eventos/${eventId}.ics`;
   }
 
-  chatIa(eventId: string, pregunta: string): Promise<{ respuesta: string }> {
+  chatIa(eventId: string, pregunta: string): Promise<{ respuesta: string; bloqueado?: boolean }> {
     return this.peticion(`/eventos/${eventId}/chat-ia`, { method: 'POST', body: { pregunta } });
   }
 

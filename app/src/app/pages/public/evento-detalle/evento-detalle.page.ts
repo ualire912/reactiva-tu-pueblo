@@ -62,6 +62,7 @@ import {
   fechaLarga,
   estiloCategoria,
   haTerminado,
+  esOfensivo,
   iconoCategoria,
   iconoCategoriaLinea,
   partesFecha,
@@ -533,21 +534,32 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     const uid = this.uid();
     const ev = this.evento();
     const texto = this.nuevoMensaje.trim();
-    if (!uid || !ev || !texto) return;
+    // Evita enviar dos veces (Enter y botón a la vez, o doble clic)
+    if (!uid || !ev || !texto || this.enviando()) return;
+
+    // El chat es público: los insultos no se publican
+    if (esOfensivo(texto)) {
+      this.avisos.aviso('Este chat es público y lo leen vecinos de todas las edades. Escribe tu mensaje sin insultos ni palabrotas, por favor.');
+      return;
+    }
 
     this.enviando.set(true);
+    this.nuevoMensaje = ''; // se vacía ya, para que no se pueda mandar otra vez
     try {
       const { error } = await this.sb.client
         .from('mensajes_evento')
         .insert({ event_id: ev.id, user_id: uid, tipo: 'pregunta', contenido: texto.slice(0, 2000) });
-      if (error) throw error;
-      this.nuevoMensaje = '';
+      if (error) {
+        this.nuevoMensaje = texto; // no se ha enviado: se devuelve al campo
+        throw error;
+      }
       await this.cargarMensajes();
 
       if (preguntarIa) {
         this.esperandoIa.set(true);
         try {
-          await this.api.chatIa(ev.id, texto);
+          const res = await this.api.chatIa(ev.id, texto);
+          if (res?.bloqueado) this.avisos.aviso(res.respuesta);
           await this.cargarMensajes();
         } catch {
           this.avisos.aviso('El asistente no responde ahora mismo. Tu pregunta queda en el chat para los vecinos.');

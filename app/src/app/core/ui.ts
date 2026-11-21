@@ -28,6 +28,26 @@ export function normalizar(texto: string | null | undefined): string {
     .trim();
 }
 
+// ---------------------------------------------------------------------------
+// Chat público: insultos y palabrotas que no se publican
+// (misma lista que el servidor, api/ia.py, y la BD, supabase/migracion_chat.sql)
+// ---------------------------------------------------------------------------
+const INSULTOS_CHAT =
+  /\b(gilipollas?|imbeciles?|idiotas?|estupid[oa]s?|subnormal(es)?|retrasad[oa]s?|mierdas?|put[ao]s?|putada|cabron(es|a|as)?|cabrona?zo|hij[oa]s? de puta|maricon(es)?|bolleras?|zorras?|pollas?|pollon|follar|follamos|follando|capull[oa]s?|pendej[oa]s?|mamon(es|a|as)?|me cago en|cago en|joder|jodete|jodeos|panchit[oa]s?|sudac[oa]s?|negrat[ao]s?)\b/;
+
+/** Minúsculas, sin tildes, sin letras repetidas de más ("pollaaaa" → "polla") y sin trucos (gilip0llas). */
+function normalizarFiltro(texto: string): string {
+  const cambios: Record<string, string> = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '@': 'a', $: 's' };
+  return normalizar(texto)
+    .replace(/[0134@$]/g, (c) => cambios[c])
+    .replace(/(.)\1{2,}/g, '$1');
+}
+
+export function esOfensivo(texto: string | null | undefined): boolean {
+  const t = texto || '';
+  return INSULTOS_CHAT.test(normalizarFiltro(t)) || /coñ[oa]/i.test(t);
+}
+
 export function colorPueblo(nombre: string | null | undefined): string {
   return COLORES_PUEBLO[normalizar(nombre)] || COLOR_PUEBLO_DEFECTO;
 }

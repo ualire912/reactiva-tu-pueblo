@@ -545,11 +545,34 @@ def _fecha_bonita(iso: str | None) -> str | None:
     return f"el {_DIAS[d.weekday()]} {d.day} de {_MESES[d.month - 1]} a las {d:%H:%M}"
 
 
+def _resumen_ficha(ev: dict) -> str:
+    """Resumen corto del plan con lo que dice la ficha (sin IA)."""
+    partes = [f"«{ev.get('title') or 'Este plan'}»"]
+    if ev.get("municipio"):
+        partes[0] += f" es en {ev['municipio']}"
+    if ev.get("starts_at"):
+        partes[0] += f", {_fecha_bonita(ev['starts_at'])}"
+    frases = [partes[0] + "."]
+    if ev.get("description"):
+        frases.append(str(ev["description"]).strip()[:300])
+    lugar = ev.get("location_name")
+    if lugar and lugar.lower() != "por confirmar":
+        frases.append(f"Lugar: {lugar}.")
+    if ev.get("price") is not None:
+        frases.append("Es gratis." if float(ev["price"]) == 0 else f"Cuesta {ev['price']} €.")
+    return " ".join(frases)
+
+
 def faq_respuesta(ev: dict, pregunta: str) -> str | None:
     """Preguntas frecuentes respondidas SOLO con la ficha, sin IA (0 tokens).
     None = no es una pregunta frecuente -> que conteste la IA."""
     n = ia._norm(pregunta)
     partes, reconocida = [], False
+
+    # "Háblame del evento", "más información", "¿de qué va?" -> resumen de la ficha
+    if re.search(r"hablame|cuentame|mas (info|informacion|detalles)|informacion del|"
+                 r"de que (va|trata)|en que consiste|que es este (plan|evento)|detalles", n):
+        return _resumen_ficha(ev)
 
     if re.search(r"\b(hora|cuando|que dia|empieza|fecha|termina|acaba|dura)", n):
         reconocida = True
@@ -592,8 +615,36 @@ def faq_respuesta(ev: dict, pregunta: str) -> str | None:
     if partes:
         return " ".join(partes)
     if reconocida:  # pregunta frecuente pero la ficha no tiene el dato: no se inventa
-        return ia.NO_LO_SE
+        return ia.SIN_DATO
     return None
+
+
+def _es_organizador(ev: dict, user_id: str) -> bool:
+    if ev.get("created_by") == user_id:
+        return True
+    entidad = _una("entidades", "id", ev.get("entidad_organizadora_id"))
+    return bool(entidad and entidad.get("owner_user_id") == user_id)
+
+
+def _avisar_organizador(ev: dict, pregunta: str) -> bool:
+    """Manda la duda al organizador por Telegram. True si le llegó."""
+    destinatario = ev.get("created_by")
+    if not destinatario:
+        entidad = _una("entidades", "id", ev.get("entidad_organizadora_id"))
+        destinatario = (entidad or {}).get("owner_user_id")
+    if not destinatario:
+        return False
+    try:
+        from puentes import avisar
+        import os as _os
+        web = _os.environ.get("FRONTEND_URL", "").rstrip("/")
+        enlace = f"\n\nContesta en el chat del plan: {web}/evento/{ev['id']}" if web else ""
+        return avisar(destinatario,
+                      f"❓ Un vecino pregunta en el chat de «{ev.get('title')}»:\n"
+                      f"«{pregunta[:300]}»\n\nLa ficha del plan no tiene ese dato.{enlace}")
+    except Exception as e:
+        log.warning("No se pudo avisar al organizador de %s: %r", ev.get("id"), e)
+        return False
 
 
 @router.post("/eventos/{event_id}/chat-ia")
@@ -605,12 +656,38 @@ def chat_ia(event_id: str, body: PreguntaChat, user=Depends(require_user)):
     if not pregunta:
         raise HTTPException(400, "Pregunta vacía")
 
-    respuesta = faq_respuesta(ev, pregunta)  # reglas primero (0 tokens)
+    # 1. Insultos: no se contesta y se retira el mensaje del chat público
+    if ia.es_ofensivo_chat(pregunta):
+        try:
+            (sb.table("mensajes_evento").delete().eq("event_id", event_id)
+             .eq("user_id", user.id).eq("contenido", pregunta).execute())
+        except Exception:
+            log.exception("No se pudo retirar un mensaje ofensivo")
+        return {"respuesta": ia.AVISO_RESPETO, "bloqueado": True}
+
+    es_org = _es_organizador(ev, user.id)
+
+    # 2. Saludos y gracias (0 tokens)  3. Preguntas frecuentes con la ficha (0 tokens)  4. IA
+    respuesta = ia.respuesta_cortesia(ev, pregunta) or faq_respuesta(ev, pregunta)
     if respuesta is None:
         hilo = (sb.table("mensajes_evento").select("tipo, contenido, created_at")
                 .eq("event_id", event_id).order("created_at", desc=True).limit(10)
                 .execute().data)[::-1]
-        respuesta = ia.responder_chat(ev, hilo, pregunta)
+        respuesta = ia.responder_chat(ev, hilo, pregunta, es_organizador=es_org)
+        if respuesta == ia.SIN_IA:  # la IA no responde: solo se avisa si era una pregunta
+            respuesta = ia.SIN_DATO if ia.parece_pregunta(pregunta) else ia.AYUDA_CHAT
+
+    # 5. La ficha no tiene ese dato: se dice la verdad sobre lo que pasa después
+    if respuesta == ia.SIN_DATO:
+        if es_org:
+            respuesta = ("Ese dato no está en la ficha del plan. Como organizador/a, puedes "
+                         "añadirlo editando el plan o contestarlo aquí en el chat.")
+        elif _avisar_organizador(ev, pregunta):
+            respuesta = ("Eso no aparece en la ficha del plan. He avisado al organizador "
+                         "para que te responda aquí en el chat.")
+        else:
+            respuesta = ("Eso no aparece en la ficha del plan. El organizador verá tu "
+                         "pregunta en este chat y podrá responderte.")
 
     fila = {"event_id": event_id, "user_id": None, "tipo": "asistente_ia",
             "contenido": respuesta[:2000]}
