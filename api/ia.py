@@ -670,7 +670,8 @@ def _reglas_mensaje(text: str) -> dict:
 
     if re.search(r"apunta(me|rme)|me apunto|inscribe|quiero ir", n):
         intencion = "apuntarse"
-    elif re.search(r"propongo|proponer|quien se viene|quien se apunta|organiza|organizo|organizar|quedamos", n):
+    elif re.search(r"propongo|proponer|quien se viene|quien se apunta|organiza|organizo|organizar|quedamos|"
+                   r"(crear|montar|anunciar|publicar|subir) (un |una )?(evento|plan|actividad|quedada|fiesta)", n):
         intencion = "proponer"
     elif re.search(r"que hay|que .{0,25}hay\b|hay algo|que hacer|que planes|planes|agenda|eventos|actividades|busca|algo para", n):
         intencion = "buscar"

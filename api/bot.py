@@ -56,6 +56,8 @@ ESPERANDO_RESENA: dict[int, str] = {}
 COMENTARIO_PENDIENTE: dict[int, dict[str, str]] = {}
 # Chats que propusieron un plan con una nota de voz: el resumen se les manda también en audio
 CHATS_CON_VOZ: set[int] = set()
+# Chats a los que se les han pedido los datos de un plan: su siguiente mensaje es la propuesta
+ESPERANDO_PROPUESTA: set[int] = set()
 CONFIRMADOS_EN_MEMORIA: set[str] = set()
 
 DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
@@ -1143,6 +1145,61 @@ async def _charla(chat_id: int, perfil: dict[str, Any] | None, texto: str,
     return False
 
 
+def _tiene_detalles_de_plan(texto: str) -> bool:
+    """¿Cuenta ya algo del plan (día, hora, sitio...) o solo dice que quiere proponer uno?"""
+    n = _norm_txt(texto)
+    if len(n.split()) < 6:
+        return False
+    return bool(re.search(
+        r"\d|lunes|martes|miercoles|jueves|viernes|sabado|domingo|manana|pasado|semana|finde|"
+        r"enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|"
+        r"diciembre|a las|plaza|calle|ermita|iglesia|polideportivo|en (?:senes|tahal|velefique|"
+        r"uleila|lucainena)", n))
+
+
+async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: str,
+                           es_audio: bool = False) -> None:
+    """Guarda la propuesta, la IA saca los datos y se le pide confirmación al autor.
+    Si no se puede sacar un plan, se le dice (antes se quedaba callado)."""
+    if not perfil:
+        perfil = await _asegurar_perfil_telegram(chat_id)
+    filas = sb.table("ingestas").insert({
+        "origen": "telegram", "user_id": perfil["id"] if perfil else None,
+        "raw_text": texto, "estado": "nueva",
+    }).execute().data or []
+    ingesta_id = filas[0]["id"] if filas else None
+    ingesta_mod = _get_ingesta_module()
+    if not ingesta_id or not ingesta_mod or not hasattr(ingesta_mod, "procesar_ingesta"):
+        await _enviar_respuesta(chat_id, "📝 He guardado tu propuesta. Un moderador la revisará.",
+                                perfil=perfil, force_audio=es_audio)
+        return
+    await send_chat_action(chat_id, "typing")
+    if es_audio:  # el resumen para confirmar también se le dirá en voz alta
+        CHATS_CON_VOZ.add(chat_id)
+    await _maybe_await(ingesta_mod.procesar_ingesta(ingesta_id))
+    fila = (sb.table("ingestas").select("estado").eq("id", ingesta_id).execute().data or [{}])[0]
+    estado = fila.get("estado")
+    if estado == "esperando_confirmacion":
+        return  # ya le ha llegado el resumen con "¿Publico este plan?"
+    CHATS_CON_VOZ.discard(chat_id)
+    if estado in ("descartada", "spam"):
+        ESPERANDO_PROPUESTA.add(chat_id)
+        await _enviar_respuesta(
+            chat_id,
+            "🤔 No he sabido sacar un plan de tu mensaje. Cuéntamelo con más detalle: qué es, "
+            "en qué pueblo, qué día y a qué hora (por ejemplo: «Taller de esparto el sábado 12 "
+            "de diciembre a las 17:00 en el centro social de Tahal, gratis»).",
+            perfil=perfil, force_audio=es_audio)
+    elif estado == "error":
+        await _enviar_respuesta(chat_id, "⚠️ Ahora mismo no puedo leer tu propuesta. "
+                                         "Inténtalo de nuevo en unos minutos.",
+                                perfil=perfil, force_audio=es_audio)
+    else:  # extraída pero sin poder pedir confirmación por aquí
+        await _enviar_respuesta(chat_id, "📝 He recibido tu propuesta. Un moderador la "
+                                         "revisará antes de publicarla.",
+                                perfil=perfil, force_audio=es_audio)
+
+
 def _planes_para_apuntarse(texto: str) -> list[dict[str, Any]]:
     """'Quiero apuntarme a las migas' -> planes que admiten inscripción, el que más se
     parece a lo dicho primero. Si no nombra ninguno, los más próximos."""
@@ -1324,6 +1381,19 @@ async def _procesar_texto_o_voz(
             await send_message(chat_id, "⚠️ No he podido leer el comentario.")
         return
 
+    if chat_id in ESPERANDO_PROPUESTA:  # le pedimos los datos del plan: esto es la propuesta
+        ESPERANDO_PROPUESTA.discard(chat_id)
+        propuesta = (texto or "").strip()
+        ia_mod = _get_ia_module()
+        if not propuesta and es_audio and ia_mod and hasattr(ia_mod, "entender_mensaje"):
+            parsed = await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))
+            propuesta = (parsed or {}).get("texto") or ""
+        if propuesta and not await _charla(chat_id, perfil, propuesta, force_audio=es_audio):
+            await _crear_propuesta(chat_id, perfil, propuesta, es_audio)
+            return
+        if propuesta:
+            return
+
     if chat_id in ESPERANDO_CAMPO:
         espera = ESPERANDO_CAMPO[chat_id]
         ingesta_id = espera["ingesta_id"]
@@ -1425,35 +1495,13 @@ async def _procesar_texto_o_voz(
         consulta = texto_reconocido or (texto or "").strip()
         await _responder_con_rag(chat_id, perfil=perfil, consulta=consulta, force_audio=es_audio)
     elif intencion == "proponer":
-        if not perfil:
-            perfil = await _asegurar_perfil_telegram(chat_id)
-        ing_row = (
-            sb.table("ingestas")
-            .insert(
-                {
-                    "origen": "telegram",
-                    "user_id": perfil["id"] if perfil else None,
-                    "raw_text": texto_reconocido,
-                    "estado": "nueva",
-                }
-            )
-            .execute()
-            .data
-            or []
-        )
-        ingesta_id = ing_row[0]["id"] if ing_row else None
-        ingesta_mod = _get_ingesta_module()
-        if ingesta_id and ingesta_mod and hasattr(ingesta_mod, "procesar_ingesta"):
-            if es_audio:  # el resumen para confirmar también se le dirá en voz alta
-                CHATS_CON_VOZ.add(chat_id)
-            await _maybe_await(ingesta_mod.procesar_ingesta(ingesta_id))
+        if not _tiene_detalles_de_plan(texto_reconocido):
+            # "Quiero proponer un evento": aún no ha dicho cuál -> se le piden los datos
+            # y su siguiente mensaje (o nota de voz) se toma como la propuesta
+            ESPERANDO_PROPUESTA.add(chat_id)
+            await _enviar_respuesta(chat_id, TEXTO_PROPONER, perfil=perfil, force_audio=es_audio)
         else:
-            await _enviar_respuesta(
-                chat_id,
-                "📝 Hemos recibido tu propuesta de actividad y la hemos guardado.",
-                perfil=perfil,
-                force_audio=es_audio,
-            )
+            await _crear_propuesta(chat_id, perfil, texto_reconocido, es_audio)
     elif intencion == "apuntarse":
         evs = _planes_para_apuntarse(texto_reconocido)
         if evs:
@@ -1573,6 +1621,7 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
     elif data == "cmd:valorar":
         await _manejar_resena_libre(chat_id_int, perfil, "quiero valorar un plan")
     elif data == "cmd:proponer":
+        ESPERANDO_PROPUESTA.add(chat_id_int)
         await send_message(chat_id_int, TEXTO_PROPONER)
     elif data == "cmd:ayuda":
         await _mostrar_ayuda(chat_id_int)
@@ -1792,6 +1841,7 @@ async def procesar_update(update: dict[str, Any]) -> None:
             elif cmd == "/mis_planes":
                 await _cmd_mis_planes(chat_id_int, perfil=perfil)
             elif cmd == "/proponer":
+                ESPERANDO_PROPUESTA.add(chat_id_int)
                 await send_message(chat_id_int, TEXTO_PROPONER)
             elif cmd == "/audio":
                 await _toggle_audio(chat_id_int, perfil=perfil, enabled=None)
