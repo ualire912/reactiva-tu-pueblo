@@ -165,8 +165,10 @@ _GENERAL = re.compile(r"iniciar sesion|registr|cuenta|contrasena|telegram|vincul
                       r"la app|aplicacion|publicador|resena|valorar|incidencia|lista de espera|"
                       r"borrarme|cancelar mi|desapuntar|calendario|audio|notificacion|aviso|"
                       r"compartir coche|como me apunto|como apuntarme|como propongo|como proponer")
-_PASADO = re.compile(r"\b(hubo|ha habido|habia|pasad[oa]|se hizo|se celebro|fue|fueron|"
-                     r"cuantas veces|historial|anteriores|desde cuando)\b")
+_PASADO = re.compile(r"\b(hubo|ha habido|habia|pasad[oa]s?|se hizo|se hicieron|se celebro|se celebraron|"
+                     r"celebrad[oa]s|fue|fueron|cuantas veces|historial|anteriores|antiguos?|"
+                     r"desde cuando|finalizad[oa]s?|terminad[oa]s?|acabad[oa]s?|ya pasaron|"
+                     r"que ya han|que se han hecho|ultimos eventos)\b")
 
 
 def _rango_fechas(n: str) -> tuple[datetime | None, datetime | None]:
@@ -252,6 +254,11 @@ def extraer_filtros(pregunta: str) -> dict:
     # Sin fechas y sin hablar del pasado -> solo eventos de hoy en adelante
     if filtros["tipo"] == "eventos" and not filtros["desde"] and not filtros["pasado"]:
         filtros["desde"] = datetime.now(ia.TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Hablando del pasado -> nunca eventos futuros
+    if filtros["tipo"] == "eventos" and filtros["pasado"]:
+        ahora = datetime.now(ia.TZ)
+        if not filtros["hasta"] or filtros["hasta"] > ahora:
+            filtros["hasta"] = ahora
     return filtros
 
 

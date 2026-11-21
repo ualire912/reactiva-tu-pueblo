@@ -179,12 +179,27 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     }
   }
 
+  /** Terminado por estado o por hora real (el estado puede tardar en recalcularse). */
+  get terminado(): boolean {
+    if (!this.evento) return false;
+    if (this.evento.status === 'finalizado') return true;
+    if (this.evento.status === 'cancelado') return false;
+    const fin = this.evento.ends_at || this.evento.starts_at;
+    return !!fin && new Date(fin).getTime() <= Date.now();
+  }
+
+  /** Ya empezó (o terminó): no se admiten nuevas inscripciones ni cancelaciones. */
+  get yaEmpezo(): boolean {
+    return !!this.evento && new Date(this.evento.starts_at).getTime() <= Date.now();
+  }
+
   get puedeValorar(): boolean {
-    return (
-      this.evento?.status === 'finalizado' &&
-      !!this.miInscripcion &&
-      this.miInscripcion.asistio === true
-    );
+    return this.terminado && !!this.miInscripcion && this.miInscripcion.status === 'confirmada';
+  }
+
+  get miResena(): Resena | null {
+    const uid = this.sb.currentSession?.user?.id;
+    return (uid && this.resenas.find((r) => r.user_id === uid)) || null;
   }
 
   async cargarEvento() {
@@ -291,12 +306,24 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     return mapa[status] || status;
   }
 
+  get estadoVisible(): string {
+    if (!this.evento) return '';
+    if (this.terminado) return 'finalizado';
+    if (this.yaEmpezo && ['abierto', 'completo', 'inscripcion_cerrada'].includes(this.evento.status)) return 'en_curso';
+    return this.evento.status;
+  }
+
   get puedeApuntarse(): boolean {
-    return this.evento?.status === 'abierto' || this.evento?.status === 'completo';
+    const ev = this.evento;
+    if (!ev || this.yaEmpezo) return false;
+    if (ev.inscripcion_hasta && new Date(ev.inscripcion_hasta).getTime() <= Date.now()) return false;
+    return ev.status === 'abierto' || ev.status === 'completo';
   }
 
   get textoBotonApuntarse(): string {
     if (!this.evento) return 'Apuntarme';
+    if (this.terminado) return 'Evento finalizado';
+    if (!this.puedeApuntarse) return this.yaEmpezo ? 'En curso' : 'Inscripción cerrada';
     if (this.evento.status === 'abierto') return 'Apuntarme';
     if (this.evento.status === 'completo') return 'Apuntarme a la lista de espera';
     return this.etiquetaEstado(this.evento.status);
@@ -305,6 +332,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   async apuntarme() {
     const uid = this.sb.currentSession?.user?.id;
     if (!uid || !this.evento) return;
+    if (!this.puedeApuntarse) {
+      this.mostrarAviso(this.terminado ? 'Este evento ya ha terminado' : 'Este evento ya no admite inscripciones');
+      return;
+    }
 
     this.procesandoInscripcion = true;
     this.cdr.detectChanges();
@@ -410,7 +441,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
 
   async enviarResena() {
     const uid = this.sb.currentSession?.user?.id;
-    if (!uid || !this.evento) return;
+    if (!uid || !this.evento || !this.puedeValorar || this.miResena) return;
 
     const { error } = await this.sb.client.from('resenas').insert({
       event_id: this.evento.id,
