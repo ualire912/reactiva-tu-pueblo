@@ -1,0 +1,66 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-title>Mapa de planes</ion-title>
+    <ion-buttons slot="end">
+      <ion-button routerLink="/agenda" aria-label="Ver en formato lista accesible">
+        <ion-icon slot="start" name="list-outline"></ion-icon>
+        Lista
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content [scrollY]="false">
+  <div style="display: flex; flex-direction: column; height: 100%;">
+    <!-- Barra de filtros superior -->
+    <div class="ion-padding-horizontal ion-padding-top" style="background: var(--ion-background-color); z-index: 10;">
+      <ion-grid class="ion-no-padding">
+        <ion-row>
+          <ion-col size="6" class="ion-padding-end">
+            <ion-item lines="outline">
+              <ion-select label="Pueblo" labelPlacement="stacked" [(ngModel)]="filtroMunicipio" (ionChange)="aplicarFiltros()">
+                <ion-select-option value="todos">Todos</ion-select-option>
+                <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
+                  {{ m.nombre }}
+                </ion-select-option>
+              </ion-select>
+            </ion-item>
+          </ion-col>
+
+          <ion-col size="6">
+            <ion-item lines="outline">
+              <ion-select label="Cuándo" labelPlacement="stacked" [(ngModel)]="filtroFecha" (ionChange)="aplicarFiltros()">
+                <ion-select-option value="todos">Cualquier fecha</ion-select-option>
+                <ion-select-option value="hoy">Hoy</ion-select-option>
+                <ion-select-option value="finde">Este finde</ion-select-option>
+                <ion-select-option value="semana">Próximos 7 días</ion-select-option>
+              </ion-select>
+            </ion-item>
+          </ion-col>
+        </ion-row>
+      </ion-grid>
+
+      <div style="display: flex; gap: 8px; overflow-x: auto; padding: 8px 0;">
+        <ion-chip color="secondary" (click)="centrarCercaDeMi()">
+          <ion-icon name="navigate-outline"></ion-icon>
+          <ion-label>Cerca de mí</ion-label>
+        </ion-chip>
+
+        <ion-chip
+          *ngFor="let cat of sb.categorias"
+          [color]="filtroCategoria === cat.slug ? 'primary' : 'light'"
+          (click)="seleccionarCategoria(cat.slug)">
+          <ion-label>{{ cat.nombre }}</ion-label>
+        </ion-chip>
+      </div>
+    </div>
+
+    <!-- Contenedor del mapa Leaflet -->
+    <div
+      id="mapa-comarca"
+      role="region"
+      aria-label="Mapa interactivo con los eventos de la comarca"
+      style="flex: 1; width: 100%; min-height: 300px;">
+    </div>
+  </div>
+</ion-content>
