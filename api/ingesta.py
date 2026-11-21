@@ -155,9 +155,24 @@ def procesar_ingesta(ingesta_id: str) -> None:
             log.info("Ingesta %s -> spam por reglas (%s)", ingesta_id, regla["motivo"])
             return
 
+        # 1b. ¿Claramente no es un evento? (esquela, corte de agua, se vende...) -> fuera, gratis
+        no_evento = ia.reglas_no_evento(texto) if not ing.get("image_url") else None
+        if no_evento:
+            _actualizar_ingesta(ingesta_id, estado="descartada",
+                                spam_score=0, spam_reason=f"no es un evento: {no_evento}")
+            log.info("Ingesta %s -> descartada por reglas (%s)", ingesta_id, no_evento)
+            return
+
         # 2. Extraer con IA (texto + cartel)
         imagen = descargar_imagen(ing.get("image_url"))
         extraido = ia.extraer_evento(texto, imagen)
+
+        # 2b. La IA dice que no es un evento -> descartada (visible en el panel, sin molestar a nadie)
+        if extraido.get("es_evento") is False:
+            _actualizar_ingesta(ingesta_id, estado="descartada", extracted=extraido, spam_score=0,
+                                spam_reason=f"no es un evento: {extraido.get('motivo_no_evento')}")
+            log.info("Ingesta %s -> descartada por IA (%s)", ingesta_id, extraido.get("motivo_no_evento"))
+            return
 
         # 3. Spam con IA solo si las reglas dudaron
         spam = regla or ia.clasificar_spam(texto, entidad)
