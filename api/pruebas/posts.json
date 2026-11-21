@@ -40,5 +40,19 @@
     "page_url": "https://www.facebook.com/pagina-desconocida",
     "text": "GANA DINERO DESDE CASA CON BITCOIN 💰💰 Haz clic aquí https://bit.ly/xxx y aquí https://bit.ly/yyy y aquí https://bit.ly/zzz. ¡Plazas limitadas!",
     "image_url": null
+  },
+  {
+    "nombre": "no_evento_agua",
+    "source_url": "https://www.facebook.com/prueba/posts/1007",
+    "page_url": "https://www.facebook.com/ayuntamiento-tahal",
+    "text": "AVISO: mañana jueves habrá corte de agua en el barrio alto de Tahal de 9:00 a 14:00 por obras en la red. Disculpen las molestias.",
+    "image_url": null
+  },
+  {
+    "nombre": "no_evento_recuerdo",
+    "source_url": "https://www.facebook.com/prueba/posts/1008",
+    "page_url": "https://www.facebook.com/asociacion-cultural-senes",
+    "text": "¡Qué bonita fue la fiesta del sábado en Senés! Gracias a todos los que vinisteis y a los voluntarios que lo hicieron posible ❤️",
+    "image_url": null
   }
 ]

@@ -148,6 +148,71 @@ def _nvidia(clave: str, modelo: str, prompt: str, como_json: bool) -> str:
     return texto
 
 
+_POOL = {"pool": None, "ok": True}
+
+
+def _pool():
+    """Crea el pool de freellmpool la primera vez. None si no está instalado o desactivado."""
+    if not _POOL["ok"] or os.getenv("FREELLMPOOL", "1") == "0":
+        return None
+    if _POOL["pool"] is None:
+        try:
+            from freellmpool import Pool
+            _POOL["pool"] = Pool.from_default_config()
+        except Exception as e:
+            print(f"[ia] freellmpool no disponible: {type(e).__name__}: {e}")
+            _POOL["ok"] = False
+            return None
+    return _POOL["pool"]
+
+
+def _con_limite(funcion, *args, segundos: int = TIMEOUT_S + 10):
+    """Ejecuta funcion(*args) con un tiempo máximo (freellmpool no tiene timeout propio)."""
+    import concurrent.futures
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return ex.submit(funcion, *args).result(timeout=segundos)
+    finally:
+        ex.shutdown(wait=False)
+
+
+def _freellmpool(prompt: str) -> str | None:
+    pool = _pool()
+    if not pool:
+        return None
+    try:
+        t0 = time.time()
+        r = _con_limite(pool.ask, prompt)
+        texto = getattr(r, "text", None) or ""
+        if not texto.strip():
+            return None
+        CONSUMO["llamadas"] += 1  # (freellmpool no informa de los tokens)
+        print(f"[ia] OK: freellmpool ({getattr(r, 'provider_id', '?')}) en {time.time() - t0:.1f} s")
+        if DEBUG:
+            print("[ia] RESPUESTA CRUDA:", texto[:800])
+        return texto
+    except Exception as e:
+        print(f"[ia] freellmpool falló: {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+
+def transcribir_reserva(audio_bytes: bytes) -> str | None:
+    """Si Gemini no puede con una nota de voz, freellmpool la transcribe (Whisper gratis)."""
+    pool = _pool()
+    if not pool or not audio_bytes:
+        return None
+    try:
+        r = _con_limite(pool.transcribe, audio_bytes, "nota.ogg")
+        texto = (getattr(r, "text", None) or "").strip()
+        if texto:
+            CONSUMO["llamadas"] += 1
+            print("[ia] OK: transcripción de reserva con freellmpool")
+        return texto or None
+    except Exception as e:
+        print(f"[ia] transcripción de reserva falló: {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+
 def _llamar(prompt: str, image_bytes: bytes | None = None,
             audio_bytes: bytes | None = None, como_json: bool = True) -> str | None:
     """Prueba los proveedores en orden. Devuelve el texto o None si todos fallan."""
@@ -199,6 +264,14 @@ def _llamar(prompt: str, image_bytes: bytes | None = None,
                 return texto
             except Exception as e:
                 print(f"[ia] NVIDIA {modelo} falló: {type(e).__name__}: {str(e)[:90]}")
+
+    # Último recurso con IA: freellmpool (reparte entre 15+ proveedores gratis, cambia solo
+    # si uno falla). Solo texto. Se desactiva con FREELLMPOOL=0 en el .env.
+    if not audio_bytes:
+        texto = _freellmpool(prompt)
+        if texto:
+            _CACHE[h] = texto
+            return texto
 
     print("[ia] Ningún proveedor disponible -> Plan B sin IA")
     return None
@@ -305,7 +378,7 @@ Lee el texto (y el cartel si se adjunta) y devuelve SOLO un JSON con exactamente
 title (string corto), category, starts_at, ends_at, duration_minutes (entero), municipio,
 location_name, price (número en euros), max_capacity (entero), min_age, max_age,
 inscripcion_hasta, description (máx. 300 caracteres, en español), is_accessible (boolean),
-confidence (0..1), missing (lista).
+confidence (0..1), missing (lista), es_evento (boolean), motivo_no_evento (string o null).
 
 Reglas:
 - NUNCA inventes. Si un dato no aparece, pon null y añade el nombre de la clave a "missing".
@@ -319,6 +392,11 @@ Reglas:
 - municipio: uno de {pueblos}, o null si no se sabe.
 - is_accessible: true solo si lo dice expresamente; si no, false.
 - confidence: lo seguro que estás de que es un evento real con datos correctos.
+- es_evento: true SOLO si anuncia una actividad a la que la gente puede ir o apuntarse
+  (ruta, fiesta, taller, concierto, mercadillo, reunión abierta...). false si es una noticia,
+  felicitación, esquela o pésame, aviso de servicio (corte de agua/luz, obras), compraventa,
+  objeto perdido, oferta de empleo, publicidad o una foto/recuerdo de algo que ya pasó.
+  Si es_evento es false, explica por qué en motivo_no_evento (frase corta).
 
 TEXTO:
 \"\"\"{texto}\"\"\"
@@ -336,6 +414,7 @@ def _evento_vacio(text: str | None) -> dict:
         "max_capacity": None, "min_age": None, "max_age": None, "inscripcion_hasta": None,
         "description": (text or "")[:300] or None, "is_accessible": False,
         "confidence": 0.0, "missing": [],
+        "es_evento": None,          # None = no se sabe (sin IA): no se descarta
     }
 
 
@@ -369,6 +448,10 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
         if d.get("description"):
             ev["description"] = str(d["description"]).strip()[:500]
         ev["is_accessible"] = d.get("is_accessible") is True
+        if isinstance(d.get("es_evento"), bool):
+            ev["es_evento"] = d["es_evento"]
+            if not d["es_evento"]:
+                ev["motivo_no_evento"] = str(d.get("motivo_no_evento") or "no anuncia una actividad")[:200]
         try:
             ev["confidence"] = max(0.0, min(1.0, float(d.get("confidence") or 0)))
         except (TypeError, ValueError):
@@ -454,6 +537,24 @@ def reglas_spam(text: str | None, entidad: dict | None = None) -> dict | None:
     return None  # dudoso -> IA
 
 
+_NO_EVENTO = [
+    (r"descanse en paz|\bdep\b|fallec|pesame|condolencia|funeral|esquela", "esquela o pésame"),
+    (r"corte de (agua|luz|suministro)|sin agua|sin luz|averia|obras en la calle", "aviso de servicio"),
+    (r"\bse vende|\bvendo\b|\bse alquila|\balquilo\b|\bse traspasa", "compraventa o alquiler"),
+    (r"\bperdid[oa]\b.*(perro|gato|llaves|cartera|movil)|se ha perdido|se busca (perro|gato)", "objeto o animal perdido"),
+    (r"oferta de empleo|se busca (camarer|trabajador|personal)|buscamos personal", "oferta de empleo"),
+]
+
+
+def reglas_no_evento(text: str | None) -> str | None:
+    """Posts legítimos que claramente NO son eventos (0 tokens). Devuelve el motivo o None."""
+    n = _norm(text or "")
+    for patron, motivo in _NO_EVENTO:
+        if re.search(patron, n):
+            return motivo
+    return None
+
+
 _PROMPT_SPAM = """¿Este post de Facebook es spam/estafa/publicidad ajena, o un evento o anuncio legítimo
 de un pueblo de Almería? Devuelve SOLO JSON: {{"spam_score": número 0..1, "motivo": "frase corta en español"}}.
 POST:
@@ -525,7 +626,7 @@ def _reglas_mensaje(text: str) -> dict:
         intencion = "apuntarse"
     elif re.search(r"propongo|proponer|quien se viene|quien se apunta|organiza|organizo|organizar|quedamos", n):
         intencion = "proponer"
-    elif re.search(r"que hay|que planes|planes|agenda|eventos|actividades|busca|algo para", n):
+    elif re.search(r"que hay|que .{0,25}hay\b|hay algo|que hacer|que planes|planes|agenda|eventos|actividades|busca|algo para", n):
         intencion = "buscar"
     elif filtros and len(n.split()) <= 6:  # "senderismo en Tahal" -> buscar
         intencion = "buscar"
@@ -596,19 +697,73 @@ def entender_mensaje(text: str | None = None, audio_bytes: bytes | None = None) 
             return _validar_mensaje(datos, text or "")
     except Exception as e:
         print(f"[ia] entender_mensaje error: {e}")
-    # Plan B
+    # Plan B: si era audio, intentar solo transcribir y entenderlo con reglas/IA de texto
+    if audio_bytes and not text:
+        transcrito = transcribir_reserva(audio_bytes)
+        if transcrito:
+            return entender_mensaje(text=transcrito)
     if text:
         return _reglas_mensaje(text)
     return {"intencion": "otro", "filtros": {}, "texto": ""}
 
 
-def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
+_DIAS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MESES_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+             "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def fecha_humana(iso) -> str:
+    """'2026-12-05T10:00:00+00:00' -> 'el sábado 5 de diciembre a las 11:00' (hora de España)."""
+    try:
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(TZ)
+        return f"el {_DIAS_ES[d.weekday()]} {d.day} de {_MESES_ES[d.month - 1]} a las {d:%H:%M}"
+    except Exception:
+        return ""
+
+
+def _plantilla_recomendacion(nombre: str, eventos: list[dict]) -> str:
+    """Plan B sin IA: plantilla con los motivos que da la BD."""
     if not eventos:
         return f"Hola {nombre}, esta semana no hemos encontrado planes para ti."
-    e = eventos[0]
-    motivos = ", ".join(e.get("motivos") or [])
-    return (f"Hola {nombre}, te puede gustar «{e.get('title')}» en {e.get('municipio')}"
-            + (f" ({motivos})" if motivos else "") + ". ¿Te apuntas?")
+    lineas = [f"Hola {nombre}, te pueden gustar estos planes:"]
+    for e in eventos[:3]:
+        motivos = ", ".join(e.get("motivos") or [])
+        lineas.append(f"• {e.get('title')} en {e.get('municipio')} {fecha_humana(e.get('starts_at'))}"
+                      + (f" ({motivos})" if motivos else "") + ".")
+    return "\n".join(lineas)
+
+
+_PROMPT_RECOMENDACION = """Escribe un mensaje de Telegram para {nombre}, vecino/a de un pueblo de Almería,
+recomendándole estos planes. Tono cercano y sencillo (puede ser una persona mayor), en español.
+- Entre 2 y 4 frases en total. Sin emojis, sin listas, sin saludos largos.
+- Di POR QUÉ se lo recomendamos usando SOLO los motivos indicados.
+- Usa SOLO estos datos (título, pueblo, fecha). No inventes precios, horas ni detalles.
+- Termina invitándole a apuntarse con los botones.
+
+PLANES:
+{planes}
+"""
+
+
+def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
+    """eventos = filas de rpc('recomendar_eventos'): event_id, title, starts_at, municipio,
+    puntos, motivos. Devuelve un texto corto con el porqué. Nunca falla."""
+    try:
+        nombre = (nombre or "").split(" ")[0] or "vecino"
+        if not eventos:
+            return _plantilla_recomendacion(nombre, eventos)
+        planes = "\n".join(
+            f"- {e.get('title')} | {e.get('municipio')} | {fecha_humana(e.get('starts_at'))}"
+            f" | motivos: {', '.join(e.get('motivos') or []) or 'ninguno'}"
+            for e in eventos[:3])
+        texto = _llamar(_PROMPT_RECOMENDACION.format(nombre=nombre, planes=planes), como_json=False)
+        texto = (texto or "").strip().strip('"')
+        # Comprobación anti-invento: debe mencionar al menos un título recomendado
+        if texto and any(_norm(str(e.get("title")))[:15] in _norm(texto) for e in eventos[:3]):
+            return texto[:800]
+    except Exception as e:
+        print(f"[ia] redactar_recomendacion error: {e}")
+    return _plantilla_recomendacion(nombre, eventos)
 
 
 _PROMPT_CHAT = """Eres el asistente del chat de un evento de un pueblo de Almería.
@@ -646,6 +801,55 @@ def responder_chat(evento: dict, hilo: list[dict], pregunta: str) -> str:
         return NO_LO_SE
 
 
+PALABRAS_ALERTA = ["estafa", "timo", "fraude", "spam", "mentira", "falso", "engaño", "engano",
+                   "no existe", "no aparecio", "no vino nadie", "nos dejo tirados", "peligro",
+                   "inseguro", "acoso", "robo", "cobraron", "no devolvieron"]
+
+_PROMPT_CONFIANZA = """Eres el moderador de una agenda de eventos de pueblos de Almería.
+Decide si este usuario puede publicar eventos directamente (sin revisión) a partir de su historial.
+Aprueba solo si sus eventos parecen reales y locales, y las reseñas no muestran quejas graves,
+spam ni engaños. Si hay pocos datos o dudas, no apruebes.
+
+PERFIL: {perfil}
+EVENTOS QUE HA ORGANIZADO:
+{eventos}
+RESEÑAS DE SUS EVENTOS:
+{resenas}
+
+Devuelve SOLO JSON: {{"aprobar": true|false, "motivo": "frase corta en español", "confianza": 0..1}}
+"""
+
+
 def revisar_confianza(perfil: dict, eventos: list[dict], resenas: list[dict]) -> dict:
-    """-> {"aprobar": bool, "motivo": str, "confianza": 0..1}. Con confianza < 0.7 decide el moderador."""
-    return {"aprobar": False, "motivo": "revisión manual", "confianza": 0.0}
+    """-> {"aprobar": bool, "motivo": str, "confianza": 0..1}.
+    B1: si aprobar es true pero confianza < 0.7 -> decide el moderador. Nunca falla."""
+    try:
+        eventos, resenas = eventos or [], resenas or []
+        # Reglas primero (gratis)
+        for r in resenas:
+            n = _norm(str(r.get("comentario") or ""))
+            alerta = next((p for p in PALABRAS_ALERTA if _norm(p) in n), None)
+            if alerta:
+                return {"aprobar": False, "confianza": 0.9,
+                        "motivo": f"Hay una reseña con una señal de alerta («{alerta}»)"}
+        if not eventos:
+            return {"aprobar": False, "confianza": 0.9, "motivo": "No ha organizado eventos todavía"}
+
+        ev_txt = "\n".join(f"- {e.get('title')} | {e.get('municipio') or e.get('municipio_id')} | "
+                           f"{e.get('status')} | {str(e.get('description') or '')[:120]}"
+                           for e in eventos[:10])
+        re_txt = "\n".join(f"- {r.get('estrellas')}★ {str(r.get('comentario') or '')[:150]}"
+                           for r in resenas[:15]) or "(sin comentarios)"
+        p_txt = {k: (perfil or {}).get(k) for k in ("full_name", "rol", "reputation_score", "created_at")}
+        datos = _json(_llamar(_PROMPT_CONFIANZA.format(perfil=p_txt, eventos=ev_txt, resenas=re_txt)))
+        if datos and isinstance(datos.get("aprobar"), bool):
+            try:
+                conf = max(0.0, min(1.0, float(datos.get("confianza", 0.5))))
+            except (TypeError, ValueError):
+                conf = 0.5
+            return {"aprobar": datos["aprobar"], "confianza": conf,
+                    "motivo": str(datos.get("motivo") or "Revisión de la IA")[:200]}
+    except Exception as e:
+        print(f"[ia] revisar_confianza error: {e}")
+    return {"aprobar": False, "confianza": 0.0,
+            "motivo": "La IA no está disponible: revisión manual"}
