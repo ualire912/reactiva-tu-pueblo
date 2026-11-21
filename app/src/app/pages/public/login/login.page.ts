@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { IonHeader, IonToolbar, IonButtons, IonBackButton, IonTitle, IonContent, IonButton, IonIcon, IonSpinner } from '@ionic/angular';
 import { addIcons } from 'ionicons';
-import { eyeOutline, eyeOffOutline, logoGoogle, paperPlane, callOutline, addCircleOutline } from 'ionicons/icons';
+import { eyeOutline, eyeOffOutline, paperPlane, callOutline, addCircleOutline } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
 import { AvisosService } from '../../../core/avisos.service';
 import { ApiService } from '../../../core/api.service';
@@ -60,7 +60,7 @@ export class LoginPage implements OnDestroy {
   private volver = this.route.snapshot.queryParamMap.get('volver') || '/inicio';
 
   constructor() {
-    addIcons({ eyeOutline, eyeOffOutline, logoGoogle, paperPlane, callOutline, addCircleOutline });
+    addIcons({ eyeOutline, eyeOffOutline, paperPlane, callOutline, addCircleOutline });
   }
 
   ngOnDestroy() {
@@ -136,15 +136,6 @@ export class LoginPage implements OnDestroy {
     if (error) throw error;
     this.avisos.ok('¡Cuenta creada! Te damos la bienvenida.');
     this.router.navigateByUrl(this.destino());
-  }
-
-  // ---------- Google ----------
-  async entrarConGoogle() {
-    const { error } = await this.sb.client.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin + this.destino() },
-    });
-    if (error) this.avisos.error(error, 'Ahora mismo no se puede entrar con Google. Prueba con tu teléfono o con Telegram.');
   }
 
   // ---------- Telegram ----------

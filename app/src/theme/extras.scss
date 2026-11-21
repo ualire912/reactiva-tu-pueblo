@@ -534,7 +534,7 @@ app-tiempo-evento {
 }
 
 /* ==========================================================================
-   Iniciar sesión: Telegram, Google y teléfono
+   Iniciar sesión: Telegram y teléfono
    ========================================================================== */
 .login-motivo {
   display: flex;
@@ -585,11 +585,6 @@ app-tiempo-evento {
     border: none;
     background: #1f86c4; /* azul de Telegram oscurecido: contraste AA con blanco */
     color: #ffffff;
-  }
-  &.acceso-google {
-    border: 1.5px solid var(--rp-borde-campo);
-    background: #ffffff;
-    color: var(--rp-tinta);
   }
   &:disabled {
     opacity: 0.6;

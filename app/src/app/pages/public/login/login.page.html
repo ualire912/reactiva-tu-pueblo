@@ -22,15 +22,11 @@
     <h2>{{ modoRegistro ? 'Únete a Reactiva tu pueblo' : 'Hola de nuevo' }}</h2>
     <p>Apúntate a planes, comparte coche o propón actividades en tu pueblo.</p>
 
-    <!-- Entrar con un toque -->
+    <!-- Entrar con un toque (Telegram) -->
     <div class="login-rapido">
       <button type="button" class="boton-acceso acceso-telegram" (click)="entrarConTelegram()" [disabled]="esperandoTelegram">
         <ion-icon name="paper-plane" aria-hidden="true"></ion-icon>
         {{ modoRegistro ? 'Crear cuenta con Telegram' : 'Entrar con Telegram' }}
-      </button>
-      <button type="button" class="boton-acceso acceso-google" (click)="entrarConGoogle()">
-        <ion-icon name="logo-google" aria-hidden="true"></ion-icon>
-        {{ modoRegistro ? 'Crear cuenta con Google' : 'Entrar con Google' }}
       </button>
     </div>
 
