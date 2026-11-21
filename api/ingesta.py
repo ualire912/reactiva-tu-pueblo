@@ -77,6 +77,22 @@ def descargar_imagen(url: str | None) -> bytes | None:
         return None
 
 
+def _copiar_a_storage(url: str) -> str | None:
+    """Descarga una imagen y la guarda en el bucket 'posters'. Devuelve la URL pública o None."""
+    img = descargar_imagen(url)
+    if not img:
+        return None
+    try:
+        import uuid as _uuid
+        es_png = img[:8] == b"\x89PNG\r\n\x1a\n"
+        ruta = f"facebook/{_uuid.uuid4()}.{'png' if es_png else 'jpg'}"
+        sb.storage.from_("posters").upload(ruta, img, {"content-type": "image/png" if es_png else "image/jpeg"})
+        return sb.storage.from_("posters").get_public_url(ruta).rstrip("?")
+    except Exception:
+        log.exception("No se pudo copiar la imagen a Storage")
+        return None
+
+
 def _municipio_id(nombre: str | None) -> int | None:
     if not nombre:
         return None
@@ -131,7 +147,7 @@ def ingesta_facebook(post: PostFacebook, bg: BackgroundTasks):
     if not (post.text or "").strip() and not post.image_url:
         raise HTTPException(400, "El post no tiene texto ni imagen")
     fila, nueva = registrar_post(post.source_url, post.page_url, post.text, post.image_url)
-    if nueva:
+    if nueva or fila.get("estado") == "error":  # nuevo, o reintento de uno que falló
         bg.add_task(procesar_ingesta, fila["id"])  # el trabajo pesado, en segundo plano
     return {"ingesta_id": fila["id"], "estado": fila["estado"]}
 
@@ -167,6 +183,13 @@ def procesar_ingesta(ingesta_id: str) -> None:
         imagen = descargar_imagen(ing.get("image_url"))
         extraido = ia.extraer_evento(texto, imagen)
 
+        # 2a. Había cartel pero la IA no pudo leerlo (Gemini caído/saturado) -> se reintenta luego
+        if imagen and extraido.get("confidence", 0) == 0 and extraido.get("es_evento") is None:
+            _actualizar_ingesta(ingesta_id, estado="error",
+                                spam_reason="no se pudo leer el cartel (IA no disponible); se reintentará")
+            log.info("Ingesta %s -> error temporal: cartel sin leer, se reintentará", ingesta_id)
+            return
+
         # 2b. La IA dice que no es un evento -> descartada (visible en el panel, sin molestar a nadie)
         if extraido.get("es_evento") is False:
             _actualizar_ingesta(ingesta_id, estado="descartada", extracted=extraido, spam_score=0,
@@ -174,7 +197,9 @@ def procesar_ingesta(ingesta_id: str) -> None:
             log.info("Ingesta %s -> descartada por IA (%s)", ingesta_id, extraido.get("motivo_no_evento"))
             return
 
-        # 3. Spam con IA solo si las reglas dudaron
+        # 3. Spam con IA solo si las reglas dudaron (y si hay texto: un cartel solo ya lo ha leído la IA)
+        if regla is None and len(texto.strip()) < 30 and imagen:
+            regla = {"spam_score": 0.05, "motivo": "solo cartel (revisado al extraer)"}
         spam = regla or ia.clasificar_spam(texto, entidad)
         if spam["spam_score"] >= UMBRAL_SPAM:
             _actualizar_ingesta(ingesta_id, estado="spam", spam_score=spam["spam_score"],
@@ -336,6 +361,9 @@ def crear_evento_desde_ingesta(ingesta_id: str) -> dict:
         "ai_flags": {"missing": ing.get("missing") or ex.get("missing") or [],
                      "spam_score": ing.get("spam_score")},
     })
+    if fila.get("poster_url") and re.search(r"fbcdn|facebook\.com|fbsbx", fila["poster_url"]):
+        # Las URLs de imágenes de Facebook caducan: se copia el cartel a nuestro Storage
+        fila["poster_url"] = _copiar_a_storage(fila["poster_url"]) or fila["poster_url"]
     if not fila.get("poster_url"):  # sin cartel original -> uno automático (sin IA)
         fila["poster_url"] = subir_cartel({**ex, **fila})
     fila = {k: v for k, v in fila.items() if v is not None}
