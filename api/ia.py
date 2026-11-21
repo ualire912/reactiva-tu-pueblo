@@ -479,29 +479,127 @@ def clasificar_spam(text: str | None, entidad: dict | None = None) -> dict:
 # ══════════════════════════════════════════════════════════════
 #  3-6 · Pendientes para la tarde (ahora: Plan B sin IA)
 # ══════════════════════════════════════════════════════════════
-def entender_mensaje(text: str | None = None, audio_bytes: bytes | None = None) -> dict:
-    """Frase libre o nota de voz -> {"intencion","filtros","texto"}."""
-    if audio_bytes and not text:
-        return {"intencion": "otro", "filtros": {}, "texto": ""}
-    n = _norm(text or "")
+INTENCIONES = ["buscar", "proponer", "apuntarse", "pregunta", "otro"]
+_DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+
+
+def _fecha_de_texto(n: str) -> str | None:
+    """'hoy', 'mañana', 'el sábado', 'este finde' -> 'YYYY-MM-DD' (texto ya normalizado)."""
+    hoy = datetime.now(TZ).date()
+    if re.search(r"\bpasado manana\b", n):
+        return (hoy + timedelta(days=2)).isoformat()
+    if re.search(r"\bmanana\b", n) and not re.search(r"por la manana", n):
+        return (hoy + timedelta(days=1)).isoformat()
+    if re.search(r"\bhoy\b|esta tarde|esta noche", n):
+        return hoy.isoformat()
+    if re.search(r"fin de semana|finde", n):
+        return (hoy + timedelta(days=(5 - hoy.weekday()) % 7)).isoformat()  # sábado
+    for k, d in enumerate(_DIAS_SEMANA):
+        if re.search(rf"\b{d}\b", n):
+            return (hoy + timedelta(days=(k - hoy.weekday()) % 7)).isoformat()
+    return None
+
+
+def _reglas_mensaje(text: str) -> dict:
+    n = _norm(text)
     filtros = {}
     p = _pueblo_en_texto(text)
     if p:
         filtros["municipio"] = p
-    for c in CATEGORIAS:
-        if c in n:
-            filtros["categoria"] = c
-    if any(w in n for w in ["apuntame", "apuntarme", "me apunto", "inscribe"]):
+    sinonimos = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
+                 "deporte": ["deporte", "bici", "futbol", "petanca", "correr", "carrera", "torneo"],
+                 "cultura": ["cultura", "cine", "teatro", "concierto", "museo", "charla", "libro"],
+                 "gastronomia": ["gastronomia", "comida", "comer", "migas", "degustacion", "mercadillo"],
+                 "fiestas": ["fiesta", "verbena", "feria", "baile"],
+                 "taller": ["taller", "curso", "manualidad", "esparto"],
+                 "voluntariado": ["voluntari", "ayudar", "solidari"]}
+    for cat, palabras in sinonimos.items():
+        if any(w in n for w in palabras):
+            filtros["categoria"] = cat
+            break
+    f = _fecha_de_texto(n)
+    if f:
+        filtros["fecha"] = f
+
+    if re.search(r"apunta(me|rme)|me apunto|inscribe|quiero ir", n):
         intencion = "apuntarse"
-    elif any(w in n for w in ["propongo", "proponer", "quien se viene", "organizo"]):
+    elif re.search(r"propongo|proponer|quien se viene|quien se apunta|organiza|organizo|organizar|quedamos", n):
         intencion = "proponer"
-    elif any(w in n for w in ["que hay", "planes", "agenda", "eventos", "busca"]):
+    elif re.search(r"que hay|que planes|planes|agenda|eventos|actividades|busca|algo para", n):
+        intencion = "buscar"
+    elif filtros and len(n.split()) <= 6:  # "senderismo en Tahal" -> buscar
         intencion = "buscar"
     elif "?" in (text or ""):
         intencion = "pregunta"
     else:
         intencion = "otro"
     return {"intencion": intencion, "filtros": filtros, "texto": text or ""}
+
+
+_PROMPT_MENSAJE = """Eres el bot de agenda de unos pueblos de Almería. Hoy es {hoy}.
+{entrada}
+Devuelve SOLO JSON:
+{{"intencion": una de {intenciones},
+  "filtros": {{"municipio": uno de {pueblos} o null,
+              "categoria": una de {categorias} o null,
+              "fecha": "YYYY-MM-DD" o null}},
+  "texto": "{texto_instr}"}}
+Intenciones: buscar = quiere ver planes/eventos; proponer = quiere organizar o proponer un plan;
+apuntarse = quiere inscribirse; pregunta = pregunta algo concreto; otro = saludo u otra cosa.
+No inventes filtros que no se digan.
+"""
+
+
+def _validar_mensaje(d: dict | None, texto_original: str) -> dict:
+    d = d or {}
+    f = d.get("filtros") or {}
+    filtros = {}
+    p = _pueblo(f.get("municipio"))
+    if p:
+        filtros["municipio"] = p
+    c = _norm(str(f.get("categoria") or ""))
+    if c in CATEGORIAS:
+        filtros["categoria"] = c
+    try:
+        if f.get("fecha"):
+            filtros["fecha"] = datetime.fromisoformat(str(f["fecha"])[:10]).date().isoformat()
+    except ValueError:
+        pass
+    intencion = d.get("intencion") if d.get("intencion") in INTENCIONES else "otro"
+    texto = str(d.get("texto") or texto_original or "").strip()[:1000]
+    return {"intencion": intencion, "filtros": filtros, "texto": texto}
+
+
+def entender_mensaje(text: str | None = None, audio_bytes: bytes | None = None) -> dict:
+    """Frase libre o nota de voz -> {"intencion", "filtros", "texto"}.
+    texto = lo que dijo la persona (con audio, la transcripción). Nunca falla."""
+    try:
+        if text and not audio_bytes:
+            r = _reglas_mensaje(text)
+            if r["intencion"] != "otro":
+                return r  # reglas: 0 tokens
+            if len(text.split()) <= 2:  # "hola", "gracias"...
+                return r
+            entrada, texto_instr = f'MENSAJE: """{text[:1000]}"""', "el mensaje tal cual"
+        elif audio_bytes:
+            entrada = ("Te paso una NOTA DE VOZ en español (acento andaluz, puede haber ruido). "
+                       "Transcríbela y entiéndela.")
+            texto_instr = "la transcripción literal de lo que dice"
+        else:
+            return {"intencion": "otro", "filtros": {}, "texto": ""}
+
+        prompt = _PROMPT_MENSAJE.format(hoy=_hoy_texto(), entrada=entrada,
+                                        intenciones=INTENCIONES, pueblos=PUEBLOS,
+                                        categorias=CATEGORIAS, texto_instr=texto_instr)
+        datos = _json(_llamar(prompt, audio_bytes=audio_bytes))
+        if datos:
+            return _validar_mensaje(datos, text or "")
+    except Exception as e:
+        print(f"[ia] entender_mensaje error: {e}")
+    # Plan B
+    if text:
+        return _reglas_mensaje(text)
+    return {"intencion": "otro", "filtros": {}, "texto": ""}
 
 
 def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
@@ -513,8 +611,39 @@ def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
             + (f" ({motivos})" if motivos else "") + ". ¿Te apuntas?")
 
 
+_PROMPT_CHAT = """Eres el asistente del chat de un evento de un pueblo de Almería.
+Responde en español, en 1 a 3 frases cortas y amables, usando SOLO estos datos.
+Si la respuesta no está en los datos, responde exactamente: "{no_lo_se}"
+No inventes horarios, precios, material ni normas.
+
+FICHA DEL EVENTO:
+{ficha}
+
+ÚLTIMOS MENSAJES DEL CHAT:
+{hilo}
+
+PREGUNTA: {pregunta}
+"""
+
+_CAMPOS_FICHA = ["title", "category", "starts_at", "ends_at", "municipio", "location_name",
+                 "price", "max_capacity", "confirmed_count", "min_age", "max_age",
+                 "is_accessible", "inscripcion_hasta", "description", "status"]
+
+
 def responder_chat(evento: dict, hilo: list[dict], pregunta: str) -> str:
-    return NO_LO_SE
+    """Respuesta SOLO con la ficha + hilo. Si no lo sabe -> NO_LO_SE. Nunca falla."""
+    try:
+        ficha = "\n".join(f"- {c}: {evento.get(c)}" for c in _CAMPOS_FICHA
+                          if evento.get(c) not in (None, ""))
+        mensajes = "\n".join(f"- [{m.get('tipo')}] {str(m.get('contenido'))[:300]}"
+                             for m in (hilo or [])[-10:]) or "(sin mensajes)"
+        texto = _llamar(_PROMPT_CHAT.format(no_lo_se=NO_LO_SE, ficha=ficha, hilo=mensajes,
+                                            pregunta=(pregunta or "")[:500]), como_json=False)
+        texto = (texto or "").strip().strip('"')
+        return texto[:600] if texto else NO_LO_SE
+    except Exception as e:
+        print(f"[ia] responder_chat error: {e}")
+        return NO_LO_SE
 
 
 def revisar_confianza(perfil: dict, eventos: list[dict], resenas: list[dict]) -> dict:

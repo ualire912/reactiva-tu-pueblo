@@ -47,4 +47,27 @@ for p in posts:
         print(f"  {k:15}: {ev[k]}")
 
 print("=" * 70)
+print("ENTENDER MENSAJES")
+for frase in ["¿Qué hay este finde en Tahal?", "Apúntame a la ruta", "hola",
+              "Me gustaría saber si alguien organiza algo de bici el domingo por Velefique"]:
+    print(f"  {frase!r:75} -> {ia.entender_mensaje(frase)}")
+audio = os.path.join(aqui, "pruebas", "audio.ogg")
+if os.path.exists(audio):
+    with open(audio, "rb") as f:
+        print("  NOTA DE VOZ ->", ia.entender_mensaje(audio_bytes=f.read()))
+else:
+    print("  (pon una nota de voz en pruebas/audio.ogg para probar el audio)")
+
+print("=" * 70)
+print("VOZ")
+import voz  # noqa: E402
+mp3 = voz.texto_a_voz("Hola Luis, el domingo hay una ruta de senderismo en Tahal. ¿Te apuntas?")
+if mp3:
+    with open(os.path.join(aqui, "pruebas", "salida.mp3"), "wb") as f:
+        f.write(mp3)
+    print(f"  Audio generado: pruebas/salida.mp3 ({len(mp3) // 1024} KB). Ábrelo para escucharlo.")
+else:
+    print("  No se pudo generar el audio (Plan B: solo texto)")
+
+print("=" * 70)
 print("CONSUMO TOTAL:", ia.CONSUMO)
