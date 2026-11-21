@@ -3,8 +3,15 @@ from datetime import datetime, timedelta, timezone
 import inspect
 import os
 import re
+import sys
 import unicodedata
 from typing import Any
+
+# rag.py, ingesta.py... hacen "import ia" / "from db import": necesitan la carpeta api/
+# en la ruta de imports también cuando el bot se arranca desde la raíz (bot_polling.py)
+_API_DIR = os.path.dirname(os.path.abspath(__file__))
+if _API_DIR not in sys.path:
+    sys.path.insert(0, _API_DIR)
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request

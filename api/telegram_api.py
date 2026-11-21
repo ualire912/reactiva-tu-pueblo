@@ -205,6 +205,21 @@ async def answer_callback(callback_query_id: str, text: str = "") -> bool:
         return False
 
 
+async def delete_webhook() -> bool:
+    """Quita el webhook para poder recibir mensajes por polling (bot_polling.py).
+    No borra los mensajes pendientes."""
+    token = _get_token()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json={"drop_pending_updates": False})
+            return resp.status_code == 200
+    except Exception:
+        return False
+
+
 async def get_file_bytes(file_id: str) -> bytes | None:
     token = _get_token()
     if not token or not file_id:
