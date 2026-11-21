@@ -1,4 +1,4 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, inject, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
@@ -101,6 +101,7 @@ export class PanelPage implements OnInit {
   private api = inject(ApiService);
   private toastCtrl = inject(ToastController);
   private alertCtrl = inject(AlertController);
+  private cdr = inject(ChangeDetectorRef);
 
   pestana: 'pendientes' | 'ia' | 'incidencias' | 'publicadores' | 'estadisticas' | 'demo' = 'pendientes';
   cargando = false;
@@ -165,7 +166,9 @@ export class PanelPage implements OnInit {
   }
 
   async cargarTodo() {
-    this.cargando = true;
+    this.cargando = this.pendientes.length === 0 && this.eventosActivos.length === 0 && this.ingestas.length === 0;
+    this.cdr.detectChanges();
+
     try {
       await Promise.all([
         this.cargarPendientesYActivos(),
@@ -178,6 +181,7 @@ export class PanelPage implements OnInit {
       // Mantiene vista estable
     } finally {
       this.cargando = false;
+      this.cdr.detectChanges();
     }
   }
 
@@ -203,6 +207,7 @@ export class PanelPage implements OnInit {
         this.demoEventIdSeleccionado = this.eventosActivos[0].id;
       }
     }
+    this.cdr.detectChanges();
   }
 
   async aprobarEvento(ev: Evento) {
@@ -308,22 +313,29 @@ export class PanelPage implements OnInit {
     await alert.present();
   }
 
-  // Solo estados manuales (abierto para reabrir, pospuesto, cancelado)
   async cambiarEstadoManual(ev: Evento, nuevoEstado: 'abierto' | 'pospuesto' | 'cancelado') {
     const { error } = await this.sb.client
       .from('eventos')
       .update({ status: nuevoEstado })
       .eq('id', ev.id);
 
-    if (!error) {
-      if (nuevoEstado === 'pospuesto' || nuevoEstado === 'cancelado') {
-        try {
-          await this.api.avisarEvento(ev.id, 'cancelacion');
-        } catch {}
-      }
-      this.mostrarAviso(`Estado cambiado a "${nuevoEstado}"`);
-      await this.cargarPendientesYActivos();
+    if (error) {
+      this.mostrarAviso(`Error al actualizar: ${error.message}`);
+      return;
     }
+
+    if (nuevoEstado === 'pospuesto' || nuevoEstado === 'cancelado') {
+      try {
+        const res = await this.api.avisarEvento(ev.id, 'cancelacion');
+        this.mostrarAviso(`Estado "${nuevoEstado}" · Avisados ${res?.enviados ?? 0} inscritos por Telegram`);
+      } catch {
+        this.mostrarAviso(`Estado "${nuevoEstado}" guardado, pero falló el aviso de Telegram (revisa apiUrl/Render)`);
+      }
+    } else {
+      this.mostrarAviso(`Estado cambiado a "${nuevoEstado}"`);
+    }
+
+    await this.cargarPendientesYActivos();
   }
 
   // --- PESTAÑA 2: DETECTADOS POR IA (INGESTAS) ---
@@ -334,7 +346,10 @@ export class PanelPage implements OnInit {
       .order('created_at', { ascending: false })
       .limit(30);
 
-    if (data) this.ingestas = data as Ingesta[];
+    if (data) {
+      this.ingestas = data as Ingesta[];
+      this.cdr.detectChanges();
+    }
   }
 
   colorEstadoIngesta(estado: string): string {
@@ -408,7 +423,10 @@ export class PanelPage implements OnInit {
       .select('*, eventos(title)')
       .order('estado', { ascending: true });
 
-    if (data) this.incidencias = data as Incidencia[];
+    if (data) {
+      this.incidencias = data as Incidencia[];
+      this.cdr.detectChanges();
+    }
   }
 
   async resolverIncidencia(inc: Incidencia) {
@@ -440,10 +458,12 @@ export class PanelPage implements OnInit {
     if (entRes.data) this.entidades = entRes.data as Entidad[];
     if (pubRes.data) this.publicadoresActivos = pubRes.data;
     if (candRes.data) this.candidatos = candRes.data;
+    this.cdr.detectChanges();
   }
 
   async revisarCandidatosConIa() {
     this.revisandoIa = true;
+    this.cdr.detectChanges();
     try {
       const res = await this.api.revisarPromociones();
       this.mostrarAviso(
@@ -454,6 +474,7 @@ export class PanelPage implements OnInit {
       this.mostrarAviso('No se pudo conectar con el servidor IA');
     } finally {
       this.revisandoIa = false;
+      this.cdr.detectChanges();
     }
   }
 
@@ -489,6 +510,7 @@ export class PanelPage implements OnInit {
     if (!error) {
       ent.auto_approve = valor;
       this.mostrarAviso(valor ? 'Aprobación automática activada' : 'Aprobación automática desactivada');
+      this.cdr.detectChanges();
     }
   }
 
@@ -519,6 +541,7 @@ export class PanelPage implements OnInit {
     } catch {
       this.consumoIa = null;
     }
+    this.cdr.detectChanges();
   }
 
   // --- PESTAÑA 6: DEMO ---
@@ -539,17 +562,19 @@ export class PanelPage implements OnInit {
         '🎰💰 GANA 500€ DESDE CASA HOY MISMO!! Haz clic aquí bit.ly/dinero-rapido-casino oferta limitada cripto!!';
       this.demoImageUrl = '';
     }
+    this.cdr.detectChanges();
   }
 
   async ejecutarDemo(accion: 'facebook' | 'recomendaciones' | 'resenas' | 'promociones' | 'health') {
     this.ejecutandoDemo = true;
     this.demoResultadoJson = 'Ejecutando...';
+    this.cdr.detectChanges();
+
     try {
       let res: any;
       if (accion === 'facebook') {
         if (!this.demoText.trim()) {
           this.mostrarAviso('Escribe o carga un ejemplo de texto primero');
-          this.ejecutandoDemo = false;
           return;
         }
         res = await this.api.ingestaFacebook({
@@ -564,7 +589,6 @@ export class PanelPage implements OnInit {
       } else if (accion === 'resenas') {
         if (!this.demoEventIdSeleccionado) {
           this.mostrarAviso('Selecciona un evento primero');
-          this.ejecutandoDemo = false;
           return;
         }
         res = await this.api.pedirResenas(this.demoEventIdSeleccionado);
@@ -581,6 +605,7 @@ export class PanelPage implements OnInit {
       this.demoResultadoJson = JSON.stringify({ error: err.message || 'No se pudo conectar con el servidor' }, null, 2);
     } finally {
       this.ejecutandoDemo = false;
+      this.cdr.detectChanges();
     }
   }
 

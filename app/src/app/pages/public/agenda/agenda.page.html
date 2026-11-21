@@ -73,7 +73,39 @@
   </div>
 
   <!-- Lista de eventos -->
-  <ion-card *ngFor="let ev of eventosFiltrados" [routerLink]="['/evento', ev.id]" button="true">
+  <ion-card
+    *ngFor="let ev of eventosFiltrados"
+    [routerLink]="ev.status === 'cancelado' ? null : ['/evento', ev.id]"
+    [button]="ev.status !== 'cancelado'"
+    [attr.aria-disabled]="ev.status === 'cancelado'"
+    [style.opacity]="ev.status === 'finalizado' ? '0.6' : (ev.status === 'cancelado' ? '0.8' : '1')"
+    [style.filter]="ev.status === 'finalizado' ? 'grayscale(85%)' : 'none'"
+    [style.pointer-events]="ev.status === 'cancelado' ? 'none' : 'auto'">
+
+    <!-- Banner ROJO arriba si está cancelado (no deja entrar) -->
+    <div
+      *ngIf="ev.status === 'cancelado'"
+      style="background: var(--ion-color-danger); color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
+      <ion-icon name="close-circle-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO CANCELADO</span>
+    </div>
+
+    <!-- Banner GRIS arriba si está finalizado (sí deja entrar para valorar) -->
+    <div
+      *ngIf="ev.status === 'finalizado'"
+      style="background: #6c757d; color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
+      <ion-icon name="checkmark-done-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO FINALIZADO · Entra para valorar si asististe</span>
+    </div>
+
+    <!-- Banner AMARILLO si está pospuesto -->
+    <div
+      *ngIf="ev.status === 'pospuesto'"
+      style="background: var(--ion-color-warning); color: #000000; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+      <ion-icon name="time-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO APLAZADO — Revisa la nueva fecha</span>
+    </div>
+
     <img *ngIf="ev.poster_url" [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" style="width: 100%; max-height: 220px; object-fit: cover;" />
 
     <ion-card-header>

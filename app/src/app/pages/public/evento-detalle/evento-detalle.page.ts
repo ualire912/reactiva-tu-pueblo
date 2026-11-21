@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterModule } from '@angular/router';
@@ -84,6 +84,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   private api = inject(ApiService);
   private toastCtrl = inject(ToastController);
   private alertCtrl = inject(AlertController);
+  private cdr = inject(ChangeDetectorRef);
 
   eventId = '';
   evento: Evento | null = null;
@@ -135,7 +136,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'mensajes_evento', filter: `event_id=eq.${this.eventId}` },
-        () => this.cargarMensajes()
+        async () => {
+          await this.cargarMensajes();
+          this.cdr.detectChanges();
+        }
       )
       .subscribe();
 
@@ -144,7 +148,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'eventos', filter: `id=eq.${this.eventId}` },
-        () => this.cargarEvento()
+        async () => {
+          await this.cargarEvento();
+          this.cdr.detectChanges();
+        }
       )
       .subscribe();
   }
@@ -155,7 +162,9 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   }
 
   async cargarFichaCompleta() {
-    this.cargando = true;
+    this.cargando = !this.evento;
+    this.cdr.detectChanges();
+
     try {
       await Promise.all([
         this.cargarEvento(),
@@ -166,7 +175,16 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       await this.cargarIncidenciasSiOrganizador();
     } finally {
       this.cargando = false;
+      this.cdr.detectChanges();
     }
+  }
+
+  get puedeValorar(): boolean {
+    return (
+      this.evento?.status === 'finalizado' &&
+      !!this.miInscripcion &&
+      this.miInscripcion.asistio === true
+    );
   }
 
   async cargarEvento() {
@@ -181,6 +199,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       if (!this.transporteMunicipioId) {
         this.transporteMunicipioId = this.sb.currentProfile?.municipio_id || this.evento.municipio_id;
       }
+      this.cdr.detectChanges();
     }
   }
 
@@ -188,6 +207,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     const uid = this.sb.currentSession?.user?.id;
     if (!uid) {
       this.miInscripcion = null;
+      this.cdr.detectChanges();
       return;
     }
     const { data } = await this.sb.client
@@ -199,6 +219,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .maybeSingle();
 
     this.miInscripcion = (data as Inscripcion) || null;
+    this.cdr.detectChanges();
   }
 
   async cargarMensajes() {
@@ -208,7 +229,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .eq('event_id', this.eventId)
       .order('created_at', { ascending: true });
 
-    if (data) this.mensajes = data as Mensaje[];
+    if (data) {
+      this.mensajes = data as Mensaje[];
+      this.cdr.detectChanges();
+    }
   }
 
   async cargarResenas() {
@@ -217,7 +241,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .select('*')
       .eq('event_id', this.eventId);
 
-    if (data) this.resenas = data as Resena[];
+    if (data) {
+      this.resenas = data as Resena[];
+      this.cdr.detectChanges();
+    }
   }
 
   get esPublicadorOrganizador(): boolean {
@@ -233,7 +260,10 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .eq('event_id', this.eventId)
       .order('estado', { ascending: true });
 
-    if (data) this.incidenciasEvento = data as Incidencia[];
+    if (data) {
+      this.incidenciasEvento = data as Incidencia[];
+      this.cdr.detectChanges();
+    }
   }
 
   async resolverIncidenciaPropia(inc: Incidencia) {
@@ -277,6 +307,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     if (!uid || !this.evento) return;
 
     this.procesandoInscripcion = true;
+    this.cdr.detectChanges();
     try {
       const { data, error } = await this.sb.client
         .from('inscripciones')
@@ -303,12 +334,14 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       this.mostrarAviso(err.message || 'No se pudo completar la inscripción');
     } finally {
       this.procesandoInscripcion = false;
+      this.cdr.detectChanges();
     }
   }
 
   async cancelarInscripcion() {
     if (!this.miInscripcion) return;
     this.procesandoInscripcion = true;
+    this.cdr.detectChanges();
     try {
       const { error } = await this.sb.client
         .from('inscripciones')
@@ -324,6 +357,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       this.mostrarAviso(err.message || 'Error al cancelar');
     } finally {
       this.procesandoInscripcion = false;
+      this.cdr.detectChanges();
     }
   }
 
@@ -349,6 +383,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     if (!uid || !texto || !this.evento) return;
 
     this.enviandoMensaje = true;
+    this.cdr.detectChanges();
     try {
       await this.sb.client.from('mensajes_evento').insert({
         event_id: this.evento.id,
@@ -358,6 +393,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       });
 
       this.nuevoMensaje = '';
+      this.cdr.detectChanges();
 
       if (this.preguntarIa) {
         await this.api.chatIa(this.evento.id, texto);
@@ -368,6 +404,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       this.mostrarAviso('Error al enviar el mensaje');
     } finally {
       this.enviandoMensaje = false;
+      this.cdr.detectChanges();
     }
   }
 

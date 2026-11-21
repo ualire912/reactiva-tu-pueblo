@@ -19,7 +19,7 @@
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           <ion-badge color="primary">{{ evento.municipios?.nombre }}</ion-badge>
           <ion-badge color="secondary">{{ evento.category }}</ion-badge>
-          <ion-badge [color]="evento.status === 'abierto' ? 'success' : 'warning'">
+          <ion-badge [color]="evento.status === 'abierto' ? 'success' : (evento.status === 'cancelado' ? 'danger' : 'warning')">
             {{ etiquetaEstado(evento.status) }}
           </ion-badge>
           <ion-badge *ngIf="evento.is_accessible" color="tertiary">Accesible</ion-badge>
@@ -158,18 +158,20 @@
       </ion-card-content>
     </ion-card>
 
-    <!-- RESEÑAS (SI FINALIZADO) Y REPORTAR INCIDENCIA -->
+    <!-- RESEÑAS (SI FINALIZADO: SOLO PARA QUIENES ASISTIERON) -->
     <ion-card *ngIf="evento.status === 'finalizado'" class="ion-no-margin ion-margin-bottom">
       <ion-card-header>
-        <ion-card-title>Valoraciones</ion-card-title>
+        <ion-card-title>Valoraciones del organizador</ion-card-title>
+        <ion-card-subtitle>Las valoraciones positivas ayudan a verificar a los organizadores</ion-card-subtitle>
       </ion-card-header>
       <ion-card-content>
-        <div *ngFor="let r of resenas" class="ion-margin-bottom">
+        <div *ngFor="let r of resenas" class="ion-margin-bottom" style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.04);">
           <strong>{{ '⭐'.repeat(r.estrellas) }}</strong>
-          <p *ngIf="r.comentario">{{ r.comentario }}</p>
+          <p *ngIf="r.comentario" style="margin-top: 4px;">{{ r.comentario }}</p>
         </div>
 
-        <div *ngIf="sb.currentSession">
+        <!-- Formulario SOLO visible si inició sesión y asistió (o tuvo plaza confirmada) -->
+        <div *ngIf="sb.currentSession && miInscripcion && (miInscripcion.asistio || miInscripcion.status === 'confirmada')" class="ion-margin-top">
           <ion-item>
             <ion-select label="Tu puntuación" labelPlacement="stacked" [(ngModel)]="estrellas">
               <ion-select-option [value]="5">⭐⭐⭐⭐⭐ (5)</ion-select-option>
@@ -182,7 +184,16 @@
           <ion-item>
             <ion-input label="Comentario (opcional)" labelPlacement="stacked" [(ngModel)]="comentarioResena"></ion-input>
           </ion-item>
-          <ion-button expand="block" class="ion-margin-top" (click)="enviarResena()">Enviar reseña</ion-button>
+          <ion-button expand="block" color="success" class="ion-margin-top" (click)="enviarResena()">
+            Enviar valoración
+          </ion-button>
+        </div>
+
+        <!-- Aviso si no asistió o no está logueado -->
+        <div *ngIf="!sb.currentSession || !miInscripcion || (!miInscripcion.asistio && miInscripcion.status !== 'confirmada')" class="ion-margin-top">
+          <ion-note>
+            Solo los asistentes confirmados de este evento pueden dejar una valoración.
+          </ion-note>
         </div>
       </ion-card-content>
     </ion-card>

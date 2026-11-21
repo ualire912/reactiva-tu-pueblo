@@ -6,7 +6,7 @@ export const environment = {
   production: false,
   supabaseUrl: 'https://dusbpjatgqzutqvnyohr.supabase.co',
   supabaseAnonKey: 'sb_publishable_UNEXtwDLi-WsXtTrAiwdqw_AG13tRPV',
-  apiUrl: 'http://localhost:8000', // Cambia esto cuando B1 te pase la URL de Render
+  apiUrl: 'https://reactiva-tu-pueblo.onrender.com', // Cambia esto cuando B1 te pase la URL de Render
   telegramBotUsername: 'ReactivaPuebloBot'
 };
 

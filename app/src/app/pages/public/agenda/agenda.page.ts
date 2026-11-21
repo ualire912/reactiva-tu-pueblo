@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
@@ -37,7 +37,11 @@ import {
   textOutline,
   calendarOutline,
   accessibilityOutline,
-  peopleOutline
+  peopleOutline,
+  closeCircleOutline,
+  timeOutline,
+  checkmarkDoneOutline,
+  navigateOutline
 } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
 import { Evento } from '../../../core/models';
@@ -79,6 +83,7 @@ import { Evento } from '../../../core/models';
 })
 export class AgendaPage implements OnInit, OnDestroy {
   public sb = inject(SupabaseService);
+  private cdr = inject(ChangeDetectorRef);
 
   eventos: Evento[] = [];
   eventosFiltrados: Evento[] = [];
@@ -103,7 +108,11 @@ export class AgendaPage implements OnInit, OnDestroy {
       textOutline,
       calendarOutline,
       accessibilityOutline,
-      peopleOutline
+      peopleOutline,
+      closeCircleOutline,
+      timeOutline,
+      checkmarkDoneOutline,
+      navigateOutline
     });
   }
 
@@ -128,9 +137,12 @@ export class AgendaPage implements OnInit, OnDestroy {
   }
 
   async cargarEventos(event?: any) {
-    this.cargando = !event;
+    // Solo muestra el spinner si aún no hay eventos cargados en pantalla
+    this.cargando = !event && this.eventos.length === 0;
+    this.cdr.detectChanges();
+
     try {
-      const { data } = await this.sb.client
+      const { data, error } = await this.sb.client
         .from('eventos')
         .select('*, municipios(nombre)')
         .in('status', [
@@ -144,6 +156,10 @@ export class AgendaPage implements OnInit, OnDestroy {
         ])
         .order('starts_at', { ascending: true });
 
+      if (error) {
+        console.error('Error cargando eventos desde Supabase:', error);
+      }
+
       if (data) {
         this.eventos = data as Evento[];
         this.aplicarFiltros();
@@ -153,6 +169,7 @@ export class AgendaPage implements OnInit, OnDestroy {
       if (event) {
         event.target.complete();
       }
+      this.cdr.detectChanges();
     }
   }
 
@@ -204,6 +221,7 @@ export class AgendaPage implements OnInit, OnDestroy {
     }
 
     this.eventosFiltrados = lista;
+    this.cdr.detectChanges();
   }
 
   ordenarCercaDeMi() {
@@ -217,6 +235,7 @@ export class AgendaPage implements OnInit, OnDestroy {
       this.userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       this.ordenCercaniaActivo = true;
       this.aplicarFiltros();
+      this.cdr.detectChanges();
     });
   }
 

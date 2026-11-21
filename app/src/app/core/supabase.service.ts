@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject, NgZone, ApplicationRef } from '@angular/core';
 import { createClient, SupabaseClient, Session } from '@supabase/supabase-js';
 import { BehaviorSubject } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -8,6 +8,8 @@ import { Profile, RolUsuario, Municipio, Categoria } from './models';
   providedIn: 'root'
 })
 export class SupabaseService {
+  private zone = inject(NgZone);
+  private appRef = inject(ApplicationRef);
   public readonly client: SupabaseClient;
 
   private _session$ = new BehaviorSubject<Session | null>(null);
@@ -20,24 +22,52 @@ export class SupabaseService {
   public categorias: Categoria[] = [];
 
   constructor() {
-    const url = environment.supabaseUrl.startsWith('http') ? environment.supabaseUrl : 'https://placeholder.supabase.co';
-    const key = environment.supabaseAnonKey !== 'PEGA_AQUI_SUPABASE_ANON_KEY' ? environment.supabaseAnonKey : 'placeholder-key';
-    this.client = createClient(url, key);
+    const url = environment.supabaseUrl.startsWith('http')
+      ? environment.supabaseUrl
+      : 'https://placeholder.supabase.co';
+    const key = environment.supabaseAnonKey !== 'PEGA_AQUI_SUPABASE_ANON_KEY'
+      ? environment.supabaseAnonKey
+      : 'placeholder-key';
 
-    this.client.auth.getSession().then(({ data }) => {
-      this._session$.next(data.session);
-      if (data.session?.user) {
-        this.loadProfile(data.session.user.id);
+    this.client = createClient(url, key, {
+      auth: {
+        lock: async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
+          return await fn();
+        }
+      },
+      global: {
+        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+          try {
+            return await fetch(input, init);
+          } finally {
+            // Fuerza a Angular a repintar la pantalla justo tras resolverse el await del componente
+            setTimeout(() => this.zone.run(() => this.appRef.tick()), 30);
+            setTimeout(() => this.zone.run(() => this.appRef.tick()), 180);
+          }
+        }
       }
     });
 
+    this.client.auth.getSession().then(({ data }) => {
+      this.zone.run(() => {
+        this._session$.next(data.session);
+        if (data.session?.user) {
+          this.loadProfile(data.session.user.id);
+        }
+        this.appRef.tick();
+      });
+    });
+
     this.client.auth.onAuthStateChange((_event, session) => {
-      this._session$.next(session);
-      if (session?.user) {
-        this.loadProfile(session.user.id);
-      } else {
-        this._profile$.next(null);
-      }
+      this.zone.run(() => {
+        this._session$.next(session);
+        if (session?.user) {
+          this.loadProfile(session.user.id);
+        } else {
+          this._profile$.next(null);
+        }
+        this.appRef.tick();
+      });
     });
 
     this.loadCatalogos();
@@ -70,7 +100,10 @@ export class SupabaseService {
       if (!profile.preferencias) {
         profile.preferencias = { categorias: [], municipios: [], audio: false };
       }
-      this._profile$.next(profile);
+      this.zone.run(() => {
+        this._profile$.next(profile);
+        this.appRef.tick();
+      });
       return profile;
     }
     return null;
@@ -81,13 +114,19 @@ export class SupabaseService {
       this.client.from('municipios').select('*').order('nombre'),
       this.client.from('categorias').select('*').order('nombre')
     ]);
-    if (munRes.data) this.municipios = munRes.data;
-    if (catRes.data) this.categorias = catRes.data;
+    this.zone.run(() => {
+      if (munRes.data) this.municipios = munRes.data;
+      if (catRes.data) this.categorias = catRes.data;
+      this.appRef.tick();
+    });
   }
 
   async signOut(): Promise<void> {
     await this.client.auth.signOut();
-    this._session$.next(null);
-    this._profile$.next(null);
+    this.zone.run(() => {
+      this._session$.next(null);
+      this._profile$.next(null);
+      this.appRef.tick();
+    });
   }
 }
