@@ -251,7 +251,12 @@ def procesar_ingesta(ingesta_id: str) -> None:
         # 3. Spam con IA solo si las reglas dudaron (y si hay texto: un cartel solo ya lo ha leído la IA)
         if regla is None and len(texto.strip()) < 30 and imagen:
             regla = {"spam_score": 0.05, "motivo": "solo cartel (revisado al extraer)"}
-        spam = regla or ia.clasificar_spam(texto, entidad)
+        if ing.get("origen") == "telegram" and texto.strip():
+            # Propuesta de un vecino: la IA la revisa SIEMPRE (ofensivo, odio, violencia...),
+            # aunque las reglas la den por buena por tener fecha y lugar
+            spam = ia.clasificar_spam(texto, entidad, solo_ia=True)
+        else:
+            spam = regla or ia.clasificar_spam(texto, entidad)
         if spam["spam_score"] >= UMBRAL_SPAM:
             _actualizar_ingesta(ingesta_id, estado="spam", spam_score=spam["spam_score"],
                                 spam_reason=spam["motivo"], extracted=extraido)

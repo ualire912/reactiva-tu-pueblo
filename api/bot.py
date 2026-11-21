@@ -234,7 +234,9 @@ def _botones_evento(
     if ev is not None and ev.get("status") == "cancelado":
         return None
     if ev is not None and _evento_terminado(ev):
-        # Evento acabado: nada de apuntarse; quien tuvo plaza puede valorarlo
+        # Evento acabado: nada de apuntarse; quien tuvo plaza puede valorarlo (o cambiarlo)
+        if estado_insc == "valorada":
+            return [[("✏️ Cambiar mi valoración", f"rev_edit:{ev_id}")]]
         return _botones_estrellas(ev_id) if estado_insc == "confirmada" else None
     inicio = _parse_dt(ev.get("starts_at")) if ev is not None else None
     if ev is not None and inicio and inicio <= datetime.now(timezone.utc):
@@ -434,6 +436,12 @@ def _obtener_estados_inscripcion(
         for r in insc_rows:
             if r.get("event_id") and r.get("status"):
                 inscritos_map[str(r["event_id"])] = str(r["status"])
+        # Los que ya ha valorado: en vez de las estrellas, "Cambiar mi valoración"
+        confirmados = [e for e, s in inscritos_map.items() if s == "confirmada"]
+        if confirmados:
+            for r in sb.table("resenas").select("event_id").eq("user_id", perfil["id"]) \
+                    .in_("event_id", confirmados).execute().data or []:
+                inscritos_map[str(r["event_id"])] = "valorada"
     return inscritos_map
 
 
@@ -1451,6 +1459,26 @@ def _tiene_detalles_de_plan(texto: str) -> bool:
         r"uleila|lucainena)", n))
 
 
+def _mensaje_rechazo(ingesta_id: str) -> str:
+    """La IA (o las reglas) han descartado la propuesta: se le explica el MOTIVO al usuario."""
+    fila = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data or [{}])[0]
+    motivo = (fila.get("spam_reason") or "").strip()
+    n = _norm_txt(motivo)
+    if "ofensiv" in n or "inapropiad" in n or "insult" in n or "odio" in n or "violen" in n \
+            or "droga" in n or "sexual" in n or "discrimin" in n:
+        return ("🚫 No puedo publicar tu propuesta: tiene lenguaje o contenido ofensivo o "
+                "inapropiado (insultos, violencia, drogas...).\n\nEsta agenda es para planes "
+                "respetuosos con todos los vecinos. Si quieres, vuelve a proponerlo de otra forma.")
+    if "palabra prohibida" in n or "enlaces" in n or "mayusculas" in n or "publicidad" in n \
+            or "estafa" in n or "spam" in n or "apuesta" in n:
+        detalle = f"\nMotivo: {motivo}." if motivo else ""
+        return ("🚫 No publico tu propuesta porque parece publicidad o spam." + detalle +
+                "\n\nAquí solo se comparten planes y actividades de los pueblos de la Mancomunidad "
+                "(Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique).")
+    return ("🚫 No publico tu propuesta" + (f". Motivo: {motivo}" if motivo else "") +
+            ".\n\nSi crees que es un error, vuelve a proponerlo explicando mejor el plan.")
+
+
 async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: str,
                            es_audio: bool = False) -> None:
     """Guarda la propuesta, la IA saca los datos y se le pide confirmación al autor.
@@ -1477,12 +1505,7 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
         return  # ya le ha llegado el resumen con "¿Publico este plan?"
     CHATS_CON_VOZ.discard(chat_id)
     if estado == "spam":
-        await _enviar_respuesta(
-            chat_id,
-            "🚫 Tu mensaje parece publicidad o spam, así que no lo publico. Aquí solo se "
-            "comparten planes y actividades de los pueblos de la Mancomunidad "
-            "(Lucainena de las Torres, Senés, Tahal, Uleila del Campo y Velefique).",
-            perfil=perfil, force_audio=es_audio)
+        await _enviar_respuesta(chat_id, _mensaje_rechazo(ingesta_id), perfil=perfil, force_audio=es_audio)
         return
     if estado == "descartada":
         motivo = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data
@@ -1495,9 +1518,13 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
             return
     if estado in ("descartada", "spam"):
         ESPERANDO_PROPUESTA.add(chat_id)
+        motivo = (sb.table("ingestas").select("spam_reason").eq("id", ingesta_id).execute().data
+                  or [{}])[0].get("spam_reason") or ""
+        motivo = re.sub(r"^no es un evento:\s*", "", motivo).strip()
+        por_que = f" (motivo: {motivo})" if motivo and motivo.lower() != "none" else ""
         await _enviar_respuesta(
             chat_id,
-            "🤔 No he sabido sacar un plan de tu mensaje. Cuéntamelo con más detalle: qué es, "
+            f"🤔 No he podido sacar un plan de tu mensaje{por_que}. Cuéntamelo con más detalle: qué es, "
             "en qué pueblo, qué día y a qué hora (por ejemplo: «Taller de esparto el sábado 12 "
             "de diciembre a las 17:00 en el centro social de Tahal, gratis»).",
             perfil=perfil, force_audio=es_audio)
@@ -1589,6 +1616,56 @@ def _eventos_valorables(perfil: dict[str, Any]) -> list[dict[str, Any]]:
     return evs[:5]
 
 
+_RE_CAMBIAR_VALORACION = re.compile(
+    r"\b(cambi\w*|modific\w*|edit\w*|correg\w*|corrij\w*|actualiz\w*|mis)\b.{0,25}"
+    r"\b(valoraci\w*|resenas?|nota|estrellas|puntuaci\w*|opinion)")
+
+
+async def _cmd_mis_valoraciones(chat_id: int, perfil: dict[str, Any] | None,
+                                force_audio: bool = False) -> None:
+    """Las valoraciones que ha hecho, cada una con «Cambiar mi valoración»."""
+    if not perfil:
+        await send_message(chat_id, "⚠️ Escribe /start antes.")
+        return
+    res = sb.table("resenas").select("event_id,estrellas,comentario,eventos(title,starts_at)") \
+        .eq("user_id", perfil["id"]).execute().data or []
+    if not res:
+        await _enviar_respuesta(chat_id, "⭐ Todavía no has valorado ningún plan.",
+                                buttons=[[("⭐ Valorar un plan", "cmd:valorar")]],
+                                perfil=perfil, force_audio=force_audio)
+        return
+    await send_message(chat_id, f"⭐ <b>Tus valoraciones</b> ({len(res)}). Pulsa para cambiar la que quieras:",
+                       escape=False)
+    for r in res:
+        ev = r.get("eventos") or {}
+        com = (r.get("comentario") or "").strip()
+        await send_message(
+            chat_id,
+            f"{'⭐' * int(r['estrellas'])}  «{ev.get('title')}» ({_format_fecha_es(ev.get('starts_at')).split(' a las ')[0]})"
+            + (f"\n💬 {com}" if com else ""),
+            buttons=[[("✏️ Cambiar mi valoración", f"rev_edit:{r['event_id']}")]])
+    if force_audio:
+        await _enviar_audio(chat_id, f"Has valorado {len(res)} planes. Pulsa el botón del que quieras cambiar.")
+
+
+async def _editar_valoracion(chat_id: int, perfil: dict[str, Any] | None, event_id: str) -> None:
+    if not perfil:
+        return
+    r = sb.table("resenas").select("estrellas,comentario").eq("event_id", event_id) \
+        .eq("user_id", perfil["id"]).limit(1).execute().data
+    ev = _get_evento(event_id) or {}
+    if not r:
+        await send_message(chat_id, "⭐ Aún no has valorado este plan. Puntúalo con las estrellas:",
+                           buttons=_botones_estrellas(event_id))
+        return
+    com = (r[0].get("comentario") or "").strip()
+    await send_message(
+        chat_id,
+        f"✏️ «{ev.get('title')}» ahora tiene {'⭐' * int(r[0]['estrellas'])} ({r[0]['estrellas']})"
+        + (f"\n💬 «{com}»" if com else "") + "\n\nElige la nueva puntuación:",
+        buttons=_botones_estrellas(event_id) + [[("💬 Cambiar solo el comentario", f"rev_com:{event_id}")]])
+
+
 async def _manejar_resena_libre(
     chat_id: int, perfil: dict[str, Any] | None, texto: str, force_audio: bool = False
 ) -> None:
@@ -1604,8 +1681,10 @@ async def _manejar_resena_libre(
         await _enviar_respuesta(
             chat_id,
             "⭐ Ahora mismo no tienes planes pendientes de valorar. "
-            "Solo se pueden valorar los planes a los que te apuntaste y que ya terminaron.",
-            buttons=[[("📋 Mis planes", "cmd:mis_planes")]],
+            "Solo se pueden valorar los planes a los que te apuntaste y que ya terminaron.\n"
+            "Si quieres cambiar una valoración que ya hiciste, pulsa abajo.",
+            buttons=[[("✏️ Cambiar una valoración", "cmd:mis_valoraciones")],
+                     [("📋 Mis planes", "cmd:mis_planes")]],
             perfil=perfil,
             force_audio=force_audio,
         )
@@ -1678,7 +1757,17 @@ async def _procesar_texto_o_voz(
         if not comentario and es_audio and ia_mod and hasattr(ia_mod, "entender_mensaje"):
             parsed = await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))
             comentario = (parsed or {}).get("texto") or ""
-        if perfil and comentario:
+        n_com = _norm_txt(comentario).strip(" .!¡")
+        if n_com in {"no", "nada", "asi esta bien", "asi bien", "dejalo", "dejalo asi", "no gracias",
+                     "esta bien", "vale", "ok"}:
+            await send_message(chat_id, "👌 Perfecto, lo dejo como está. ¡Gracias por tu opinión!")
+            return
+        es_pregunta = comentario.rstrip().endswith("?") or re.match(
+            r"(dame|dime|que |cual|cuando|donde|hay |busca|muestrame|ensename|quiero ver|recomienda|"
+            r"mis |a que|en que|quiero apuntarme|apuntame|propongo|quiero proponer)", n_com)
+        if es_pregunta:
+            texto, audio_bytes, es_audio = comentario, None, False  # no era el comentario: se atiende
+        elif perfil and comentario:
             sb.table("resenas").update({"comentario": comentario}).eq("event_id", event_id).eq(
                 "user_id", perfil["id"]
             ).execute()
@@ -1688,9 +1777,10 @@ async def _procesar_texto_o_voz(
                 perfil=perfil,
                 force_audio=es_audio,
             )
+            return
         else:
             await send_message(chat_id, "⚠️ No he podido leer el comentario.")
-        return
+            return
 
     # Respuestas que el bot estaba esperando: un dato a editar o el motivo de un rechazo
     if chat_id in ESPERANDO_EDICION or chat_id in ESPERANDO_MOTIVO:
@@ -1816,6 +1906,13 @@ async def _procesar_texto_o_voz(
 
     # Nota de voz que solo era un saludo / gracias / pedir ayuda
     if es_audio and await _charla(chat_id, perfil, texto_reconocido, force_audio=True):
+        return
+
+    # Quiere cambiar una valoración que ya hizo ("cambiar mi valoración", "mis reseñas")
+    if _RE_CAMBIAR_VALORACION.search(_norm_txt(texto_reconocido)):
+        if not perfil:
+            perfil = await _asegurar_perfil_telegram(chat_id)
+        await _cmd_mis_valoraciones(chat_id, perfil, force_audio=es_audio)
         return
 
     # Quiere dejar una reseña: NO se busca en la agenda (si no, salen tarjetas para apuntarse)
@@ -1979,6 +2076,13 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         await _mostrar_ayuda(chat_id_int)
     elif data == "cmd:mis_propuestas":
         await _cmd_mis_propuestas(chat_id_int, perfil)
+    elif data == "cmd:mis_valoraciones":
+        await _cmd_mis_valoraciones(chat_id_int, perfil)
+    elif data.startswith("rev_edit:"):
+        await _editar_valoracion(chat_id_int, perfil, data.split(":", 1)[1])
+    elif data.startswith("rev_com:"):
+        ESPERANDO_RESENA[chat_id_int] = data.split(":", 1)[1]
+        await send_message(chat_id_int, "💬 Escribe el nuevo comentario (o mándame una nota de voz).")
     elif data == "cmd:moderar":
         await _cmd_moderar(chat_id_int, perfil)
     elif data.startswith("edit:"):
@@ -2157,6 +2261,9 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
             )
             return
 
+        antes = sb.table("resenas").select("estrellas,comentario").eq("event_id", event_id) \
+            .eq("user_id", perfil["id"]).limit(1).execute().data
+        # upsert: si ya lo había valorado, cambia la nota y CONSERVA el comentario
         sb.table("resenas").upsert(
             {"event_id": event_id, "user_id": perfil["id"], "estrellas": estrellas},
             on_conflict="event_id,user_id",
@@ -2164,6 +2271,16 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         sb.table("inscripciones").update({"asistio": True}).eq("id", insc[0]["id"]).execute()
         if msg_id_int:  # quitar las estrellas para no valorar dos veces
             await edit_message_reply_markup(chat_id_int, msg_id_int, [])
+        if antes:
+            ESPERANDO_RESENA[chat_id_int] = event_id
+            com = (antes[0].get("comentario") or "").strip()
+            await send_message(
+                chat_id_int,
+                f"✏️ Valoración cambiada: de {antes[0]['estrellas']} a {estrellas} estrella(s)."
+                + (f"\nTu comentario sigue siendo: «{com}»" if com else "")
+                + "\n\nSi quieres cambiar el comentario, escríbelo ahora (o «no» para dejarlo así).",
+            )
+            return
         pendiente = COMENTARIO_PENDIENTE.pop(chat_id_int, None)
         if pendiente and pendiente.get("event_id") == event_id and pendiente.get("comentario"):
             sb.table("resenas").update({"comentario": pendiente["comentario"]}).eq(
@@ -2232,6 +2349,8 @@ async def procesar_update(update: dict[str, Any]) -> None:
                 await _toggle_audio(chat_id_int, perfil=perfil, enabled=None)
             elif cmd in ("/ayuda", "/help", "/menu"):
                 await _mostrar_ayuda(chat_id_int)
+            elif cmd in ("/mis_valoraciones", "/valoraciones"):
+                await _cmd_mis_valoraciones(chat_id_int, perfil)
             elif cmd == "/mis_propuestas":
                 await _cmd_mis_propuestas(chat_id_int, perfil)
             elif cmd == "/moderar":

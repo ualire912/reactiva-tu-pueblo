@@ -109,6 +109,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   resenas: Resena[] = [];
   estrellas = 5;
   comentarioResena = '';
+  editandoResena = false;
   incidenciasEvento: Incidencia[] = [];
 
   constructor() {
@@ -439,9 +440,32 @@ export class EventoDetallePage implements OnInit, OnDestroy {
     }
   }
 
+  /** Abre el formulario con la valoración actual para cambiarla. */
+  empezarCambioResena() {
+    const r = this.miResena;
+    if (!r) return;
+    this.estrellas = r.estrellas;
+    this.comentarioResena = r.comentario || '';
+    this.editandoResena = true;
+  }
+
   async enviarResena() {
     const uid = this.sb.currentSession?.user?.id;
-    if (!uid || !this.evento || !this.puedeValorar || this.miResena) return;
+    if (!uid || !this.evento || !this.puedeValorar) return;
+
+    if (this.miResena) {
+      // Ya la había valorado: se cambia por el servidor (la app no puede editar reseñas directamente)
+      if (!this.editandoResena) return;
+      try {
+        await this.api.cambiarResena(this.evento.id, Number(this.estrellas), this.comentarioResena.trim());
+        this.editandoResena = false;
+        this.mostrarAviso('Valoración cambiada. ¡Gracias!');
+        await this.cargarResenas();
+      } catch (err: any) {
+        this.mostrarAviso(err.message || 'No se pudo cambiar la valoración');
+      }
+      return;
+    }
 
     const { error } = await this.sb.client.from('resenas').insert({
       event_id: this.evento.id,
