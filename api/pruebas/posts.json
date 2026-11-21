@@ -1,0 +1,58 @@
+[
+  {
+    "nombre": "ruta_completa",
+    "source_url": "https://www.facebook.com/prueba/posts/1001",
+    "page_url": "https://www.facebook.com/asociacion-senderista-lucainena",
+    "text": "🥾 RUTA DE LAS MINAS 🥾\nEste domingo 29 de noviembre salimos a las 9:30 desde la Plaza del Ayuntamiento de Lucainena de las Torres. Unos 12 km, unas 3 horas. Gratuita. Plazas limitadas a 30 personas. ¡Traed agua y calzado cómodo!",
+    "image_url": null
+  },
+  {
+    "nombre": "fiesta",
+    "source_url": "https://www.facebook.com/prueba/posts/1002",
+    "page_url": "https://www.facebook.com/ayuntamiento-velefique",
+    "text": "Fiesta de la Inmaculada en Velefique 🎉 El 8 de diciembre a partir de las 18:00 en la plaza de la Iglesia: chocolate con migas, música y castillo de fuegos. Entrada libre, ¡os esperamos a todos!",
+    "image_url": null
+  },
+  {
+    "nombre": "taller",
+    "source_url": "https://www.facebook.com/prueba/posts/1003",
+    "page_url": "https://www.facebook.com/asociacion-mujeres-tahal",
+    "text": "Taller de esparto para mayores en Tahal. Sábado 5 de diciembre de 11:00 a 13:00 en el Centro de Día. Precio 3 € (materiales incluidos). Máximo 15 personas. Inscripciones en el Ayuntamiento hasta el 3 de diciembre.",
+    "image_url": null
+  },
+  {
+    "nombre": "mercadillo",
+    "source_url": "https://www.facebook.com/prueba/posts/1004",
+    "page_url": "https://www.facebook.com/asociacion-cultural-senes",
+    "text": "Mercadillo navideño de productores locales en Senés 🎄 Domingo 13 de diciembre, de 10 a 14 h, en la plaza. Miel, aceite, almendras, artesanía. ¡Ven a comprar en tu pueblo!",
+    "image_url": null
+  },
+  {
+    "nombre": "incompleto",
+    "source_url": "https://www.facebook.com/prueba/posts/1005",
+    "page_url": "https://www.facebook.com/asociacion-jovenes-uleila",
+    "text": "¡Torneo de petanca en Uleila del Campo el sábado 12 de diciembre por la mañana! Apuntaos que va a estar genial 💪",
+    "image_url": null
+  },
+  {
+    "nombre": "spam",
+    "source_url": "https://www.facebook.com/prueba/posts/1006",
+    "page_url": "https://www.facebook.com/pagina-desconocida",
+    "text": "GANA DINERO DESDE CASA CON BITCOIN 💰💰 Haz clic aquí https://bit.ly/xxx y aquí https://bit.ly/yyy y aquí https://bit.ly/zzz. ¡Plazas limitadas!",
+    "image_url": null
+  },
+  {
+    "nombre": "no_evento_agua",
+    "source_url": "https://www.facebook.com/prueba/posts/1007",
+    "page_url": "https://www.facebook.com/ayuntamiento-tahal",
+    "text": "AVISO: mañana jueves habrá corte de agua en el barrio alto de Tahal de 9:00 a 14:00 por obras en la red. Disculpen las molestias.",
+    "image_url": null
+  },
+  {
+    "nombre": "no_evento_recuerdo",
+    "source_url": "https://www.facebook.com/prueba/posts/1008",
+    "page_url": "https://www.facebook.com/asociacion-cultural-senes",
+    "text": "¡Qué bonita fue la fiesta del sábado en Senés! Gracias a todos los que vinisteis y a los voluntarios que lo hicieron posible ❤️",
+    "image_url": null
+  }
+]

@@ -1,0 +1,135 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-title>Reactiva tu pueblo</ion-title>
+    <ion-buttons slot="end">
+      <ion-button *ngIf="!(sb.session$ | async)" routerLink="/login">
+        Entrar
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content>
+  <ion-refresher slot="fixed" (ionRefresh)="cargarEventos($event)">
+    <ion-refresher-content></ion-refresher-content>
+  </ion-refresher>
+
+  <!-- Filtros superiores -->
+  <div class="ion-padding-horizontal ion-padding-top">
+    <ion-grid class="ion-no-padding">
+      <ion-row>
+        <ion-col size="6" class="ion-padding-end">
+          <ion-item lines="outline">
+            <ion-select label="Pueblo" labelPlacement="stacked" [(ngModel)]="filtroMunicipio" (ionChange)="aplicarFiltros()">
+              <ion-select-option value="todos">Todos los pueblos</ion-select-option>
+              <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
+                {{ m.nombre }}
+              </ion-select-option>
+            </ion-select>
+          </ion-item>
+        </ion-col>
+
+        <ion-col size="6">
+          <ion-item lines="outline">
+            <ion-select label="Cuándo" labelPlacement="stacked" [(ngModel)]="filtroFecha" (ionChange)="aplicarFiltros()">
+              <ion-select-option value="todos">Cualquier fecha</ion-select-option>
+              <ion-select-option value="hoy">Hoy</ion-select-option>
+              <ion-select-option value="finde">Este finde</ion-select-option>
+              <ion-select-option value="semana">Próximos 7 días</ion-select-option>
+            </ion-select>
+          </ion-item>
+        </ion-col>
+      </ion-row>
+    </ion-grid>
+
+    <!-- Chips de categorías + botón Cerca de mí -->
+    <div style="display: flex; gap: 8px; overflow-x: auto; padding: 10px 0;">
+      <ion-chip [color]="ordenCercaniaActivo ? 'secondary' : 'medium'" (click)="ordenarCercaDeMi()">
+        <ion-icon name="navigate-outline"></ion-icon>
+        <ion-label>Cerca de mí</ion-label>
+      </ion-chip>
+
+      <ion-chip
+        *ngFor="let cat of sb.categorias"
+        [color]="filtroCategoria === cat.slug ? 'primary' : 'light'"
+        (click)="seleccionarCategoria(cat.slug)">
+        <ion-icon [name]="cat.icono || 'calendar-outline'"></ion-icon>
+        <ion-label>{{ cat.nombre }}</ion-label>
+      </ion-chip>
+    </div>
+  </div>
+
+  <!-- Estado cargando -->
+  <div *ngIf="cargando" class="ion-padding ion-text-center">
+    <ion-spinner></ion-spinner>
+    <p>Buscando planes en la comarca...</p>
+  </div>
+
+  <!-- Estado vacío -->
+  <div *ngIf="!cargando && eventosFiltrados.length === 0" class="ion-padding ion-text-center">
+    <h3>No hay planes con estos filtros</h3>
+    <p>Prueba a cambiar el pueblo o la fecha, ¡o propón tú un plan!</p>
+    <ion-button routerLink="/proponer" fill="outline">Proponer un plan</ion-button>
+  </div>
+
+  <!-- Lista de eventos -->
+  <ion-card
+    *ngFor="let ev of eventosFiltrados"
+    [routerLink]="ev.status === 'cancelado' ? null : ['/evento', ev.id]"
+    [button]="ev.status !== 'cancelado'"
+    [attr.aria-disabled]="ev.status === 'cancelado'"
+    [style.opacity]="ev.status === 'finalizado' ? '0.6' : (ev.status === 'cancelado' ? '0.8' : '1')"
+    [style.filter]="ev.status === 'finalizado' ? 'grayscale(85%)' : 'none'"
+    [style.pointer-events]="ev.status === 'cancelado' ? 'none' : 'auto'">
+
+    <!-- Banner ROJO arriba si está cancelado (no deja entrar) -->
+    <div
+      *ngIf="ev.status === 'cancelado'"
+      style="background: var(--ion-color-danger); color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
+      <ion-icon name="close-circle-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO CANCELADO</span>
+    </div>
+
+    <!-- Banner GRIS arriba si está finalizado (sí deja entrar para valorar) -->
+    <div
+      *ngIf="ev.status === 'finalizado'"
+      style="background: #6c757d; color: #ffffff; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; letter-spacing: 0.4px;">
+      <ion-icon name="checkmark-done-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO FINALIZADO · Entra para valorar si asististe</span>
+    </div>
+
+    <!-- Banner AMARILLO si está pospuesto -->
+    <div
+      *ngIf="ev.status === 'pospuesto'"
+      style="background: var(--ion-color-warning); color: #000000; padding: 10px 14px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+      <ion-icon name="time-outline" style="font-size: 22px;"></ion-icon>
+      <span>EVENTO APLAZADO — Revisa la nueva fecha</span>
+    </div>
+
+    <img *ngIf="ev.poster_url" [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" style="width: 100%; max-height: 220px; object-fit: cover;" />
+
+    <ion-card-header>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+        <ion-badge color="primary">{{ ev.municipios?.nombre || 'Comarca' }}</ion-badge>
+        <ion-badge *ngIf="ev.status === 'pospuesto'" color="warning">POSPUESTO</ion-badge>
+        <ion-badge *ngIf="ev.is_accessible" color="success">
+          <ion-icon name="accessibility-outline"></ion-icon> Accesible
+        </ion-badge>
+      </div>
+      <ion-card-title class="ion-margin-top">{{ ev.title }}</ion-card-title>
+      <ion-card-subtitle>
+        <ion-icon name="time-outline"></ion-icon> {{ formatearFecha(ev.starts_at) }}
+      </ion-card-subtitle>
+    </ion-card-header>
+
+    <ion-card-content>
+      <p *ngIf="ev.location_name">
+        <ion-icon name="location-outline"></ion-icon> {{ ev.location_name }}
+      </p>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+        <strong>{{ ev.price === 0 ? 'Gratis' : ev.price + ' €' }}</strong>
+        <ion-note>{{ textoPlazas(ev) }}</ion-note>
+      </div>
+    </ion-card-content>
+  </ion-card>
+</ion-content>

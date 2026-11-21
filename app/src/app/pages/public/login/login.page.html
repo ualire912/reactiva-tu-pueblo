@@ -1,0 +1,40 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/agenda" text="Volver"></ion-back-button>
+    </ion-buttons>
+    <ion-title>{{ modoRegistro ? 'Crear cuenta' : 'Entrar' }}</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <div style="max-width: 450px; margin: 20px auto;">
+    <h2>{{ modoRegistro ? 'Únete a Reactiva tu pueblo' : 'Hola de nuevo' }}</h2>
+    <p>Entra para apuntarte a planes, compartir coche o proponer actividades en tu pueblo.</p>
+
+    <ion-list lines="full" class="ion-margin-top">
+      <ion-item *ngIf="modoRegistro">
+        <ion-label position="stacked">Tu nombre completo</ion-label>
+        <ion-input [(ngModel)]="fullName" placeholder="Ej. María García"></ion-input>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Correo electrónico</ion-label>
+        <ion-input type="email" [(ngModel)]="email" placeholder="tu@correo.com"></ion-input>
+      </ion-item>
+
+      <ion-item>
+        <ion-label position="stacked">Contraseña</ion-label>
+        <ion-input type="password" [(ngModel)]="password" placeholder="Mínimo 6 caracteres"></ion-input>
+      </ion-item>
+    </ion-list>
+
+    <ion-button expand="block" class="ion-margin-top" (click)="enviar()" [disabled]="cargando">
+      {{ cargando ? 'Cargando...' : (modoRegistro ? 'Registrarme' : 'Entrar') }}
+    </ion-button>
+
+    <ion-button expand="block" fill="clear" class="ion-margin-top" (click)="modoRegistro = !modoRegistro">
+      {{ modoRegistro ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate gratis' }}
+    </ion-button>
+  </div>
+</ion-content>

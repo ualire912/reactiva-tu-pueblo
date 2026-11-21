@@ -1,0 +1,139 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/agenda" text="Agenda"></ion-back-button>
+    </ion-buttons>
+    <ion-title>Proponer un plan</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <ion-card class="ion-no-margin ion-margin-bottom" color="light">
+    <ion-card-header>
+      <ion-card-title>
+        <ion-icon name="sparkles-outline" color="secondary"></ion-icon> Autocompletar con IA
+      </ion-card-title>
+      <ion-card-subtitle>
+        Sube la foto del cartel o pega el texto de Facebook y rellenamos la ficha por ti.
+      </ion-card-subtitle>
+    </ion-card-header>
+
+    <ion-card-content>
+      <input
+        type="file"
+        accept="image/*"
+        #fileInput
+        hidden
+        (change)="onFileSelected($event)" />
+
+      <ion-button expand="block" fill="outline" (click)="fileInput.click()" [disabled]="subiendoFoto">
+        <ion-icon slot="start" name="image-outline"></ion-icon>
+        {{ subiendoFoto ? 'Subiendo cartel...' : (posterUrl ? 'Cambiar foto del cartel' : 'Subir foto del cartel') }}
+      </ion-button>
+
+      <img
+        *ngIf="posterUrl"
+        [src]="posterUrl"
+        alt="Vista previa del cartel"
+        style="width: 100%; max-height: 180px; object-fit: contain; margin-top: 10px; border-radius: 8px;" />
+
+      <ion-item lines="outline" class="ion-margin-top">
+        <ion-textarea
+          label="O pega aquí el texto del anuncio (opcional)"
+          labelPlacement="stacked"
+          [(ngModel)]="textoCartelOpcional"
+          placeholder="Ej. Este domingo ruta senderista en Velefique a las 9:00..."></ion-textarea>
+      </ion-item>
+
+      <ion-button
+        expand="block"
+        color="secondary"
+        class="ion-margin-top"
+        (click)="rellenarConIa()"
+        [disabled]="extrayendoIa || (!posterUrl && !textoCartelOpcional.trim())">
+        <ion-icon slot="start" name="sparkles-outline"></ion-icon>
+        {{ extrayendoIa ? 'Leyendo cartel con IA...' : 'Rellenar datos con IA' }}
+      </ion-button>
+
+      <div *ngIf="camposFaltantes.length > 0" class="ion-margin-top">
+        <ion-badge color="warning">
+          <ion-icon name="alert-circle-outline"></ion-icon> Faltan datos en el cartel: {{ camposFaltantes.join(', ') }}
+        </ion-badge>
+      </div>
+    </ion-card-content>
+  </ion-card>
+
+  <ion-list lines="full">
+    <ion-item [color]="faltaCampo('title') ? 'warning' : undefined">
+      <ion-input label="Título del plan *" labelPlacement="stacked" [(ngModel)]="title" placeholder="Ej. Vuelta en bici por la Vía Verde"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('municipio') ? 'warning' : undefined">
+      <ion-select label="Pueblo *" labelPlacement="stacked" [(ngModel)]="municipioId" placeholder="Selecciona pueblo">
+        <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
+          {{ m.nombre }}
+        </ion-select-option>
+      </ion-select>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('category') ? 'warning' : undefined">
+      <ion-select label="Categoría" labelPlacement="stacked" [(ngModel)]="category">
+        <ion-select-option *ngFor="let c of sb.categorias" [value]="c.slug">
+          {{ c.nombre }}
+        </ion-select-option>
+      </ion-select>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('starts_at') ? 'warning' : undefined">
+      <ion-input type="datetime-local" label="Fecha y hora de inicio *" labelPlacement="stacked" [(ngModel)]="startsAtLocal"></ion-input>
+    </ion-item>
+
+    <ion-item>
+      <ion-input type="datetime-local" label="Fecha límite de inscripción (opcional)" labelPlacement="stacked" [(ngModel)]="inscripcionHastaLocal"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('duration_minutes') ? 'warning' : undefined">
+      <ion-input type="number" label="Duración aproximada (minutos)" labelPlacement="stacked" [(ngModel)]="durationMinutes"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('location_name') ? 'warning' : undefined">
+      <ion-input label="Punto de encuentro / Lugar" labelPlacement="stacked" [(ngModel)]="locationName" placeholder="Ej. Plaza del Ayuntamiento"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('price') ? 'warning' : undefined">
+      <ion-input type="number" label="Precio en € (0 = Gratis)" labelPlacement="stacked" [(ngModel)]="price"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('max_capacity') ? 'warning' : undefined">
+      <ion-input type="number" label="Plazas máximas (vacío = sin límite)" labelPlacement="stacked" [(ngModel)]="maxCapacity"></ion-input>
+    </ion-item>
+
+    <ion-item>
+      <ion-input type="number" label="Edad mínima (opcional)" labelPlacement="stacked" [(ngModel)]="minAge"></ion-input>
+    </ion-item>
+
+    <ion-item>
+      <ion-input type="number" label="Edad máxima (opcional)" labelPlacement="stacked" [(ngModel)]="maxAge"></ion-input>
+    </ion-item>
+
+    <ion-item [color]="faltaCampo('description') ? 'warning' : undefined">
+      <ion-textarea
+        label="Descripción y detalles"
+        labelPlacement="stacked"
+        rows="4"
+        [(ngModel)]="description"
+        placeholder="Qué hay que llevar, dificultad, si se admiten mascotas..."></ion-textarea>
+    </ion-item>
+
+    <ion-item>
+      <ion-toggle [(ngModel)]="isAccessible">
+        Actividad accesible (movilidad reducida / mayores)
+      </ion-toggle>
+    </ion-item>
+  </ion-list>
+
+  <ion-button expand="block" class="ion-margin-top ion-margin-bottom" (click)="guardarEvento()" [disabled]="guardando">
+    <ion-icon slot="start" name="save-outline"></ion-icon>
+    {{ guardando ? 'Enviando...' : 'Enviar propuesta' }}
+  </ion-button>
+</ion-content>

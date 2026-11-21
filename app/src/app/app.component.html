@@ -1,0 +1,32 @@
+<ion-app>
+  <ion-tabs>
+    <ion-tab-bar slot="bottom">
+      <ion-tab-button tab="agenda">
+        <ion-icon name="calendar-outline"></ion-icon>
+        <ion-label>Agenda</ion-label>
+      </ion-tab-button>
+
+      <ion-tab-button tab="mapa">
+        <ion-icon name="map-outline"></ion-icon>
+        <ion-label>Mapa</ion-label>
+      </ion-tab-button>
+
+      <ion-tab-button tab="proponer">
+        <ion-icon name="add-circle-outline"></ion-icon>
+        <ion-label>Proponer</ion-label>
+      </ion-tab-button>
+
+      <ion-tab-button tab="perfil">
+        <ion-icon name="person-outline"></ion-icon>
+        <ion-label>Perfil</ion-label>
+      </ion-tab-button>
+
+      <ion-tab-button
+        *ngIf="(sb.profile$ | async)?.rol === 'moderador'"
+        tab="panel">
+        <ion-icon name="shield-checkmark-outline"></ion-icon>
+        <ion-label>Panel</ion-label>
+      </ion-tab-button>
+    </ion-tab-bar>
+  </ion-tabs>
+</ion-app>

@@ -1,0 +1,206 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-buttons slot="start">
+      <ion-back-button defaultHref="/agenda" text="Agenda"></ion-back-button>
+    </ion-buttons>
+    <ion-title>Detalle del plan</ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <div *ngIf="cargando" class="ion-text-center ion-padding">
+    <ion-spinner></ion-spinner>
+  </div>
+
+  <div *ngIf="!cargando && evento">
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <img *ngIf="evento.poster_url" [src]="evento.poster_url" [alt]="evento.title" style="width: 100%; max-height: 240px; object-fit: cover;" />
+      <ion-card-header>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <ion-badge color="primary">{{ evento.municipios?.nombre }}</ion-badge>
+          <ion-badge color="secondary">{{ evento.category }}</ion-badge>
+          <ion-badge [color]="evento.status === 'abierto' ? 'success' : (evento.status === 'cancelado' ? 'danger' : 'warning')">
+            {{ etiquetaEstado(evento.status) }}
+          </ion-badge>
+          <ion-badge *ngIf="evento.is_accessible" color="tertiary">Accesible</ion-badge>
+        </div>
+        <ion-card-title class="ion-margin-top">{{ evento.title }}</ion-card-title>
+        <ion-card-subtitle>
+          📅 {{ formatearFecha(evento.starts_at) }}<br />
+          📍 {{ evento.location_name || 'Lugar por confirmar' }}<br />
+          💶 {{ evento.price === 0 ? 'Gratis' : evento.price + ' €' }}
+          <span *ngIf="evento.max_capacity"> · Plazas: {{ evento.confirmed_count }}/{{ evento.max_capacity }}</span>
+        </ion-card-subtitle>
+      </ion-card-header>
+
+      <ion-card-content>
+        <p *ngIf="evento.inscripcion_hasta" style="color: var(--ion-color-medium); font-weight: 600;">
+          ⏳ Inscripción hasta el {{ formatearFecha(evento.inscripcion_hasta) }}
+        </p>
+        <p class="ion-margin-top">{{ evento.description }}</p>
+
+        <!-- Botones calendario -->
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px;">
+          <ion-button size="small" fill="outline" (click)="descargarIcs()">
+            <ion-icon slot="start" name="calendar-outline"></ion-icon>
+            Descargar .ics
+          </ion-button>
+          <ion-button size="small" fill="outline" (click)="abrirGoogleCalendar()">
+            Google Calendar
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- BLOQUE DE INSCRIPCIÓN -->
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>Participación</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <div *ngIf="!sb.currentSession">
+          <p>Inicia sesión para apuntarte, compartir coche o preguntar en el chat.</p>
+          <ion-button expand="block" routerLink="/login">Entrar para apuntarme</ion-button>
+        </div>
+
+        <div *ngIf="sb.currentSession && !miInscripcion">
+          <ion-list lines="full" *ngIf="puedeApuntarse">
+            <ion-item>
+              <ion-select label="Compartir coche" labelPlacement="stacked" [(ngModel)]="transporte">
+                <ion-select-option value="ninguno">No necesito / voy por mi cuenta</ion-select-option>
+                <ion-select-option value="ofrece">Llevo coche y ofrezco plazas</ion-select-option>
+                <ion-select-option value="busca">Busco plaza en coche</ion-select-option>
+              </ion-select>
+            </ion-item>
+
+            <ion-item *ngIf="transporte === 'ofrece'">
+              <ion-input type="number" label="¿Cuántas plazas libres llevas?" labelPlacement="stacked" [(ngModel)]="transportePlazas"></ion-input>
+            </ion-item>
+
+            <ion-item *ngIf="transporte !== 'ninguno'">
+              <ion-select label="¿Desde qué pueblo?" labelPlacement="stacked" [(ngModel)]="transporteMunicipioId">
+                <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
+                  {{ m.nombre }}
+                </ion-select-option>
+              </ion-select>
+            </ion-item>
+          </ion-list>
+
+          <ion-button
+            expand="block"
+            class="ion-margin-top"
+            [color]="evento.status === 'abierto' ? 'success' : 'warning'"
+            [disabled]="!puedeApuntarse || procesandoInscripcion"
+            (click)="apuntarme()">
+            {{ textoBotonApuntarse }}
+          </ion-button>
+        </div>
+
+        <div *ngIf="sb.currentSession && miInscripcion">
+          <ion-badge [color]="miInscripcion.status === 'confirmada' ? 'success' : 'warning'">
+            {{ miInscripcion.status === 'confirmada' ? '✅ Plaza confirmada' : '⏳ En lista de espera' }}
+          </ion-badge>
+          <ion-button expand="block" color="danger" fill="outline" class="ion-margin-top" (click)="cancelarInscripcion()" [disabled]="procesandoInscripcion">
+            Cancelar mi inscripción
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- INCIDENCIAS PARA PUBLICADOR ORGANIZADOR -->
+    <ion-card *ngIf="esPublicadorOrganizador && incidenciasEvento.length > 0" color="light" class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>Incidencias de tu evento</ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <div *ngFor="let inc of incidenciasEvento" class="ion-margin-bottom">
+          <ion-badge [color]="inc.estado === 'abierta' ? 'danger' : 'success'">{{ inc.estado }}</ion-badge>
+          <p>{{ inc.comentario }}</p>
+          <ion-button *ngIf="inc.estado === 'abierta'" size="small" color="success" (click)="resolverIncidenciaPropia(inc)">
+            Marcar resuelta
+          </ion-button>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- HILO / CHAT DEL EVENTO -->
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>
+          <ion-icon name="chatbubbles-outline"></ion-icon> Dudas y anuncios
+        </ion-card-title>
+      </ion-card-header>
+      <ion-card-content>
+        <div *ngIf="mensajes.length === 0">
+          <ion-note>Aún no hay mensajes. ¡Pregunta cualquier duda!</ion-note>
+        </div>
+
+        <div *ngFor="let m of mensajes" style="padding: 8px; margin-bottom: 8px; border-radius: 8px; background: rgba(0,0,0,0.04);">
+          <ion-badge *ngIf="m.tipo === 'asistente_ia'" color="secondary">✨ Asistente IA</ion-badge>
+          <ion-badge *ngIf="m.tipo === 'anuncio_fijado'" color="warning">📌 Anuncio</ion-badge>
+          <p style="margin-top: 4px;">{{ m.contenido }}</p>
+        </div>
+
+        <div *ngIf="sb.currentSession" class="ion-margin-top">
+          <ion-item lines="outline">
+            <ion-input placeholder="Escribe una pregunta..." [(ngModel)]="nuevoMensaje"></ion-input>
+          </ion-item>
+          <div style="display: flex; gap: 8px; margin-top: 8px;">
+            <ion-button expand="block" style="flex: 1;" (click)="preguntarIa = false; enviarMensaje()" [disabled]="enviandoMensaje">
+              Enviar
+            </ion-button>
+            <ion-button expand="block" color="secondary" style="flex: 1;" (click)="preguntarIa = true; enviarMensaje()" [disabled]="enviandoMensaje">
+              <ion-icon slot="start" name="sparkles-outline"></ion-icon>
+              Preguntar a IA
+            </ion-button>
+          </div>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- RESEÑAS (SI FINALIZADO: SOLO PARA QUIENES ASISTIERON) -->
+    <ion-card *ngIf="evento.status === 'finalizado'" class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>Valoraciones del organizador</ion-card-title>
+        <ion-card-subtitle>Las valoraciones positivas ayudan a verificar a los organizadores</ion-card-subtitle>
+      </ion-card-header>
+      <ion-card-content>
+        <div *ngFor="let r of resenas" class="ion-margin-bottom" style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.04);">
+          <strong>{{ '⭐'.repeat(r.estrellas) }}</strong>
+          <p *ngIf="r.comentario" style="margin-top: 4px;">{{ r.comentario }}</p>
+        </div>
+
+        <!-- Formulario SOLO visible si inició sesión y asistió (o tuvo plaza confirmada) -->
+        <div *ngIf="sb.currentSession && miInscripcion && (miInscripcion.asistio || miInscripcion.status === 'confirmada')" class="ion-margin-top">
+          <ion-item>
+            <ion-select label="Tu puntuación" labelPlacement="stacked" [(ngModel)]="estrellas">
+              <ion-select-option [value]="5">⭐⭐⭐⭐⭐ (5)</ion-select-option>
+              <ion-select-option [value]="4">⭐⭐⭐⭐ (4)</ion-select-option>
+              <ion-select-option [value]="3">⭐⭐⭐ (3)</ion-select-option>
+              <ion-select-option [value]="2">⭐⭐ (2)</ion-select-option>
+              <ion-select-option [value]="1">⭐ (1)</ion-select-option>
+            </ion-select>
+          </ion-item>
+          <ion-item>
+            <ion-input label="Comentario (opcional)" labelPlacement="stacked" [(ngModel)]="comentarioResena"></ion-input>
+          </ion-item>
+          <ion-button expand="block" color="success" class="ion-margin-top" (click)="enviarResena()">
+            Enviar valoración
+          </ion-button>
+        </div>
+
+        <!-- Aviso si no asistió o no está logueado -->
+        <div *ngIf="!sb.currentSession || !miInscripcion || (!miInscripcion.asistio && miInscripcion.status !== 'confirmada')" class="ion-margin-top">
+          <ion-note>
+            Solo los asistentes confirmados de este evento pueden dejar una valoración.
+          </ion-note>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <ion-button *ngIf="sb.currentSession" expand="block" fill="clear" color="danger" (click)="reportarIncidencia()">
+      <ion-icon slot="start" name="warning-outline"></ion-icon>
+      Reportar incidencia en este evento
+    </ion-button>
+  </div>
+</ion-content>

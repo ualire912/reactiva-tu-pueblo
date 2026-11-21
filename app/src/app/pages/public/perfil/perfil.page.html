@@ -1,0 +1,155 @@
+<ion-header>
+  <ion-toolbar color="primary">
+    <ion-title>Mi Perfil</ion-title>
+    <ion-buttons slot="end">
+      <ion-button (click)="cerrarSesion()" aria-label="Cerrar sesión">
+        <ion-icon slot="start" name="log-out-outline"></ion-icon>
+        Salir
+      </ion-button>
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="ion-padding">
+  <div *ngIf="sb.profile$ | async as profile">
+    <!-- TARJETA 1: VINCULAR TELEGRAM -->
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <ion-card-title>Avisos por Telegram</ion-card-title>
+          <ion-badge [color]="profile.telegram_linked ? 'success' : 'medium'">
+            {{ profile.telegram_linked ? '✓ Vinculado' : 'Sin vincular' }}
+          </ion-badge>
+        </div>
+        <ion-card-subtitle>
+          Recibe planes a tu medida, apuntate con un toque o habla con notas de voz.
+        </ion-card-subtitle>
+      </ion-card-header>
+
+      <ion-card-content>
+        <div *ngIf="!profile.telegram_linked">
+          <ion-button
+            expand="block"
+            color="secondary"
+            [href]="enlaceTelegram"
+            target="_blank">
+            <ion-icon slot="start" name="paper-plane-outline"></ion-icon>
+            Vincular mi Telegram
+          </ion-button>
+
+          <ion-button
+            expand="block"
+            fill="outline"
+            class="ion-margin-top"
+            (click)="comprobarVinculacion()"
+            [disabled]="comprobandoTelegram">
+            <ion-icon slot="start" name="refresh-outline"></ion-icon>
+            {{ comprobandoTelegram ? 'Comprobando...' : 'Ya lo he vinculado' }}
+          </ion-button>
+        </div>
+
+        <div *ngIf="profile.telegram_linked">
+          <p>
+            <ion-icon name="checkmark-circle-outline" color="success"></ion-icon>
+            Tu cuenta está conectada con el bot. Rol actual: <strong>{{ profile.rol | uppercase }}</strong>
+            (Reputación: {{ profile.reputation_score }} pts).
+          </p>
+        </div>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- TARJETA 2: DATOS Y GUSTOS -->
+    <ion-card class="ion-no-margin ion-margin-bottom">
+      <ion-card-header>
+        <ion-card-title>Mis datos y preferencias</ion-card-title>
+      </ion-card-header>
+
+      <ion-card-content>
+        <ion-list lines="full">
+          <ion-item>
+            <ion-input label="Nombre" labelPlacement="stacked" [(ngModel)]="fullName" placeholder="Tu nombre"></ion-input>
+          </ion-item>
+
+          <ion-item>
+            <ion-input type="number" label="Edad (opcional)" labelPlacement="stacked" [(ngModel)]="edad" placeholder="Ej. 65"></ion-input>
+          </ion-item>
+
+          <ion-item>
+            <ion-select label="Pueblo donde vives" labelPlacement="stacked" [(ngModel)]="municipioId" placeholder="Selecciona pueblo">
+              <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
+                {{ m.nombre }}
+              </ion-select-option>
+            </ion-select>
+          </ion-item>
+
+          <ion-item>
+            <ion-toggle [(ngModel)]="notificacionesActivas">
+              Recibir recomendaciones de planes
+            </ion-toggle>
+          </ion-item>
+
+          <ion-item>
+            <ion-toggle [(ngModel)]="prefiereAudio">
+              <ion-icon name="volume-high-outline" style="vertical-align: middle;"></ion-icon>
+              Prefiero recibir los avisos en audio (voz)
+            </ion-toggle>
+          </ion-item>
+        </ion-list>
+
+        <div class="ion-margin-top">
+          <strong>¿Qué actividades te interesan?</strong>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
+            <ion-chip
+              *ngFor="let cat of sb.categorias"
+              [color]="categoriasFav.includes(cat.slug) ? 'primary' : 'light'"
+              (click)="toggleCategoria(cat.slug)">
+              <ion-label>{{ cat.nombre }}</ion-label>
+            </ion-chip>
+          </div>
+        </div>
+
+        <div class="ion-margin-top">
+          <strong>Pueblos favoritos (para avisarte de sus planes)</strong>
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
+            <ion-chip
+              *ngFor="let m of sb.municipios"
+              [color]="municipiosFav.includes('' + m.id) ? 'secondary' : 'light'"
+              (click)="toggleMunicipioFav(m.id)">
+              <ion-label>{{ m.nombre }}</ion-label>
+            </ion-chip>
+          </div>
+        </div>
+
+        <ion-button expand="block" class="ion-margin-top" (click)="guardarPerfil()" [disabled]="guardando">
+          <ion-icon slot="start" name="save-outline"></ion-icon>
+          {{ guardando ? 'Guardando...' : 'Guardar preferencias' }}
+        </ion-button>
+      </ion-card-content>
+    </ion-card>
+
+    <!-- TARJETA 3: MIS PLANES -->
+    <ion-card class="ion-no-margin">
+      <ion-card-header>
+        <ion-card-title>Mis planes apuntados ({{ misPlanes.length }})</ion-card-title>
+      </ion-card-header>
+
+      <ion-card-content>
+        <div *ngIf="misPlanes.length === 0">
+          <ion-note>Aún no te has apuntado a ningún plan.</ion-note>
+        </div>
+
+        <ion-list lines="full" *ngIf="misPlanes.length > 0">
+          <ion-item *ngFor="let insc of misPlanes" [routerLink]="['/evento', insc.event_id]" button="true">
+            <ion-label class="ion-text-wrap">
+              <h3>{{ insc.eventos?.title || 'Evento' }}</h3>
+              <p>{{ insc.eventos?.municipios?.nombre }} · {{ formatearFecha(insc.eventos?.starts_at) }}</p>
+            </ion-label>
+            <ion-badge slot="end" [color]="insc.status === 'confirmada' ? 'success' : 'warning'">
+              {{ insc.status === 'confirmada' ? 'Confirmada' : 'En espera' }}
+            </ion-badge>
+          </ion-item>
+        </ion-list>
+      </ion-card-content>
+    </ion-card>
+  </div>
+</ion-content>
