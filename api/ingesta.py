@@ -632,6 +632,10 @@ def subir_cartel(evento: dict, foto: bytes | None = None) -> str | None:
     try:
         import uuid as _uuid
         from cartel import generar_cartel
+        if not evento.get("municipio") and evento.get("municipio_id"):
+            # evento ya guardado: trae el id del pueblo, el cartel necesita el nombre (y su foto)
+            m = _una("municipios", "id", evento["municipio_id"])
+            evento = {**evento, "municipio": (m or {}).get("nombre")}
         img = generar_cartel(evento, foto)
         es_jpg = img[:2] == b"\xff\xd8"
         ruta = f"generados/{_uuid.uuid4()}.{'jpg' if es_jpg else 'png'}"
@@ -641,6 +645,26 @@ def subir_cartel(evento: dict, foto: bytes | None = None) -> str | None:
     except Exception:
         log.exception("No se pudo generar/subir el cartel")
         return None
+
+
+def regenerar_cartel(event_id: str) -> str | None:
+    """Cartel nuevo (diseño actual, con la foto del pueblo) para un evento ya creado:
+    lo sube, lo guarda en poster_url y devuelve la URL. Lo usa el moderador desde Telegram."""
+    ev = db_evento(event_id)
+    if not ev:
+        return None
+    url = subir_cartel(ev)
+    if url:
+        sb.table("eventos").update({"poster_url": url}).eq("id", event_id).execute()
+    return url
+
+
+def cartel_de(event_id: str) -> str | None:
+    """El cartel del evento; si no tiene, se genera uno (y se guarda)."""
+    ev = db_evento(event_id)
+    if not ev:
+        return None
+    return ev.get("poster_url") or regenerar_cartel(event_id)
 
 
 class PeticionCartel(BaseModel):

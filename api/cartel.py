@@ -111,6 +111,11 @@ def generar_cartel(evento: dict, foto: bytes | None = None, credito: str | None 
     sin ninguna foto -> diseño de color. Solo usa los datos presentes en `evento`."""
     if foto is None:
         foto, credito = _buscar_foto(evento)
+    try:  # diseño nuevo, estilo cartel de fiestas del pueblo (cartel_vibrante.py)
+        from cartel_vibrante import generar as _vibrante
+        return _vibrante(evento, foto, credito)
+    except Exception as e:
+        print(f"[cartel] diseño nuevo no disponible, uso el anterior: {e!r}")
     if foto:
         try:
             return _cartel_con_foto(evento, foto, credito)

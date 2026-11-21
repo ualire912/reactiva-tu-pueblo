@@ -49,6 +49,16 @@ except Exception as e:
     _ia = None
 
 
+def avisar_con_cartel(user_id: str, texto: str, poster_url: str | None) -> bool:
+    """Aviso por Telegram con el cartel del evento. True solo si se envió."""
+    try:
+        from bot import avisar_con_cartel as _avisar_con_cartel
+        return bool(_con_limite(LIMITE_TELEGRAM * 2, _avisar_con_cartel, user_id, texto, poster_url))
+    except Exception as e:
+        log.error("avisar_con_cartel falló para %s: %r", user_id, e)
+        return False
+
+
 def avisar_moderadores(event_id: str) -> int:
     """Manda una propuesta pendiente a los moderadores con Telegram. -> nº avisados (0 si falla)."""
     try:
