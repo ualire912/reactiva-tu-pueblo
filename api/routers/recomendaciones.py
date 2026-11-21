@@ -1,11 +1,12 @@
-"""B1 · POST /recomendaciones/enviar  {user_id?} -> {enviados: n}
+"""B1 · POST /recomendaciones/enviar 🔒 moderador  {user_id?} -> {enviados: n}
 
 Reglas primero (función SQL recomendar_eventos, gratis) y la IA solo redacta.
+Solo moderador: si fuera público, cualquiera podría mandar mensajes a todos los vecinos.
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from db import sb
+from db import require_moderador, sb
 from puentes import avisar, redactar_recomendacion
 
 router = APIRouter(tags=["recomendaciones"])
@@ -16,7 +17,7 @@ class EnviarIn(BaseModel):
 
 
 @router.post("/recomendaciones/enviar")
-def enviar_recomendaciones(body: EnviarIn | None = None):
+def enviar_recomendaciones(body: EnviarIn | None = None, _mod=Depends(require_moderador)):
     q = sb.table("profiles").select("id, full_name")
     if body and body.user_id:
         q = q.eq("id", body.user_id)

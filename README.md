@@ -21,7 +21,9 @@ Hoy, lo que pasa en estos pueblos está repartido entre Facebook, carteles y gru
 ## Cómo arrancarlo
 
 ### 1. Base de datos
-En Supabase, ve a SQL Editor y ejecuta `supabase/schema.sql` y después `supabase/parches.sql`.
+En Supabase: activa la extensión **pg_cron** (Database → Extensions) y ejecuta `supabase/schema.sql` en SQL Editor.
+
+**Estados automáticos de los eventos:** la base de datos los calcula sola según la hora, las plazas y la fecha límite de inscripción (`abierto → completo → inscripcion_cerrada → en_curso → finalizado`). El moderador solo pone los estados manuales (`pendiente_moderacion`, `pospuesto`, `cancelado`, `rechazado`).
 
 ### 2. Servidor (`api/`)
 ```bash
@@ -44,7 +46,13 @@ ionic serve                 # http://localhost:8100
 Están en `api/.env.example`. **Ninguna clave está en el código ni en el repositorio.**
 
 ## Endpoints principales
-`GET /health` · `POST /telegram/webhook` · `POST /ingesta/facebook` · `POST /ia/extraer` · `GET /eventos/{id}.ics` · `POST /eventos/{id}/avisar` · `POST /eventos/{id}/chat-ia` · `POST /recomendaciones/enviar` · `POST /resenas/pedir/{event_id}` · `POST /moderacion/promociones/revisar` · `GET /ia/consumo`
+🔒 = requiere sesión (`Authorization: Bearer`). 🛡️ = solo moderador.
+
+`GET /health` · `POST /telegram/webhook` · `POST /ingesta/facebook` · `POST /ia/extraer` 🔒 · `GET /eventos/{id}.ics` · `POST /eventos/{id}/avisar` 🔒 (moderador o autor) · `POST /eventos/{id}/chat-ia` 🔒 · `POST /recomendaciones/enviar` 🛡️ · `POST /resenas/pedir/{event_id}` 🔒 (moderador o autor) · `POST /moderacion/promociones/revisar` 🛡️ · `POST /moderacion/promociones/decidir` 🛡️ · `GET /ia/consumo`
+
+**Automático en segundo plano** (`api/tareas.py`, cada 5 min): estados de los eventos, petición de reseñas al terminar un evento y revisión con IA de los candidatos a Publicador. Si la IA aprueba con seguridad, el candidato se promueve solo; si duda, lo decide el moderador.
+
+**Robustez:** todas las llamadas a Telegram (10 s) y a la IA (15 s) tienen límite de tiempo. Si fallan, el servidor sigue con un plan B sin IA y nunca se queda esperando. Sin IA, los candidatos esperan al moderador en vez de promoverse.
 
 Documentación interactiva: `/docs` en la URL de la API.
 

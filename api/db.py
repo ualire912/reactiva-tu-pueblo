@@ -6,10 +6,19 @@ comprueba él mismo los permisos (moderador o autor).
 import os
 import uuid
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from supabase import create_client
 
-sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_ROLE_KEY"])
+_URL = os.environ["SUPABASE_URL"]
+_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+# Límite de tiempo para que una consulta lenta no deje el servidor colgado
+try:
+    from supabase import ClientOptions
+    sb = create_client(_URL, _KEY, options=ClientOptions(postgrest_client_timeout=10,
+                                                         storage_client_timeout=10))
+except Exception:  # versión de supabase-py sin esas opciones: cliente normal
+    sb = create_client(_URL, _KEY)
 
 
 def get_user(token: str):
@@ -21,7 +30,7 @@ def get_user(token: str):
 
 
 def require_user(authorization: str = Header(None)):
-    """Dependencia de FastAPI para los endpoints 🔒."""
+    """Dependencia de FastAPI para los endpoints 🔒 (cualquier usuario con sesión)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Falta token")
     user = get_user(authorization[7:])
@@ -30,8 +39,19 @@ def require_user(authorization: str = Header(None)):
     return user
 
 
+def require_moderador(user=Depends(require_user)):
+    """Dependencia de FastAPI para los endpoints 🔒 solo de moderador."""
+    if (perfil(user.id) or {}).get("rol") != "moderador":
+        raise HTTPException(403, "Solo el moderador puede hacer esto")
+    return user
+
+
 def perfil(user_id: str) -> dict | None:
     """Fila de profiles o None si no existe."""
+    try:
+        uuid.UUID(str(user_id))
+    except ValueError:
+        return None
     filas = sb.table("profiles").select("*").eq("id", user_id).limit(1).execute().data
     return filas[0] if filas else None
 

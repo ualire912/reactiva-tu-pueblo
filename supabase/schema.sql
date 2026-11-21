@@ -10,7 +10,12 @@
 -- 0. TIPOS (listas cerradas de valores)
 -- ---------------------------------------------------------------------
 create type rol_usuario        as enum ('visitante','usuario','publicador','moderador');
-create type estado_evento      as enum ('borrador_ia','pendiente_moderacion','abierto','pospuesto','cancelado','finalizado','rechazado');
+-- Estados de evento:
+--   MANUALES (los pone el moderador/sistema): borrador_ia, pendiente_moderacion, pospuesto, cancelado, rechazado
+--   AUTOMÁTICOS (los calcula la BD por tiempo, plazas y fecha límite de inscripción):
+--     abierto -> completo (sin plazas, solo lista de espera) -> inscripcion_cerrada (pasó inscripcion_hasta)
+--     -> en_curso (empezó) -> finalizado (terminó)
+create type estado_evento      as enum ('borrador_ia','pendiente_moderacion','abierto','completo','inscripcion_cerrada','en_curso','pospuesto','cancelado','finalizado','rechazado');
 create type origen_evento      as enum ('web','telegram','facebook','moderador');
 create type estado_inscripcion as enum ('confirmada','lista_de_espera','cancelada');
 create type tipo_transporte    as enum ('ninguno','ofrece','busca');
@@ -55,6 +60,8 @@ create table profiles (
   notificaciones_activas  boolean not null default true,
   reputation_score        numeric(6,2) not null default 0,
   promocion_pendiente     boolean not null default false,       -- lo marca la BD; el backend pasa el filtro IA y promueve
+  promocion_motivo        text,                                 -- veredicto de la IA o decisión del moderador (panel)
+  promocion_revisada_at   timestamptz,                          -- null = candidato pendiente de revisar por la IA
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now()
 );
@@ -85,6 +92,7 @@ create table eventos (
   category                 text not null default 'otro' references categorias(slug),
   starts_at                timestamptz not null,
   ends_at                  timestamptz,
+  inscripcion_hasta        timestamptz,                          -- fecha límite para apuntarse (null = hasta que empiece)
   duration_minutes         integer check (duration_minutes > 0),
   location_name            text,
   lat                      double precision,
@@ -107,6 +115,7 @@ create table eventos (
   created_at               timestamptz not null default now(),
   updated_at               timestamptz not null default now(),
   check (ends_at is null or ends_at >= starts_at),
+  check (inscripcion_hasta is null or inscripcion_hasta <= starts_at),
   check (max_age is null or min_age is null or max_age >= min_age)
 );
 create index eventos_starts_idx    on eventos (starts_at);
@@ -247,6 +256,8 @@ begin
     if new.rol is distinct from old.rol
        or new.reputation_score is distinct from old.reputation_score
        or new.promocion_pendiente is distinct from old.promocion_pendiente
+       or new.promocion_motivo is distinct from old.promocion_motivo
+       or new.promocion_revisada_at is distinct from old.promocion_revisada_at
        or new.telegram_chat_id is distinct from old.telegram_chat_id
        or new.telegram_linked is distinct from old.telegram_linked then
       raise exception 'No puedes modificar rol, reputación ni vinculación de Telegram';
@@ -260,6 +271,27 @@ create trigger profiles_proteger before update on profiles
 -- =====================================================================
 -- 12. REGLAS DE EVENTOS (sin IA, gratis y al instante)
 -- =====================================================================
+
+-- Estados que calcula la BD sola (el resto los pone una persona)
+create or replace function public.estados_automaticos() returns estado_evento[]
+language sql immutable as $$
+  select array['abierto','completo','inscripcion_cerrada','en_curso','finalizado']::estado_evento[];
+$$;
+
+-- Estado que le toca a un evento publicado según la hora, la fecha límite y las plazas
+create or replace function public.estado_automatico(
+  p_starts timestamptz, p_ends timestamptz, p_insc_hasta timestamptz,
+  p_capacidad int, p_confirmados int) returns estado_evento
+language sql stable as $$
+  select (case
+    when now() >= coalesce(p_ends, p_starts + interval '2 hours')   then 'finalizado'
+    when now() >= p_starts                                           then 'en_curso'
+    when p_insc_hasta is not null and now() >= p_insc_hasta          then 'inscripcion_cerrada'
+    when p_capacidad is not null and p_confirmados >= p_capacidad    then 'completo'
+    else 'abierto'
+  end)::estado_evento;
+$$;
+
 create or replace function public.tg_evento_antes() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
@@ -299,18 +331,30 @@ begin
       new.status := 'pendiente_moderacion';
     end if;
   else
-    -- un usuario normal no puede autoaprobarse editando
+    -- un usuario normal no puede autoaprobarse editando (pasar de pendiente a publicado)
     if auth.uid() is not null and not es_moderador() and mi_rol() <> 'publicador'
-       and new.status = 'abierto' and old.status <> 'abierto' then
+       and new.status = any(estados_automaticos())
+       and not (old.status = any(estados_automaticos())) then
       new.status := old.status;
     end if;
-    -- si cambia algo que afecta al calendario, sube sequence (.ics)
-    if new.starts_at is distinct from old.starts_at
+  end if;
+
+  -- Estado automático: si el evento está publicado, la BD decide si está
+  -- abierto, completo, con inscripción cerrada, en curso o finalizado.
+  -- (pendiente, pospuesto, cancelado, rechazado y borrador no se tocan)
+  if new.status = any(estados_automaticos()) then
+    new.status := estado_automatico(new.starts_at, new.ends_at, new.inscripcion_hasta,
+                                    new.max_capacity, new.confirmed_count);
+  end if;
+
+  -- si cambia algo que afecta al calendario, sube sequence (.ics)
+  -- (los cambios automáticos abierto/completo/en_curso/finalizado NO cuentan)
+  if tg_op = 'UPDATE' and (
+       new.starts_at is distinct from old.starts_at
        or new.ends_at is distinct from old.ends_at
        or new.location_name is distinct from old.location_name
-       or new.status is distinct from old.status then
-      new.sequence := old.sequence + 1;
-    end if;
+       or (new.status in ('cancelado','pospuesto')) is distinct from (old.status in ('cancelado','pospuesto'))) then
+    new.sequence := old.sequence + 1;
   end if;
   return new;
 end $$;
@@ -326,7 +370,14 @@ declare v_ev eventos%rowtype;
 begin
   select * into v_ev from eventos where id = new.event_id for update;
   if v_ev.id is null then raise exception 'Evento no encontrado'; end if;
-  if v_ev.status <> 'abierto' then raise exception 'El evento no admite inscripciones (estado: %)', v_ev.status; end if;
+  -- 'completo' admite apuntarse, pero a la lista de espera
+  if v_ev.status not in ('abierto','completo') then
+    raise exception 'El evento no admite inscripciones (estado: %)', v_ev.status;
+  end if;
+  -- se comprueba la hora real por si el estado aún no se ha recalculado
+  if now() >= v_ev.starts_at or (v_ev.inscripcion_hasta is not null and now() >= v_ev.inscripcion_hasta) then
+    raise exception 'El plazo de inscripción de este evento ha terminado';
+  end if;
   if new.status = 'confirmada' and v_ev.max_capacity is not null
      and v_ev.confirmed_count >= v_ev.max_capacity then
     new.status := 'lista_de_espera';
@@ -360,31 +411,46 @@ create trigger inscripciones_despues after insert or update or delete on inscrip
 --   Regla: reseñas de 4-5 estrellas suman +1, de 1-2 restan -2.
 --   Es candidato si: reputación >= 5, media >= 4, >= 2 eventos con
 --   reseñas y ninguna incidencia abierta. El backend pasa entonces
---   el filtro de confianza IA y cambia el rol a 'publicador'.
+--   el filtro de confianza IA: si aprueba, cambia el rol a 'publicador';
+--   si duda, lo deja al moderador.
+--   Se recalcula con cada reseña Y con cada incidencia (abrir/resolver).
 -- =====================================================================
-create or replace function public.tg_resena_despues() returns trigger
+create or replace function public.recalcular_reputacion(p_user uuid) returns void
 language plpgsql security definer set search_path = public as $$
 declare
-  v_org uuid; v_rep numeric; v_media numeric; v_eventos int; v_inc int;
+  v_rep numeric; v_media numeric; v_eventos int; v_inc int; v_cand boolean;
 begin
-  select created_by into v_org from eventos where id = new.event_id;
-  if v_org is null then return null; end if;
+  if p_user is null then return; end if;
 
   select coalesce(sum(case when r.estrellas >= 4 then 1 when r.estrellas <= 2 then -2 else 0 end),0),
          coalesce(avg(r.estrellas),0),
          count(distinct r.event_id)
     into v_rep, v_media, v_eventos
     from resenas r join eventos e on e.id = r.event_id
-   where e.created_by = v_org;
+   where e.created_by = p_user;
 
   select count(*) into v_inc
     from incidencias i join eventos e on e.id = i.event_id
-   where e.created_by = v_org and i.estado = 'abierta';
+   where e.created_by = p_user and i.estado = 'abierta';
+
+  v_cand := (v_rep >= 5 and v_media >= 4 and v_eventos >= 2 and v_inc = 0);
 
   update profiles set
     reputation_score    = v_rep,
-    promocion_pendiente = (rol = 'usuario' and v_rep >= 5 and v_media >= 4 and v_eventos >= 2 and v_inc = 0)
-  where id = v_org;
+    promocion_pendiente = (rol = 'usuario' and v_cand),
+    -- si es candidato nuevo o su reputación ha cambiado, la IA debe revisarlo otra vez
+    promocion_revisada_at = case
+      when rol = 'usuario' and v_cand
+           and (not promocion_pendiente or reputation_score is distinct from v_rep) then null
+      else promocion_revisada_at end
+  where id = p_user;
+end $$;
+revoke execute on function public.recalcular_reputacion(uuid) from public, anon, authenticated;
+
+create or replace function public.tg_resena_despues() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform recalcular_reputacion((select created_by from eventos where id = new.event_id));
   return null;
 end $$;
 create trigger resenas_despues after insert or update on resenas
@@ -409,6 +475,46 @@ create trigger resenas_antes before insert on resenas
   for each row execute function tg_resena_antes();
 
 -- =====================================================================
+-- 14b. INCIDENCIAS: las gestiona el moderador o el PUBLICADOR organizador
+--   del evento (su autor o el dueño de la entidad organizadora).
+--   Un usuario normal no puede resolver incidencias de sus propios eventos
+--   (así no puede "limpiarse" el camino a Publicador).
+-- =====================================================================
+create or replace function public.puede_gestionar_evento(p_event uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select es_moderador()
+      or (mi_rol() = 'publicador' and exists (
+            select 1 from eventos e
+            left join entidades en on en.id = e.entidad_organizadora_id
+             where e.id = p_event
+               and (e.created_by = auth.uid() or en.owner_user_id = auth.uid())));
+$$;
+
+-- El publicador solo puede cambiar el 'estado' (no el texto ni el autor de la incidencia)
+create or replace function public.tg_incidencia_antes() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if current_user = 'authenticated' and not es_moderador() then
+    new.event_id   := old.event_id;
+    new.user_id    := old.user_id;
+    new.comentario := old.comentario;
+  end if;
+  return new;
+end $$;
+create trigger incidencias_antes before update on incidencias
+  for each row execute function tg_incidencia_antes();
+
+-- Abrir o resolver una incidencia recalcula la reputación del organizador
+create or replace function public.tg_incidencia_despues() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform recalcular_reputacion((select created_by from eventos where id = coalesce(new.event_id, old.event_id)));
+  return null;
+end $$;
+create trigger incidencias_despues after insert or update or delete on incidencias
+  for each row execute function tg_incidencia_despues();
+
+-- =====================================================================
 -- 15. FUNCIONES QUE LLAMA EL FRONT / BACKEND (supabase.rpc)
 -- =====================================================================
 
@@ -420,6 +526,8 @@ language sql stable security definer set search_path = public as $$
     select p.*, coalesce(p.preferencias->'categorias','[]'::jsonb) cats,
                 coalesce(p.preferencias->'municipios','[]'::jsonb) munis
       from profiles p where p.id = p_user
+       -- desde la app, cada uno solo puede pedir SUS recomendaciones (el servidor, todas)
+       and (auth.uid() is null or p.id = auth.uid() or es_moderador())
   ), hist as (
     select distinct e.category from inscripciones i join eventos e on e.id = i.event_id
      where i.user_id = p_user and i.status = 'confirmada'
@@ -444,6 +552,7 @@ language sql stable security definer set search_path = public as $$
     left join municipios m on m.id = e.municipio_id
     where e.status = 'abierto'
       and e.starts_at between now() and now() + interval '21 days'
+      and (e.inscripcion_hasta is null or e.inscripcion_hasta > now())
       and (u.edad is null or e.min_age is null or u.edad >= e.min_age)
       and (u.edad is null or e.max_age is null or u.edad <= e.max_age)
       and not exists (select 1 from inscripciones i where i.event_id = e.id and i.user_id = p_user)
@@ -466,6 +575,23 @@ begin
   return v_id;  -- null = código no válido
 end $$;
 revoke execute on function public.vincular_telegram(text, bigint) from public, anon, authenticated;
+
+-- Pone al día los estados automáticos de todos los eventos publicados
+-- (abierto -> completo -> inscripcion_cerrada -> en_curso -> finalizado).
+-- La ejecuta pg_cron cada minuto (sección 21) y el servidor cada 5 min (plan B).
+-- Devuelve cuántos eventos han cambiado.
+create or replace function public.actualizar_estados_eventos() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  update eventos e
+     set status = estado_automatico(e.starts_at, e.ends_at, e.inscripcion_hasta, e.max_capacity, e.confirmed_count)
+   where e.status = any(estados_automaticos())
+     and e.status <> estado_automatico(e.starts_at, e.ends_at, e.inscripcion_hasta, e.max_capacity, e.confirmed_count);
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke execute on function public.actualizar_estados_eventos() from public, anon, authenticated;
 
 -- =====================================================================
 -- 16. VISTAS PARA EL PANEL DEL MODERADOR
@@ -492,13 +618,22 @@ from eventos a
 join eventos b on a.id < b.id
 left join municipios ma on ma.id = a.municipio_id
 left join municipios mb on mb.id = b.municipio_id
-where a.status in ('abierto','pendiente_moderacion') and b.status in ('abierto','pendiente_moderacion')
+where a.status in ('abierto','completo','inscripcion_cerrada','pendiente_moderacion')
+  and b.status in ('abierto','completo','inscripcion_cerrada','pendiente_moderacion')
   and tstzrange(a.starts_at, coalesce(a.ends_at, a.starts_at + interval '2 hours'))
    && tstzrange(b.starts_at, coalesce(b.ends_at, b.starts_at + interval '2 hours'));
 
+-- Candidatos a Publicador. promocion_motivo = lo que dijo la IA o el moderador;
+-- promocion_revisada_at null = aún no revisado por la IA.
 create or replace view v_candidatos_publicador with (security_invoker = true) as
-select id, full_name, reputation_score, telegram_linked from profiles
+select id, full_name, reputation_score, telegram_linked, promocion_motivo, promocion_revisada_at
+  from profiles
  where promocion_pendiente and rol = 'usuario';
+
+-- Nombres visibles en el chat (profiles solo deja leer el propio).
+-- Expone SOLO id, nombre y rol: nunca email, teléfono, dirección ni Telegram.
+create or replace view perfiles_publicos as select id, full_name, rol from profiles;
+grant select on perfiles_publicos to anon, authenticated;
 
 -- =====================================================================
 -- 17. SEGURIDAD (RLS): quién puede leer/escribir qué desde la app
@@ -533,7 +668,7 @@ create policy "entidades edicion" on entidades for update using (owner_user_id =
 
 -- Eventos: visitantes ven los publicados; cada cual ve los suyos; moderador todo
 create policy "eventos lectura" on eventos for select using (
-  status in ('abierto','pospuesto','cancelado','finalizado')
+  status in ('abierto','completo','inscripcion_cerrada','en_curso','pospuesto','cancelado','finalizado')
   or created_by = auth.uid() or es_moderador());
 create policy "eventos alta"    on eventos for insert with check (auth.uid() is not null);
 create policy "eventos edicion" on eventos for update using (created_by = auth.uid() or es_moderador());
@@ -547,25 +682,33 @@ create policy "insc alta"    on inscripciones for insert with check (user_id = a
 create policy "insc edicion" on inscripciones for update using (
   user_id = auth.uid() or es_moderador()
   or exists (select 1 from eventos e where e.id = event_id and e.created_by = auth.uid()));
+-- Borrar mi inscripción (para volver a apuntarme). OJO: borrar NO sube a nadie
+-- de la lista de espera; cancelar (status = 'cancelada') sí.
+create policy "insc borrar propia" on inscripciones for delete using (user_id = auth.uid());
 
 -- Reseñas: públicas en lectura
 create policy "resenas lectura" on resenas for select using (true);
 create policy "resenas alta"    on resenas for insert with check (auth.uid() is not null);
 create policy "resenas moderador" on resenas for delete using (es_moderador());
 
--- Incidencias: cualquiera registrado reporta; el moderador gestiona
+-- Incidencias: cualquiera registrado reporta; las gestiona el moderador o el
+-- publicador organizador del evento (ver puede_gestionar_evento, sección 14b)
 create policy "inc alta"      on incidencias for insert with check (user_id = auth.uid());
-create policy "inc lectura"   on incidencias for select using (user_id = auth.uid() or es_moderador());
-create policy "inc gestion"   on incidencias for update using (es_moderador());
+create policy "inc lectura"   on incidencias for select using (user_id = auth.uid() or puede_gestionar_evento(event_id));
+create policy "inc gestion"   on incidencias for update using (puede_gestionar_evento(event_id))
+                                                with check (puede_gestionar_evento(event_id));
 
 -- Chat del evento: lectura pública si el evento es visible; escribir registrado
 create policy "chat lectura" on mensajes_evento for select using (
   exists (select 1 from eventos e where e.id = event_id
-          and (e.status in ('abierto','pospuesto','cancelado','finalizado') or es_moderador())));
+          and (e.status in ('abierto','completo','inscripcion_cerrada','en_curso','pospuesto','cancelado','finalizado')
+               or es_moderador())));
+-- (corregido: el anuncio fijado también debe ir firmado por quien lo escribe)
 create policy "chat alta" on mensajes_evento for insert with check (
-  user_id = auth.uid() and tipo in ('pregunta','respuesta')
-  or (tipo = 'anuncio_fijado' and exists (select 1 from eventos e where e.id = event_id
-                                           and (e.created_by = auth.uid() or es_moderador()))));
+  user_id = auth.uid() and (
+    tipo in ('pregunta','respuesta')
+    or (tipo = 'anuncio_fijado' and exists (select 1 from eventos e where e.id = event_id
+                                             and (e.created_by = auth.uid() or es_moderador())))));
 create policy "chat borrado" on mensajes_evento for delete using (user_id = auth.uid() or es_moderador());
 
 -- Ingestas y notificaciones: solo moderador (el backend entra con service_role)
@@ -626,8 +769,22 @@ from (values
 join municipios m on m.nombre = v.pueblo;
 
 -- =====================================================================
+-- 21. ESTADOS AUTOMÁTICOS CADA MINUTO (pg_cron, gratis en Supabase)
+--     Si falla, actívalo en Database > Extensions > pg_cron y ejecuta
+--     solo este bloque. Mientras tanto, el servidor lo hace cada 5 min.
+-- =====================================================================
+do $$ begin
+  create extension if not exists pg_cron;
+  perform cron.unschedule(jobid) from cron.job where jobname = 'estados-eventos';
+  perform cron.schedule('estados-eventos', '* * * * *', 'select public.actualizar_estados_eventos()');
+exception when others then
+  raise notice 'pg_cron: actívalo a mano en Database > Extensions (%). El servidor lo cubre cada 5 min.', sqlerrm;
+end $$;
+
+-- =====================================================================
 -- RESET (solo si necesitáis empezar de cero; descomentad y ejecutad)
 -- =====================================================================
+-- select cron.unschedule('estados-eventos');
 -- drop table if exists notificaciones, ingestas, mensajes_evento, incidencias, resenas,
 --   inscripciones, eventos, entidades, profiles, categorias, municipios cascade;
 -- drop view if exists v_eventos_stats, v_solapamientos, v_candidatos_publicador;
