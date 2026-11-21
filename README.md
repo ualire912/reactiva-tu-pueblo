@@ -52,7 +52,9 @@ Están en `api/.env.example`. **Ninguna clave está en el código ni en el repos
 
 **Automático en segundo plano** (`api/tareas.py`, cada 5 min): estados de los eventos, petición de reseñas al terminar un evento y revisión con IA de los candidatos a Publicador. Si la IA aprueba con seguridad, el candidato se promueve solo; si duda, lo decide el moderador.
 
-También: avisar al autor cuando un moderador aprueba o rechaza su propuesta y, cada 6 horas, el agente de eventos reales.
+También: avisar al autor cuando un moderador aprueba o rechaza su propuesta, **recordatorio por Telegram el día antes** a cada apuntado, **recomendaciones de planes parecidos** a los que fue cada uno (p. ej. fue a un mercadillo → le recomienda el próximo mercadillo; como mucho un mensaje al día) y, cada 6 horas, el agente de eventos reales.
+
+**Eventos de demostración** (mientras no haya eventos futuros reales): `python demo_eventos_proximos.py` los crea y `python demo_eventos_proximos.py limpiar` los borra todos (llevan `source_url` `https://prueba.local/demo/…`).
 
 ## Eventos reales: agente de Facebook y noticias (arranque en 5 minutos)
 La agenda se llena con eventos **reales** de los pueblos, nunca inventados. La IA propone; el sistema valida; una persona decide.
@@ -65,6 +67,8 @@ python scraper/agente_eventos.py --dry-run      # qué haría, sin escribir nada
 python scraper/agente_eventos.py                # guarda ingestas y eventos en Supabase
 python scraper/agente_eventos.py --archivo pruebas/apify_XXXX.json   # repetir sin gastar crédito
 ```
+Además de leer páginas concretas, **busca publicaciones** en Facebook con palabras de cada pueblo (`busqueda_facebook` en `fuentes_eventos.json`; el actor de Apify y su formato de entrada se configuran ahí). Lo que no nombra ninguno de los pueblos o no parece un evento se ignora sin guardarse. **Organizaciones** (ayuntamientos, asociaciones…): la IA decide y, si no son de confianza o duda, al moderador. **Personas**: solo si la IA ve claro que proponen un evento, y entonces siempre al moderador; de lo que no es un evento no se guarda el texto. Al moderador no le llegan spam ni publicaciones que no sean eventos.
+
 Cómo decide: cada post pasa por reglas, spam e IA (texto con freellmpool → Gemini; carteles con `extractor_vlm.py`). Las fechas relativas ("este sábado") se calculan desde la fecha de publicación. Los recordatorios del mismo evento no se duplican. Fuente oficial y la IA segura → **publicado**; si falta algo o la IA duda → **borrador_ia**; completo → **pendiente_moderacion**. Las webs de los ayuntamientos bloquean los programas automáticos y no se intenta saltar esa protección.
 
 **Extractor de carteles** (`api/extractor_vlm.py`): cascada de modelos de visión gratuitos (Gemini, NVIDIA, Mistral, Groq, OpenRouter) con segunda opinión si la confianza es baja; nunca inventa (lo que no sale en el cartel va a `missing`). Registra cada llamada en `api/pruebas/ia_llamadas.csv`.

@@ -384,7 +384,8 @@ _CAMPOS_EVENTO = ["title", "category", "starts_at", "ends_at", "duration_minutes
                   "description", "is_accessible", "inscripcion_hasta"]
 
 
-def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) -> dict:
+def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
+                               motivo: str | None = None) -> dict:
     """Crea el evento. Devuelve la fila creada, o {"error", "missing"} si no se puede.
     publicar=None: decide la entidad/rol (auto_approve, publicador, moderador).
     publicar=False: siempre a revisión del moderador (p. ej. la IA no está segura).
@@ -418,7 +419,7 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) ->
     #   usuario normal -> siempre pasa por el moderador
     autor_id = ing.get("user_id") or (entidad or {}).get("owner_user_id")
     rol = (perfil(autor_id) or {}).get("rol") if autor_id else None
-    motivo_revision = None
+    motivo_revision = motivo  # por qué lo revisa un moderador (si no se publica)
     if publicar is not None:  # quien llama ya ha decidido (agente, fuente verificada...)
         publica_directo = publicar
     elif (entidad or {}).get("auto_approve") or rol == "moderador":

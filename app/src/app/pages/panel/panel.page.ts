@@ -340,9 +340,13 @@ export class PanelPage implements OnInit {
 
   // --- PESTAÑA 2: DETECTADOS POR IA (INGESTAS) ---
   async cargarIngestas() {
+    // Solo posibles EVENTOS pendientes de revisar: el spam, lo descartado (no es un evento,
+    // fuera de la Mancomunidad...) y lo ya convertido en evento no le llegan al moderador
     const { data } = await this.sb.client
       .from('ingestas')
       .select('*')
+      .in('estado', ['extraida', 'esperando_confirmacion'])
+      .is('event_id', null)
       .order('created_at', { ascending: false })
       .limit(30);
 
