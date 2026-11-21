@@ -251,8 +251,14 @@ def _llamar(prompt: str, image_bytes: bytes | None = None,
         print("[ia] Modelos saturados, reintento en 2 s...")
         time.sleep(2)
 
+    if image_bytes:
+        # NVIDIA y freellmpool no ven imágenes: con un cartel responderían "vacío" y se
+        # descartaría mal. Mejor devolver None (se reintenta más tarde).
+        print("[ia] Gemini no disponible para leer la imagen -> se reintentará")
+        return None
+
     clave = os.getenv("NVIDIA_API_KEY")
-    if clave and not audio_bytes:  # NVIDIA no entiende audio; la imagen se ignora
+    if clave and not audio_bytes:  # NVIDIA no entiende audio
         for modelo in NVIDIA_MODELOS:
             try:
                 t0 = time.time()
@@ -372,7 +378,9 @@ def _hoy_texto() -> str:
 # ══════════════════════════════════════════════════════════════
 _PROMPT_EXTRAER = """Eres un extractor de datos de eventos de pueblos de Almería (España).
 Hoy es {hoy}, zona horaria Europe/Madrid. Úsalo para fechas relativas ("este sábado", "mañana").
-Si el texto no dice el año, usa la PRÓXIMA vez que llegue esa fecha (nunca una fecha pasada).
+Si el texto empieza por "[Publicado el DD/MM/AAAA]", las fechas relativas ("el próximo sábado",
+"mañana") y el año se calculan desde ESA fecha de publicación, no desde hoy.
+Si no dice el año ni la fecha de publicación, usa la PRÓXIMA vez que llegue esa fecha.
 
 Lee el texto (y el cartel si se adjunta) y devuelve SOLO un JSON con exactamente estas claves:
 title (string corto), category, starts_at, ends_at, duration_minutes (entero), municipio,
@@ -405,7 +413,8 @@ TEXTO:
 
 def _evento_vacio(text: str | None) -> dict:
     """Plan B: sin IA. El moderador o el bot completan el resto."""
-    primera = next((l.strip() for l in (text or "").splitlines() if l.strip()), None)
+    primera = next((l.strip() for l in (text or "").splitlines()
+                    if l.strip() and not l.strip().startswith("[Publicado el")), None)
     return {
         "title": re.split(r"(?<=[.!?])\s", primera)[0][:80] if primera else None,
         "category": "otro",
@@ -461,19 +470,42 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
     if ev["price"] == 0 and not hay_imagen and not _RE_GRATIS.search(_norm(text or "")):
         ev["price"] = None
 
-    # El modelo a veces pone el año pasado ("5 de diciembre" -> 2025). Si la fecha ya pasó y
-    # el mismo día del año siguiente cae dentro de los próximos 12 meses, se corrige el año.
+    # Fechas en el pasado:
+    #  - si al llevarla al año correcto (el más cercano) cae en los últimos 6 meses ->
+    #    el evento YA HA PASADO (post antiguo): no se publica
+    #  - si cae en el futuro (el modelo puso mal el año) -> se corrige el año
     ayer = datetime.now(TZ) - timedelta(days=1)
-    for campo in ("starts_at", "ends_at", "inscripcion_hasta"):
-        if ev[campo]:
-            d_ = datetime.fromisoformat(ev[campo])
-            if d_ < ayer:
-                try:
-                    while d_ < ayer:
-                        d_ = d_.replace(year=d_.year + 1)
-                except ValueError:  # 29 de febrero
-                    d_ = None
-                ev[campo] = d_.isoformat() if d_ and d_ < ayer + timedelta(days=366) else None
+    hace_6m = ayer - timedelta(days=180)
+
+    def _ajustar(iso):
+        d_ = datetime.fromisoformat(iso)
+        if d_ >= ayer:
+            return d_, False
+        try:
+            while d_ < hace_6m:
+                d_ = d_.replace(year=d_.year + 1)
+        except ValueError:  # 29 de febrero
+            return None, False
+        if d_ < ayer:
+            return d_, True  # pasado reciente
+        return (d_, False) if d_ < ayer + timedelta(days=366) else (None, False)
+
+    if ev["starts_at"]:
+        d_, pasado = _ajustar(ev["starts_at"])
+        if pasado:
+            ev["es_evento"] = False
+            ev["motivo_no_evento"] = "el evento ya ha pasado"
+            ev["starts_at"] = d_.isoformat()
+        else:
+            delta = (d_ - datetime.fromisoformat(ev["starts_at"])) if d_ else None
+            ev["starts_at"] = d_.isoformat() if d_ else None
+            for campo in ("ends_at", "inscripcion_hasta"):  # mover igual que el inicio
+                if ev[campo]:
+                    ev[campo] = (datetime.fromisoformat(ev[campo]) + delta).isoformat() if delta else None
+    elif ev["inscripcion_hasta"]:
+        d_, pasado = _ajustar(ev["inscripcion_hasta"])
+        ev["inscripcion_hasta"] = None if pasado or not d_ else d_.isoformat()
+
     if ev["ends_at"] and ev["starts_at"] and ev["ends_at"] <= ev["starts_at"]:
         ev["ends_at"] = None
     # La BD da error si inscripcion_hasta > starts_at -> mejor null
@@ -495,6 +527,10 @@ def extraer_evento(text: str | None, image_bytes: bytes | None = None) -> dict:
         prompt = _PROMPT_EXTRAER.format(
             hoy=_hoy_texto(), categorias=", ".join(CATEGORIAS),
             pueblos=", ".join(PUEBLOS), texto=(text or "(sin texto, mira el cartel)")[:4000])
+        if image_bytes:
+            prompt += ("\nSE ADJUNTA LA IMAGEN DEL CARTEL/POST: los datos principales (título, fecha, "
+                       "hora, lugar, precio) suelen estar EN LA IMAGEN. Léela con atención y "
+                       "combínala con el texto.\n")
         datos = _json(_llamar(prompt, image_bytes=image_bytes))
         return _validar_evento(datos or {}, text, hay_imagen=bool(image_bytes))
     except Exception as e:
@@ -608,9 +644,9 @@ def _reglas_mensaje(text: str) -> dict:
     if p:
         filtros["municipio"] = p
     sinonimos = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
-                 "deporte": ["deporte", "bici", "futbol", "petanca", "correr", "carrera", "torneo"],
-                 "cultura": ["cultura", "cine", "teatro", "concierto", "museo", "charla", "libro"],
-                 "gastronomia": ["gastronomia", "comida", "comer", "migas", "degustacion", "mercadillo"],
+                 "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
+                 "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
+                 "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
                  "fiestas": ["fiesta", "verbena", "feria", "baile"],
                  "taller": ["taller", "curso", "manualidad", "esparto"],
                  "voluntariado": ["voluntari", "ayudar", "solidari"]}

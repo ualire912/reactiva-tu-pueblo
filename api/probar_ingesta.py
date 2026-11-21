@@ -5,6 +5,8 @@ Uso (desde la carpeta api):
     python probar_ingesta.py            -> mete los 6 posts de prueba y los procesa
     python probar_ingesta.py crear      -> además crea el evento del taller (queda pendiente_moderacion)
     python probar_ingesta.py limpiar    -> borra las ingestas y eventos de prueba
+    python probar_ingesta.py ver        -> muestra las últimas 15 ingestas (p. ej. las de Facebook)
+    python probar_ingesta.py limpiar-facebook -> borra las ingestas leídas de Facebook (para repetir la demo)
 
 Los posts de prueba tienen source_url "https://www.facebook.com/prueba/posts/..."
 para poder borrarlos luego sin tocar nada más.
@@ -23,6 +25,30 @@ from db import sb  # noqa: E402
 
 PATRON = "https://www.facebook.com/prueba/posts/%"
 modo = sys.argv[1] if len(sys.argv) > 1 else ""
+
+if modo == "ver":
+    filas = (sb.table("ingestas").select("created_at, estado, source_url, spam_reason, extracted, missing")
+             .order("created_at", desc=True).limit(15).execute().data)
+    if not filas:
+        print("No hay ingestas. ¿Has lanzado el lector y está el servidor encendido?")
+    for f in filas:
+        ex = f.get("extracted") or {}
+        print("=" * 70)
+        print(f"{f['estado']:<22} {f['source_url'][:80]}")
+        if ex.get("title"):
+            print(f"   título : {ex.get('title')} | {ex.get('starts_at')} | {ex.get('location_name')}")
+        if f.get("missing"):
+            print(f"   falta  : {f['missing']}")
+        if f.get("spam_reason") and f["estado"] in ("spam", "descartada", "error"):
+            print(f"   motivo : {f['spam_reason']}")
+    sys.exit()
+
+if modo == "limpiar-facebook":
+    # Solo las ingestas que no se han convertido en evento (las confirmadas se quedan)
+    ing = (sb.table("ingestas").delete().like("source_url", "https://www.facebook.com/permalink.php%")
+           .is_("event_id", "null").execute().data)
+    print(f"Borradas {len(ing)} ingestas de Facebook (sin evento). Ya puedes volver a leer la página.")
+    sys.exit()
 
 if modo == "limpiar":
     ev = sb.table("eventos").delete().like("source_url", PATRON).execute().data
