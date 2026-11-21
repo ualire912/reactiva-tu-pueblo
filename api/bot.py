@@ -282,7 +282,8 @@ def _render_tarjeta_evento_html(
 
     # 📅 Miércoles 25 de noviembre · 14:00
     fecha_es = _format_fecha_es(ev.get("starts_at"))
-    fecha_txt = fecha_es.replace(" a las ", " · ")
+    # 00:00 = la fuente no dice la hora (fiestas de varios días...): se muestra solo el día
+    fecha_txt = fecha_es.replace(" a las 00:00", "").replace(" a las ", " · ")
 
     # 📍 Plaza Mayor · Senés
     pueblo = ev.get("municipio") or ""

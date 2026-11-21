@@ -80,5 +80,29 @@
       "municipio": "Uleila del Campo",
       "url": "https://www.lavozdealmeria.com/vivir/turismo/turismo-rural/615274/pueblo-almeria-celebra-semana-fiesta-emigrante-reencuentros-gran-verbena.html"
     }
-  ]
+  ],
+  "busqueda_facebook": {
+    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> IA (publica si es de confianza y la IA está segura); personas -> solo si la IA ve claro que propone un evento, y entonces al moderador. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
+    "actor": "scraper_one/facebook-posts-search",
+    "entrada": {
+      "query": "{q}",
+      "maxResults": "{n}"
+    },
+    "por_consulta": 15,
+    "pueblos": [
+      "Senés",
+      "Lucainena de las Torres",
+      "Tahal",
+      "Uleila del Campo",
+      "Velefique"
+    ],
+    "consultas": [
+      "{pueblo} quedada",
+      "{pueblo} excursión",
+      "{pueblo} fiesta",
+      "{pueblo} taller",
+      "{pueblo} ruta",
+      "{pueblo} mercadillo"
+    ]
+  }
 }

@@ -136,6 +136,104 @@ def fuente_del_post(post: dict, paginas: list[dict]) -> dict | None:
     return paginas[0] if len(paginas) == 1 else None
 
 
+# ── 1a. Buscar publicaciones en Facebook por palabras clave ────
+# Organizaciones: ayuntamientos, asociaciones, clubes... (lo demás se trata como una persona)
+_ORGANIZACION = re.compile(r"\b(ayuntamiento|ayto|asociacion|club|hermandad|cofradia|pena|diputacion|"
+                           r"mancomunidad|parroquia|colegio|biblioteca|banda|ampa|cooperativa|"
+                           r"comision de fiestas|junta|centro de dia|guadalinfo|escuela|fundacion)\b")
+
+
+def _epoca_a_iso(v) -> str:
+    if isinstance(v, (int, float)):
+        segundos = v / 1000 if v > 1e11 else v
+        return datetime.fromtimestamp(segundos, timezone.utc).isoformat()
+    return str(v or "")
+
+
+def normalizar_resultado(r: dict) -> dict:
+    """Cada actor de búsqueda de Apify devuelve los campos con nombres distintos: se unifican."""
+    autor = r.get("author") or r.get("user") or r.get("owner") or {}
+    if not isinstance(autor, dict):
+        autor = {"name": str(autor)}
+    nombre = (autor.get("name") or r.get("pageName") or r.get("authorName") or r.get("userName") or "")
+    tipo = str(autor.get("type") or r.get("authorType") or r.get("profileType") or "").lower()
+    imagen = r.get("image") or r.get("imageUrl") or r.get("thumbnail")
+    if isinstance(imagen, dict):
+        imagen = imagen.get("uri") or imagen.get("url")
+    post = {
+        "text": r.get("text") or r.get("message") or r.get("postText") or r.get("content") or "",
+        "url": r.get("url") or r.get("postUrl") or r.get("post_url") or r.get("link"),
+        "time": _epoca_a_iso(r.get("time") or r.get("date") or r.get("timestamp")
+                             or r.get("publishedAt") or r.get("creation_time")),
+        "media": r.get("media") or [],
+        "_imagen": imagen if isinstance(imagen, str) and imagen.startswith("http") else None,
+    }
+    es_org = bool(autor.get("isPage") or r.get("isPage") or tipo in ("page", "pagina")
+                  or _ORGANIZACION.search(_norm(nombre)))
+    return {"post": post, "autor_url": autor.get("url") or autor.get("profileUrl") or r.get("pageUrl"),
+            "es_organizacion": es_org, "consulta": r.get("searchQuery") or r.get("query") or ""}
+
+
+def buscar_en_facebook(cfg: dict, semanas: int) -> list[dict]:
+    """Lanza el actor de búsqueda de Apify con cada consulta. La forma de la entrada se
+    configura en fuentes_eventos.json ('entrada'), porque cada actor la pide distinta."""
+    token = os.getenv("APIFY_TOKEN", "").strip()
+    actor = cfg.get("actor", "scraper_one/facebook-posts-search").replace("/", "~")
+    plantilla = cfg.get("entrada") or {"query": "{q}", "maxResults": "{n}"}
+    n = int(cfg.get("por_consulta", 15))
+    consultas = [c.replace("{pueblo}", p) for c in cfg.get("consultas", [])
+                 for p in (cfg.get("pueblos") or ia.PUEBLOS)] if "{pueblo}" in "".join(cfg.get("consultas", [])) \
+        else cfg.get("consultas", [])
+    resultados: list[dict] = []
+    for q in consultas:
+        entrada = json.loads(json.dumps(plantilla).replace("{q}", q).replace('"{n}"', str(n))
+                             .replace("{n}", str(n)).replace("{semanas}", str(semanas)))
+        try:
+            r = httpx.post(f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
+                           headers={"Authorization": f"Bearer {token}"}, json=entrada, timeout=360)
+            if r.status_code >= 400:
+                print(f"   Apify ({q}): HTTP {r.status_code} {r.text[:150]}")
+                continue
+            for item in r.json() or []:
+                if isinstance(item, dict):
+                    item.setdefault("searchQuery", q)
+                    resultados.append(item)
+        except httpx.HTTPError as e:
+            print(f"   Apify ({q}): {type(e).__name__}")
+    print(f"Búsqueda en Facebook: {len(consultas)} consultas -> {len(resultados)} publicaciones")
+    return resultados
+
+
+def procesar_resultado_busqueda(res: dict, dry: bool, vistos: set[str]) -> str:
+    """Una publicación encontrada buscando. Solo sigue si nombra uno de los pueblos y
+    parece un evento; si no, se ignora SIN guardarla (no se almacenan posts personales
+    que no tienen que ver)."""
+    post = res["post"]
+    texto = post["text"]
+    url = post.get("url")
+    if not url or url in vistos:
+        return "repetido"
+    vistos.add(url)
+    pueblo = ia._pueblo_en_texto(texto)
+    if not pueblo:
+        return "ignorado_no_es_de_los_pueblos"
+    if not parece_evento(texto, bool(post.get("_imagen")), pagina_de_pueblo=False):
+        return "ignorado_no_parece_evento"
+    if res["es_organizacion"]:
+        entidad = None
+        if res.get("autor_url"):
+            filas = sb.table("entidades").select("auto_approve").eq(
+                "facebook_page_url", str(res["autor_url"]).rstrip("/")).execute().data
+            entidad = filas[0] if filas else None
+        fuente = {"municipio": pueblo, "nombre": "organización en Facebook",
+                  "oficial": bool(entidad and entidad.get("auto_approve")),
+                  "url": res.get("autor_url")}
+    else:
+        fuente = {"municipio": pueblo, "nombre": "publicación de una persona en Facebook",
+                  "oficial": False, "persona": True}
+    return procesar_post(post, fuente, dry)
+
+
 # ── 1b. Leer artículos de prensa / agendas públicas ──────────
 class _LectorHTML(HTMLParser):
     """Saca de una noticia: título, fecha de publicación, imagen y el texto de los párrafos."""
@@ -286,7 +384,10 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
         cabecera = f"[Publicado el {pub:%d/%m/%Y}] (un {dias[pub.weekday()]})\n"
     except ValueError:
         pass
-    donde = "Página de Facebook" if origen == "facebook" else "Noticia/agenda publicada en"
+    if fuente.get("persona"):
+        donde = "Publicación de un vecino en Facebook (¿propone un plan?)"
+    else:
+        donde = "Página de Facebook" if origen == "facebook" else "Noticia/agenda publicada en"
     nota = ""
     if origen == "web":  # se carga el historial real: un evento ya celebrado también cuenta
         nota = ("(Es una noticia sobre un evento concreto del pueblo. Aunque ya se haya celebrado, "
@@ -323,10 +424,19 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
         ingesta._actualizar_ingesta(fila["id"], estado="extraida",
                                     spam_reason="evento real (noticia revisada)")
         ing["estado"] = "extraida"
-    if ing["estado"] not in ("extraida", "esperando_confirmacion"):
-        return ing["estado"]  # spam / descartada / error
-
     ext = ing.get("extracted") or {}
+    if fuente.get("persona") and ing["estado"] in ("extraida", "esperando_confirmacion") \
+            and float(ext.get("confidence") or 0) < 0.6:
+        # Una persona cualquiera: al moderador SOLO le llegan propuestas que la IA ve claras
+        ingesta._actualizar_ingesta(fila["id"], estado="descartada",
+                                    spam_reason="persona: la IA no ve claro que proponga un evento")
+        ing["estado"] = "descartada"
+    if ing["estado"] not in ("extraida", "esperando_confirmacion"):
+        if fuente.get("persona") and ing["estado"] in ("descartada", "spam"):
+            # Publicación de un particular que no es un evento: no se guarda su contenido
+            # (solo el enlace, para no volver a procesarla)
+            ingesta._actualizar_ingesta(fila["id"], raw_text=None, image_url=None, extracted=None)
+        return ing["estado"]  # spam / descartada / error
     muni_id = municipio_id(ext.get("municipio") or "") or municipio_id(fuente["municipio"])
     cambiado = corregir_anio(ext, post.get("time"), texto)
     if not ext.get("municipio"):  # el post es de una página del pueblo: ese es el pueblo
@@ -343,16 +453,28 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
               and "hora" not in (ext.get("missing") or []))
     # Fuente oficial/verificada y la IA segura -> publicado. Si duda -> moderador.
     publicar = bool(fuente.get("oficial") and segura and not fuente.get("dudoso"))
-    ev = ingesta.crear_evento_desde_ingesta(fila["id"], publicar=publicar)
+    if fuente.get("persona"):
+        motivo = "propuesta de un vecino en Facebook: la revisa un moderador"
+    elif not fuente.get("oficial"):
+        motivo = "publicado por una organización que aún no es de confianza"
+    else:
+        motivo = "la IA tiene dudas o faltan datos"
+    ev = ingesta.crear_evento_desde_ingesta(fila["id"], publicar=publicar, motivo=motivo)
     if "error" in ev:
         return f"falta: {','.join(ev.get('missing') or []) or ev['error'][:40]}"
     return f"evento_{ev.get('status')}"
 
 
+def cargar_busqueda(ruta: str = FUENTES) -> dict:
+    with open(ruta, encoding="utf-8") as f:
+        return json.load(f).get("busqueda_facebook") or {}
+
+
 def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
-             fuentes: str = FUENTES, solo: str | None = None) -> dict[str, int]:
+             fuentes: str = FUENTES, solo: str | None = None,
+             archivo_busqueda: str | None = None) -> dict[str, int]:
     """Una pasada completa. La usa también la tarea programada de Render (tareas.py).
-    solo='facebook' | 'articulos' | None (las dos)."""
+    solo='paginas' | 'busqueda' | 'articulos' | None (todo)."""
     paginas, articulos = cargar_fuentes(fuentes)
     resumen: dict[str, int] = {}
 
@@ -360,8 +482,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
         resumen[res] = resumen.get(res, 0) + 1
         print(f"  [{res}] {municipio} · {fecha[:10]} · {texto[:70]!r}")
 
-    # ── Facebook (Apify)
-    if solo != "articulos" and (archivo or (paginas and os.getenv("APIFY_TOKEN"))):
+    # ── Facebook: páginas concretas (Apify)
+    if solo in (None, "paginas") and (archivo or (paginas and os.getenv("APIFY_TOKEN"))):
         if not dry:
             for p in paginas:
                 asegurar_entidad(p)
@@ -387,11 +509,33 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             except Exception as e:  # un post raro no para a los demás
                 res = f"error: {type(e).__name__}"
             anotar(res, fuente["municipio"], post.get("time") or "", post.get("text") or "(solo cartel)")
-    elif solo != "articulos":
-        print("Facebook: sin APIFY_TOKEN o sin páginas con URL real -> se salta")
+    elif solo in (None, "paginas"):
+        print("Facebook (páginas): sin APIFY_TOKEN o sin páginas con URL real -> se salta")
+
+    # ── Facebook: búsqueda de publicaciones de los pueblos (páginas y vecinos)
+    busqueda = cargar_busqueda(fuentes)
+    if solo in (None, "busqueda") and busqueda.get("consultas") and (
+            archivo_busqueda or os.getenv("APIFY_TOKEN")):
+        if archivo_busqueda:
+            with open(archivo_busqueda, encoding="utf-8") as f:
+                crudos = json.load(f)
+        else:
+            crudos = buscar_en_facebook(busqueda, semanas)
+        vistos: set[str] = set()
+        for crudo in crudos:
+            res = normalizar_resultado(crudo)
+            try:
+                r = procesar_resultado_busqueda(res, dry, vistos)
+            except Exception as e:
+                r = f"error: {type(e).__name__}"
+            if r != "repetido":
+                quien = "org" if res["es_organizacion"] else "persona"
+                anotar(r, quien, res["post"].get("time") or "", res["post"]["text"] or "(solo foto)")
+    elif solo in (None, "busqueda"):
+        print("Facebook (búsqueda): sin APIFY_TOKEN o sin consultas -> se salta")
 
     # ── Artículos de prensa / agendas públicas
-    if solo != "facebook" and articulos:
+    if solo in (None, "articulos") and articulos:
         print(f"Artículos: {len(articulos)}{' (SIMULACIÓN)' if dry else ''}")
         for art in articulos:
             if not dry and sb.table("ingestas").select("id").eq("source_url", art["url"]).execute().data:
@@ -425,9 +569,10 @@ def main():
     ap.add_argument("--semanas", type=int, default=6, help="antigüedad máxima de los posts")
     ap.add_argument("--archivo", help="JSON con posts ya descargados de Apify")
     ap.add_argument("--fuentes", default=FUENTES, help="otro archivo de fuentes (para pruebas)")
-    ap.add_argument("--solo", choices=["facebook", "articulos"], help="solo una de las fuentes")
+    ap.add_argument("--solo", choices=["paginas", "busqueda", "articulos"], help="solo una de las fuentes")
+    ap.add_argument("--archivo-busqueda", help="JSON con resultados ya descargados del actor de búsqueda")
     a = ap.parse_args()
-    ejecutar(a.dry_run, a.semanas, a.archivo, a.fuentes, a.solo)
+    ejecutar(a.dry_run, a.semanas, a.archivo, a.fuentes, a.solo, a.archivo_busqueda)
 
 
 if __name__ == "__main__":

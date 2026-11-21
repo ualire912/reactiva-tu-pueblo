@@ -5,7 +5,9 @@
   3. Revisar con IA a los candidatos a Publicador nuevos (los dudosos van al moderador)
   4. Indexar para el asistente (RAG de C1) los eventos nuevos o con contenido cambiado
   5. Avisar al autor cuando un moderador aprueba o rechaza su propuesta (también desde el panel web)
-  6. Cada 6 horas: el agente de eventos reales (Facebook con Apify + noticias)
+  6. Recordatorio por Telegram el día antes a cada apuntado
+  7. Recomendaciones de planes parecidos a los que ha ido (como mucho 1 mensaje al día)
+  8. Cada 6 horas: el agente de eventos reales (Facebook con Apify + noticias)
 
 Cada paso va en su propio try/except: si uno falla, los demás siguen.
 Render gratuito se duerme sin visitas: cron-job.org a /health cada 10 min lo mantiene despierto.
@@ -104,6 +106,135 @@ def _paso_avisos_moderacion():
             log.info("[tareas] avisado el autor de «%s» (%s)", ev["title"], ev["status"])
 
 
+def _fecha_txt(iso: str) -> str:
+    try:
+        from bot import _format_fecha_es
+        return _format_fecha_es(iso)
+    except Exception:
+        return str(iso)[:16].replace("T", " ")
+
+
+def _paso_recordatorios():
+    """Un día antes del evento: '⏰ Mañana tienes…' a cada apuntado (una sola vez)."""
+    from db import sb
+    from puentes import avisar
+
+    ahora = datetime.now(timezone.utc)
+    evs = sb.table("eventos").select("id,title,starts_at,location_name,municipio_id") \
+        .in_("status", ["abierto", "completo", "inscripcion_cerrada"]) \
+        .gte("starts_at", (ahora + timedelta(hours=18)).isoformat()) \
+        .lte("starts_at", (ahora + timedelta(hours=30)).isoformat()).execute().data or []
+    for ev in evs:
+        apuntados = sb.table("inscripciones").select("user_id").eq("event_id", ev["id"]) \
+            .eq("status", "confirmada").execute().data or []
+        ya = {f["user_id"] for f in sb.table("notificaciones").select("user_id")
+              .eq("event_id", ev["id"]).eq("tipo", "recordatorio").execute().data or []}
+        pueblo = ""
+        if ev.get("municipio_id"):
+            m = sb.table("municipios").select("nombre").eq("id", ev["municipio_id"]).execute().data
+            pueblo = m[0]["nombre"] if m else ""
+        donde = ", ".join(x for x in (ev.get("location_name"), pueblo) if x)
+        for a in apuntados:
+            if a["user_id"] in ya:
+                continue
+            texto = (f"⏰ ¡Mañana tienes «{ev['title']}»!\n\n📅 {_fecha_txt(ev['starts_at'])}"
+                     + (f"\n📍 {donde}" if donde else "") + "\n\n¡Te esperamos! Si al final no puedes ir, "
+                     "bórrate para dejar la plaza a otra persona.")
+            botones = [[("📅 Calendario", f"ics:{ev['id']}"), ("❌ Borrarme", f"cancel:{ev['id']}")],
+                       [("🚗 Llevo coche", f"coche:ofrece:{ev['id']}"),
+                        ("🙋 Busco coche", f"coche:busca:{ev['id']}")]]
+            if avisar(a["user_id"], texto, botones):
+                sb.table("notificaciones").upsert(
+                    {"user_id": a["user_id"], "event_id": ev["id"], "tipo": "recordatorio",
+                     "canal": "telegram", "motivo": "un día antes"},
+                    on_conflict="user_id,event_id,tipo").execute()
+                log.info("[tareas] recordatorio de «%s» enviado", ev["title"])
+
+
+_GENERICAS = {"evento", "eventos", "fiesta", "fiestas", "jornada", "jornadas", "edicion", "solidario",
+              "solidaria", "municipal", "popular", "lucainena", "torres", "senes", "tahal", "uleila",
+              "campo", "velefique", "sierra", "verano", "invierno", "navidad", "navideno", "navidena"}
+
+
+def _palabras(titulo: str) -> set[str]:
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFD", titulo or "")
+    t = "".join(c for c in t if unicodedata.category(c) != "Mn").lower()
+    return {w for w in re.findall(r"[a-z]{5,}", t) if w not in _GENERICAS}
+
+
+def recomendar_parecidos(user_id: str, limite: int = 2) -> list[dict]:
+    """Planes próximos parecidos a los que ha ido o se ha apuntado: mismo tipo de plan en el
+    título ("mercadillo" -> "mercadillo"), misma categoría y su pueblo. Con el motivo."""
+    from db import sb
+
+    hist = sb.table("inscripciones").select("event_id,eventos(title,category,municipio_id,starts_at)") \
+        .eq("user_id", user_id).eq("status", "confirmada").execute().data or []
+    if not hist:
+        return []
+    apuntado = {h["event_id"] for h in sb.table("inscripciones").select("event_id")
+                .eq("user_id", user_id).execute().data or []}
+    ya = {f["event_id"] for f in sb.table("notificaciones").select("event_id")
+          .eq("user_id", user_id).eq("tipo", "recomendacion").execute().data or []}
+    perfil = (sb.table("profiles").select("municipio_id").eq("id", user_id).execute().data or [{}])[0]
+    ahora = datetime.now(timezone.utc)
+    futuros = sb.table("eventos").select("id,title,category,municipio_id,starts_at") \
+        .eq("status", "abierto").gte("starts_at", ahora.isoformat()) \
+        .lte("starts_at", (ahora + timedelta(days=21)).isoformat()).execute().data or []
+    recs = []
+    for ev in futuros:
+        if ev["id"] in apuntado or ev["id"] in ya:
+            continue
+        mejor, motivo, puntos = None, "", 0
+        for h in hist:
+            antes = h.get("eventos") or {}
+            comunes = _palabras(ev["title"]) & _palabras(antes.get("title", ""))
+            p = 3 * len(comunes) + (1 if ev["category"] == antes.get("category") else 0)
+            if p > puntos:
+                mejor, puntos = antes, p
+                ya_fue = str(antes.get("starts_at") or "") < ahora.isoformat()
+                motivo = ((f"como fuiste a «{antes.get('title')}»" if ya_fue
+                           else f"como te apuntaste a «{antes.get('title')}»") if comunes
+                          else f"te gustan los planes de {ev['category']}")
+        if puntos and ev.get("municipio_id") in (perfil.get("municipio_id"),
+                                                  (mejor or {}).get("municipio_id")):
+            puntos += 1
+        if puntos >= 1:
+            recs.append({**ev, "puntos": puntos, "motivo": motivo})
+    recs.sort(key=lambda r: (-r["puntos"], r["starts_at"]))
+    return recs[:limite]
+
+
+def _paso_recomendaciones():
+    """Como mucho un mensaje al día por persona con planes parecidos a los suyos."""
+    from db import sb
+    from puentes import avisar
+
+    usuarios = sb.table("profiles").select("id,full_name").eq("telegram_linked", True) \
+        .eq("notificaciones_activas", True).execute().data or []
+    hace_un_dia = (datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
+    for u in usuarios:
+        reciente = sb.table("notificaciones").select("id").eq("user_id", u["id"]) \
+            .eq("tipo", "recomendacion").gte("sent_at", hace_un_dia).limit(1).execute().data
+        if reciente:
+            continue
+        recs = recomendar_parecidos(u["id"])
+        if not recs:
+            continue
+        nombre = (u.get("full_name") or "").split()[0] if u.get("full_name") else ""
+        lineas = [f"• «{r['title']}» — {_fecha_txt(r['starts_at'])} ({r['motivo']})" for r in recs]
+        texto = (f"✨ {'¡Hola, ' + nombre + '! ' if nombre else ''}Te pueden gustar estos planes:\n\n"
+                 + "\n".join(lineas))
+        botones = [[(f"✅ Apuntarme: {r['title'][:22]}", f"insc:{r['id']}")] for r in recs]
+        if avisar(u["id"], texto, botones):
+            sb.table("notificaciones").upsert(
+                [{"user_id": u["id"], "event_id": r["id"], "tipo": "recomendacion",
+                  "canal": "telegram", "motivo": r["motivo"]} for r in recs],
+                on_conflict="user_id,event_id,tipo", ignore_duplicates=True).execute()
+            log.info("[tareas] recomendación enviada a %s (%s planes)", u["id"][:8], len(recs))
+
+
 _AGENTE = {"ultimo": 0.0}
 CADA_AGENTE = 6 * 3600  # el agente de eventos reales, cada 6 horas
 
@@ -125,7 +256,7 @@ def _paso_agente():
 
 def ciclo():
     for paso in (_paso_estados, _paso_resenas, _paso_promociones, _paso_rag,
-                 _paso_avisos_moderacion, _paso_agente):
+                 _paso_avisos_moderacion, _paso_recordatorios, _paso_recomendaciones, _paso_agente):
         try:
             paso()
         except Exception as e:

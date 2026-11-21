@@ -18,6 +18,9 @@ import tareas
 from routers import eventos, moderacion, recomendaciones, resenas
 
 logging.basicConfig(level=logging.INFO)
+# httpx registra cada URL que llama y la de Telegram LLEVA EL TOKEN del bot: no a los logs
+for _ruidoso in ("httpx", "httpcore", "hpack"):
+    logging.getLogger(_ruidoso).setLevel(logging.WARNING)
 log = logging.getLogger("reactiva")
 
 
