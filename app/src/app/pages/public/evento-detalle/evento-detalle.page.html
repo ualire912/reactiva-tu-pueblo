@@ -19,8 +19,8 @@
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           <ion-badge color="primary">{{ evento.municipios?.nombre }}</ion-badge>
           <ion-badge color="secondary">{{ evento.category }}</ion-badge>
-          <ion-badge [color]="evento.status === 'abierto' ? 'success' : (evento.status === 'cancelado' ? 'danger' : 'warning')">
-            {{ etiquetaEstado(evento.status) }}
+          <ion-badge [color]="estadoVisible === 'abierto' ? 'success' : (estadoVisible === 'cancelado' ? 'danger' : (estadoVisible === 'finalizado' ? 'medium' : 'warning'))">
+            {{ etiquetaEstado(estadoVisible) }}
           </ion-badge>
           <ion-badge *ngIf="evento.is_accessible" color="tertiary">Accesible</ion-badge>
         </div>
@@ -63,7 +63,11 @@
           <ion-button expand="block" routerLink="/login">Entrar para apuntarme</ion-button>
         </div>
 
-        <div *ngIf="sb.currentSession && !miInscripcion">
+        <div *ngIf="terminado" class="ion-margin-bottom">
+          <ion-note>Este evento ya ha terminado: no se admiten inscripciones.</ion-note>
+        </div>
+
+        <div *ngIf="sb.currentSession && !miInscripcion && !terminado">
           <ion-list lines="full" *ngIf="puedeApuntarse">
             <ion-item>
               <ion-select label="Compartir coche" labelPlacement="stacked" [(ngModel)]="transporte">
@@ -89,7 +93,7 @@
           <ion-button
             expand="block"
             class="ion-margin-top"
-            [color]="evento.status === 'abierto' ? 'success' : 'warning'"
+            [color]="!puedeApuntarse ? 'medium' : (evento.status === 'abierto' ? 'success' : 'warning')"
             [disabled]="!puedeApuntarse || procesandoInscripcion"
             (click)="apuntarme()">
             {{ textoBotonApuntarse }}
@@ -98,9 +102,9 @@
 
         <div *ngIf="sb.currentSession && miInscripcion">
           <ion-badge [color]="miInscripcion.status === 'confirmada' ? 'success' : 'warning'">
-            {{ miInscripcion.status === 'confirmada' ? '✅ Plaza confirmada' : '⏳ En lista de espera' }}
+            {{ miInscripcion.status === 'confirmada' ? (terminado ? '✅ Asististe a este plan' : '✅ Plaza confirmada') : '⏳ En lista de espera' }}
           </ion-badge>
-          <ion-button expand="block" color="danger" fill="outline" class="ion-margin-top" (click)="cancelarInscripcion()" [disabled]="procesandoInscripcion">
+          <ion-button *ngIf="!yaEmpezo" expand="block" color="danger" fill="outline" class="ion-margin-top" (click)="cancelarInscripcion()" [disabled]="procesandoInscripcion">
             Cancelar mi inscripción
           </ion-button>
         </div>
@@ -159,7 +163,7 @@
     </ion-card>
 
     <!-- RESEÑAS (SI FINALIZADO: SOLO PARA QUIENES ASISTIERON) -->
-    <ion-card *ngIf="evento.status === 'finalizado'" class="ion-no-margin ion-margin-bottom">
+    <ion-card id="resenas" *ngIf="terminado" class="ion-no-margin ion-margin-bottom">
       <ion-card-header>
         <ion-card-title>Valoraciones del organizador</ion-card-title>
         <ion-card-subtitle>Las valoraciones positivas ayudan a verificar a los organizadores</ion-card-subtitle>
@@ -170,8 +174,14 @@
           <p *ngIf="r.comentario" style="margin-top: 4px;">{{ r.comentario }}</p>
         </div>
 
-        <!-- Formulario SOLO visible si inició sesión y asistió (o tuvo plaza confirmada) -->
-        <div *ngIf="sb.currentSession && miInscripcion && (miInscripcion.asistio || miInscripcion.status === 'confirmada')" class="ion-margin-top">
+        <ion-note *ngIf="resenas.length === 0">Aún no hay valoraciones.</ion-note>
+
+        <div *ngIf="puedeValorar && miResena" class="ion-margin-top">
+          <ion-note>✅ Ya has valorado este evento. ¡Gracias!</ion-note>
+        </div>
+
+        <!-- Formulario SOLO visible si tuvo plaza confirmada y aún no ha valorado -->
+        <div *ngIf="puedeValorar && !miResena" class="ion-margin-top">
           <ion-item>
             <ion-select label="Tu puntuación" labelPlacement="stacked" [(ngModel)]="estrellas">
               <ion-select-option [value]="5">⭐⭐⭐⭐⭐ (5)</ion-select-option>
@@ -190,7 +200,7 @@
         </div>
 
         <!-- Aviso si no asistió o no está logueado -->
-        <div *ngIf="!sb.currentSession || !miInscripcion || (!miInscripcion.asistio && miInscripcion.status !== 'confirmada')" class="ion-margin-top">
+        <div *ngIf="!puedeValorar" class="ion-margin-top">
           <ion-note>
             Solo los asistentes confirmados de este evento pueden dejar una valoración.
           </ion-note>

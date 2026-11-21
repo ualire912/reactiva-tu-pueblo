@@ -1,7 +1,17 @@
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 import inspect
 import os
+import re
+import sys
+import unicodedata
 from typing import Any
+
+# rag.py, ingesta.py... hacen "import ia" / "from db import": necesitan la carpeta api/
+# en la ruta de imports también cuando el bot se arranca desde la raíz (bot_polling.py)
+_API_DIR = os.path.dirname(os.path.abspath(__file__))
+if _API_DIR not in sys.path:
+    sys.path.insert(0, _API_DIR)
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -41,6 +51,9 @@ router = APIRouter(tags=["telegram"])
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 ESPERANDO_CAMPO: dict[int, dict[str, str]] = {}
 ESPERANDO_RESENA: dict[int, str] = {}
+# Comentario dicho junto con la valoración ("al torneo le pongo un 4 porque...")
+# que se guarda cuando el usuario pulsa el botón rate:{event_id}:{n}
+COMENTARIO_PENDIENTE: dict[int, dict[str, str]] = {}
 CONFIRMADOS_EN_MEMORIA: set[str] = set()
 
 DIAS_SEMANA = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
@@ -125,7 +138,8 @@ def _format_fecha_es(iso_str: str | None) -> str:
         dia_sem = DIAS_SEMANA[local_dt.weekday()]
         mes = MESES_ES[local_dt.month - 1]
         hora = local_dt.strftime("%H:%M")
-        return f"{dia_sem} {local_dt.day} de {mes} a las {hora}"
+        anio = f" de {local_dt.year}" if local_dt.year != datetime.now(MADRID_TZ).year else ""
+        return f"{dia_sem} {local_dt.day} de {mes}{anio} a las {hora}"
     except Exception:
         return str(iso_str)
 
@@ -173,7 +187,58 @@ def _wants_audio(perfil: dict[str, Any] | None, force_audio: bool = False) -> bo
     return bool(force_audio)
 
 
-def _botones_evento(ev_id: str, estado_insc: str | None) -> list[list[tuple[str, str]]]:
+def _parse_dt(raw: Any) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _evento_terminado(ev: dict[str, Any] | None) -> bool:
+    """Terminado por estado o por hora real (el estado puede tardar en recalcularse)."""
+    if not ev:
+        return False
+    if ev.get("status") == "finalizado":
+        return True
+    if ev.get("status") == "cancelado":
+        return False
+    fin = _parse_dt(ev.get("ends_at") or ev.get("starts_at"))
+    return bool(fin and fin <= datetime.now(timezone.utc))
+
+
+def _evento_admite_inscripcion(ev: dict[str, Any] | None) -> bool:
+    if not ev or ev.get("status") not in {"abierto", "completo"}:
+        return False
+    ahora = datetime.now(timezone.utc)
+    inicio = _parse_dt(ev.get("starts_at"))
+    if inicio and inicio <= ahora:
+        return False
+    hasta = _parse_dt(ev.get("inscripcion_hasta"))
+    return not (hasta and hasta <= ahora)
+
+
+def _botones_estrellas(ev_id: str) -> list[list[tuple[str, str]]]:
+    return [[(f"{n}⭐", f"rate:{ev_id}:{n}") for n in range(1, 6)]]
+
+
+def _botones_evento(
+    ev_id: str, estado_insc: str | None, ev: dict[str, Any] | None = None
+) -> list[list[tuple[str, str]]] | None:
+    if ev is not None and ev.get("status") == "cancelado":
+        return None
+    if ev is not None and _evento_terminado(ev):
+        # Evento acabado: nada de apuntarse; quien tuvo plaza puede valorarlo
+        return _botones_estrellas(ev_id) if estado_insc == "confirmada" else None
+    inicio = _parse_dt(ev.get("starts_at")) if ev is not None else None
+    if ev is not None and inicio and inicio <= datetime.now(timezone.utc):
+        # En curso: ni apuntarse ni borrarse
+        return [[("📅 Calendario", f"ics:{ev_id}")]]
+    if ev is not None and estado_insc not in {"confirmada", "lista_de_espera"} \
+            and not _evento_admite_inscripcion(ev):
+        return [[("📅 Calendario", f"ics:{ev_id}")]]
     if estado_insc in {"confirmada", "lista_de_espera"}:
         return [
             [
@@ -207,7 +272,19 @@ def _render_tarjeta_evento_html(
 
     precio_txt = _format_precio_es(ev.get("price"))
 
-    if estado_insc == "confirmada":
+    if ev.get("status") == "cancelado":
+        estado_linea = "\n\n<blockquote>❌ <b>Este plan se ha cancelado</b></blockquote>"
+    elif ev.get("status") == "pospuesto":
+        estado_linea = "\n\n<blockquote>⏸️ <b>Este plan está aplazado</b></blockquote>"
+    elif _evento_terminado(ev) and estado_insc == "valorada":
+        estado_linea = "\n\n<blockquote>🏁 <b>Ya se celebró</b> · ✅ Ya lo valoraste. ¡Gracias!</blockquote>"
+    elif _evento_terminado(ev):
+        estado_linea = (
+            "\n\n<blockquote>🏁 <b>Ya se celebró.</b> ¿Qué tal fue? Puntúalo con las estrellas.</blockquote>"
+            if estado_insc == "confirmada"
+            else "\n\n<blockquote>🏁 <b>Este plan ya se celebró</b></blockquote>"
+        )
+    elif estado_insc == "confirmada":
         estado_linea = "\n\n<blockquote>🟢 <b>Ya estás apuntado/a</b></blockquote>"
     elif estado_insc == "lista_de_espera":
         estado_linea = "\n\n<blockquote>🟡 <b>En lista de espera</b></blockquote>"
@@ -351,7 +428,7 @@ async def _enviar_tarjetas_eventos(
     for ev in eventos:
         ev_id = str(ev.get("id") or "")
         estado_insc = inscritos_map.get(ev_id) if ev_id else None
-        botones = _botones_evento(ev_id, estado_insc) if ev_id else None
+        botones = _botones_evento(ev_id, estado_insc, ev) if ev_id else None
         html_body = _render_tarjeta_evento_html(ev, estado_insc=estado_insc)
         await send_message(chat_id, html_body, buttons=botones, escape=False)
 
@@ -447,19 +524,50 @@ async def _cmd_mis_planes(chat_id: int, perfil: dict[str, Any] | None) -> None:
         )
         return
 
-    for ins in insc_rows:
-        ev = _get_evento(ins["event_id"])
-        if not ev:
-            continue
-        ev_id = str(ev["id"])
-        estado_insc = str(ins.get("status") or "confirmada")
-        html_body = _render_tarjeta_evento_html(ev, estado_insc=estado_insc)
+    ids = [str(r["event_id"]) for r in insc_rows if r.get("event_id")]
+    evs = {str(e["id"]): e for e in (sb.table("eventos").select("*").in_("id", ids).execute().data or [])}
+    estado_de = {str(r["event_id"]): str(r.get("status") or "confirmada") for r in insc_rows}
+    vividos, proximos, cancelados = [], [], []
+    for ev_id, ev in evs.items():
+        if ev.get("status") == "cancelado":
+            cancelados.append(ev)
+        elif _evento_terminado(ev):
+            if estado_de[ev_id] == "confirmada":  # en lista de espera no llegó a ir
+                vividos.append(ev)
+        else:
+            proximos.append(ev)
+    vividos.sort(key=lambda e: str(e.get("starts_at") or ""), reverse=True)
+    proximos.sort(key=lambda e: str(e.get("starts_at") or ""))
+    if vividos:  # los ya valorados no vuelven a pedir estrellas
+        valorados = sb.table("resenas").select("event_id").eq("user_id", user_id).in_(
+            "event_id", [str(e["id"]) for e in vividos]).execute().data or []
+        for r in valorados:
+            estado_de[str(r["event_id"])] = "valorada"
+
+    async def _tarjetas(lista: list[dict[str, Any]]) -> None:
+        for ev in lista[:5]:
+            ev_id = str(ev["id"])
+            await send_message(
+                chat_id,
+                _render_tarjeta_evento_html(ev, estado_insc=estado_de[ev_id]),
+                buttons=_botones_evento(ev_id, estado_de[ev_id], ev),
+                escape=False,
+            )
+
+    if vividos:
+        await send_message(chat_id, f"🏁 Has participado en {len(vividos)} plan(es):")
+        await _tarjetas(vividos)
+    if proximos:
+        await send_message(chat_id, f"📋 Estás apuntado/a a {len(proximos)} plan(es) que aún no se han hecho:")
+        await _tarjetas(proximos)
+    if cancelados:
         await send_message(
             chat_id,
-            html_body,
-            buttons=_botones_evento(ev_id, estado_insc),
-            escape=False,
+            "❌ Estos planes a los que te apuntaste se cancelaron:\n"
+            + "\n".join(f"• {e.get('title')} ({_format_fecha_es(e.get('starts_at'))})" for e in cancelados),
         )
+    if not (vividos or proximos or cancelados):
+        await send_message(chat_id, "📋 Todavía no has participado en ningún plan.")
 
 
 async def _toggle_audio(
@@ -500,16 +608,32 @@ async def _procesar_inscripcion(
         estado_previo = str(ya_inscrita[0].get("status") or "confirmada")
         if source_message_id:
             await edit_message_reply_markup(
-                chat_id, source_message_id, _botones_evento(event_id, estado_previo)
+                chat_id, source_message_id, _botones_evento(event_id, estado_previo, ev)
             )
         if ev and source_message_id:
             await delete_message(chat_id, source_message_id)
             await send_message(
                 chat_id,
                 _render_tarjeta_evento_html(ev, estado_insc=estado_previo),
-                buttons=_botones_evento(event_id, estado_previo),
+                buttons=_botones_evento(event_id, estado_previo, ev),
                 escape=False,
             )
+        return
+
+    # No se puede apuntar a un plan terminado, empezado o con la inscripción cerrada
+    # (también cubre la reactivación de una inscripción cancelada, que el trigger no vigila)
+    if not ev or not _evento_admite_inscripcion(ev):
+        if ev and source_message_id:
+            await edit_message_reply_markup(
+                chat_id, source_message_id, _botones_evento(event_id, None, ev) or []
+            )
+        if _evento_terminado(ev):
+            aviso = "🏁 Este plan ya se celebró, así que no admite inscripciones."
+        elif ev:
+            aviso = "⚠️ Este plan ya está cerrado y no admite más inscripciones."
+        else:
+            aviso = "⚠️ No encuentro ese plan."
+        await send_message(chat_id, aviso)
         return
 
     try:
@@ -526,12 +650,12 @@ async def _procesar_inscripcion(
             await send_message(
                 chat_id,
                 _render_tarjeta_evento_html(ev, estado_insc=estado),
-                buttons=_botones_evento(event_id, estado),
+                buttons=_botones_evento(event_id, estado, ev),
                 escape=False,
             )
         elif source_message_id:
             await edit_message_reply_markup(
-                chat_id, source_message_id, _botones_evento(event_id, estado)
+                chat_id, source_message_id, _botones_evento(event_id, estado, ev)
             )
 
         if estado == "lista_de_espera":
@@ -567,12 +691,12 @@ async def _procesar_inscripcion(
                     await send_message(
                         chat_id,
                         _render_tarjeta_evento_html(ev, estado_insc="confirmada"),
-                        buttons=_botones_evento(event_id, "confirmada"),
+                        buttons=_botones_evento(event_id, "confirmada", ev),
                         escape=False,
                     )
                 elif source_message_id:
                     await edit_message_reply_markup(
-                        chat_id, source_message_id, _botones_evento(event_id, "confirmada")
+                        chat_id, source_message_id, _botones_evento(event_id, "confirmada", ev)
                     )
                 await send_message(
                     chat_id,
@@ -709,13 +833,17 @@ async def _responder_con_rag(
     eventos_sugeridos = res.get("eventos") or []
     eventos_validos: list[dict[str, Any]] = []
     if isinstance(eventos_sugeridos, list):
-        for ev in eventos_sugeridos[:4]:
+        for ev in eventos_sugeridos[:5]:
             if isinstance(ev, dict):
                 ev_id = ev.get("id")
                 ev_completo = _get_evento(str(ev_id)) if ev_id else None
                 eventos_validos.append(ev_completo or ev)
 
     if eventos_validos:
+        # Primero la respuesta (cuántos hay, de qué fechas...) y luego las tarjetas
+        cabecera = (res.get("cabecera") or "").strip()
+        if cabecera:
+            await send_message(chat_id, cabecera)
         await _enviar_tarjetas_eventos(
             chat_id,
             eventos_validos,
@@ -732,6 +860,197 @@ async def _responder_con_rag(
         perfil=perfil,
         force_audio=force_audio,
     )
+
+
+_RE_QUIERE_VALORAR = re.compile(
+    r"\b(resena|resenas|valorar|valoracion|valorarlo|valorarla|puntuar|puntuacion|"
+    r"puntua\w*|estrellas?|calificar|opinar sobre|mi opinion)\b"
+    r"|\ble (?:pongo|doy|pondria|daria) (?:un|una|el)?\s*(?:[1-5]|uno|dos|tres|cuatro|cinco)\b"
+    r"|\b[1-5] de 5\b"
+)
+
+
+_RE_MIS_EVENTOS = re.compile(
+    r"\b(he participado|he estado|he ido|fui|he asistido|asisti|estoy apuntad[oa]|"
+    r"me he apuntado|me apunte|estoy inscrit[oa]|me inscribi|mis planes|mis eventos|"
+    r"mis actividades|mis inscripciones)\b"
+)
+_RE_INTERESAN = re.compile(
+    r"(me interes|me gustar|me pueden gustar|me podrian gustar|para mi\b|recomiend|"
+    r"recomendac|mis gustos|a mi gusto|que me va)"
+)
+_NOMBRE_CATEGORIA = {"gastronomia": "gastronomía", "otro": "otros planes"}
+
+
+async def _recomendar_eventos(
+    chat_id: int, perfil: dict[str, Any] | None, texto: str, force_audio: bool = False
+) -> None:
+    """Planes abiertos (en las fechas/pueblo/categoría pedidos) ordenados según lo que
+    suele apuntarse el usuario: misma categoría y mismos pueblos que su historial."""
+    rag_mod = _get_rag_module()
+    f: dict[str, Any] = {}
+    if rag_mod and hasattr(rag_mod, "extraer_filtros"):
+        try:
+            f = await _maybe_await(rag_mod.extraer_filtros(texto)) or {}
+        except Exception:
+            f = {}
+    ahora = datetime.now(timezone.utc)
+    desde = f.get("desde") or ahora
+    q = (
+        sb.table("eventos").select("*").in_("status", ["abierto", "completo"])
+        .gte("starts_at", max(desde, ahora).isoformat())
+    )
+    if f.get("hasta"):
+        q = q.lt("starts_at", f["hasta"].isoformat())
+    if f.get("categoria"):
+        q = q.eq("category", f["categoria"])
+    if f.get("municipio") and rag_mod and hasattr(rag_mod, "_municipio_id"):
+        mid = rag_mod._municipio_id(f["municipio"])
+        if mid:
+            q = q.eq("municipio_id", mid)
+    evs = q.order("starts_at").limit(50).execute().data or []
+    rango = rag_mod.describir_filtros(f) if rag_mod and hasattr(rag_mod, "describir_filtros") else ""
+
+    # Historial: a qué se ha apuntado (aunque luego se borrara, dice lo que le gusta)
+    historial = []
+    if perfil:
+        historial = (
+            sb.table("inscripciones").select("event_id,status,eventos(category,municipio_id)")
+            .eq("user_id", perfil["id"]).execute().data
+            or []
+        )
+    apuntado = {str(h["event_id"]) for h in historial if h.get("status") in ("confirmada", "lista_de_espera")}
+    gustos = Counter((h.get("eventos") or {}).get("category") for h in historial)
+    gustos.pop(None, None)
+    pueblos = Counter((h.get("eventos") or {}).get("municipio_id") for h in historial)
+    pueblos.pop(None, None)
+    mi_pueblo = (perfil or {}).get("municipio_id")
+
+    def puntos(e: dict[str, Any]) -> int:
+        return (2 * gustos.get(e.get("category"), 0) + pueblos.get(e.get("municipio_id"), 0)
+                + (1 if e.get("municipio_id") == mi_pueblo else 0))
+
+    ya = [e for e in evs if str(e["id"]) in apuntado]
+    candidatos = sorted((e for e in evs if str(e["id"]) not in apuntado),
+                        key=lambda e: (-puntos(e), str(e.get("starts_at") or "")))
+
+    if not candidatos and not ya:
+        await _enviar_respuesta(
+            chat_id, f"📅 No hay planes abiertos {rango}.".replace("  ", " ").replace(" .", "."),
+            buttons=[[("📅 Ver todos los planes", "cmd:agenda")]], perfil=perfil, force_audio=force_audio,
+        )
+        return
+
+    if candidatos:
+        if gustos:
+            top = ", ".join(_NOMBRE_CATEGORIA.get(c, c) for c, _ in gustos.most_common(3))
+            cab = f"✨ Por lo que sueles apuntarte ({top}), te recomiendo {rango}:"
+        else:
+            cab = f"✨ Aún no sé qué te gusta (no te has apuntado a nada). Estos son los planes {rango}:"
+        await send_message(chat_id, cab.replace(" :", ":").replace("  ", " "))
+        await _enviar_tarjetas_eventos(chat_id, candidatos[:4], perfil=perfil, force_audio=force_audio)
+    if ya:
+        await send_message(
+            chat_id,
+            "🟢 Y ya estás apuntado/a a:\n"
+            + "\n".join(f"• {e.get('title')} — {_format_fecha_es(e.get('starts_at'))}" for e in ya),
+        )
+
+
+def _norm_txt(texto: str) -> str:
+    sin_tildes = unicodedata.normalize("NFD", texto or "")
+    return "".join(c for c in sin_tildes if unicodedata.category(c) != "Mn").lower()
+
+
+def _eventos_valorables(perfil: dict[str, Any]) -> list[dict[str, Any]]:
+    """Planes terminados en los que el usuario tuvo plaza confirmada y aún no ha valorado."""
+    insc = (
+        sb.table("inscripciones")
+        .select("event_id")
+        .eq("user_id", perfil["id"])
+        .eq("status", "confirmada")
+        .execute()
+        .data
+        or []
+    )
+    ids = [str(r["event_id"]) for r in insc if r.get("event_id")]
+    if not ids:
+        return []
+    ya = (
+        sb.table("resenas").select("event_id").eq("user_id", perfil["id"]).in_("event_id", ids)
+        .execute().data
+        or []
+    )
+    valorados = {str(r["event_id"]) for r in ya}
+    evs = sb.table("eventos").select("*").in_("id", ids).execute().data or []
+    evs = [e for e in evs if str(e["id"]) not in valorados and _evento_terminado(e)]
+    evs.sort(key=lambda e: str(e.get("starts_at") or ""), reverse=True)
+    return evs[:5]
+
+
+async def _manejar_resena_libre(
+    chat_id: int, perfil: dict[str, Any] | None, texto: str, force_audio: bool = False
+) -> None:
+    """El usuario quiere valorar un plan escribiendo o hablando (no con los botones)."""
+    if not perfil:
+        perfil = await _asegurar_perfil_telegram(chat_id)
+    if not perfil:
+        await send_message(chat_id, "⚠️ Escribe /start antes de valorar un plan.")
+        return
+
+    valorables = _eventos_valorables(perfil)
+    if not valorables:
+        await _enviar_respuesta(
+            chat_id,
+            "⭐ Ahora mismo no tienes planes pendientes de valorar. "
+            "Solo se pueden valorar los planes a los que te apuntaste y que ya terminaron.",
+            buttons=[[("📋 Mis planes", "cmd:mis_planes")]],
+            perfil=perfil,
+            force_audio=force_audio,
+        )
+        return
+
+    # ¿Ha dicho ya a qué plan y cuántas estrellas? ("al torneo le pongo un 4")
+    rag_mod = _get_rag_module()
+    detectado = None
+    if rag_mod and hasattr(rag_mod, "_detectar_resena"):
+        try:
+            detectado = await _maybe_await(rag_mod._detectar_resena(texto))
+        except Exception:
+            detectado = None
+    propuesta = (detectado or {}).get("resena") if isinstance(detectado, dict) else None
+    ids_valorables = {str(e["id"]): e for e in valorables}
+    if propuesta and str(propuesta.get("event_id")) in ids_valorables:
+        ev = ids_valorables[str(propuesta["event_id"])]
+        n = max(1, min(5, int(propuesta.get("estrellas") or 5)))
+        comentario = (propuesta.get("comentario") or "").strip()
+        if comentario:
+            COMENTARIO_PENDIENTE[chat_id] = {"event_id": str(ev["id"]), "comentario": comentario}
+        else:
+            COMENTARIO_PENDIENTE.pop(chat_id, None)
+        await _enviar_respuesta(
+            chat_id,
+            f"⭐ ¿Quieres valorar «{ev.get('title')}» con {n} estrella(s)"
+            + (f" y el comentario «{comentario}»" if comentario else "")
+            + "? Pulsa para confirmar o elige otra puntuación.",
+            buttons=[[(f"✅ Sí, {n}⭐", f"rate:{ev['id']}:{n}")]] + _botones_estrellas(str(ev["id"])),
+            perfil=perfil,
+            force_audio=force_audio,
+        )
+        return
+
+    COMENTARIO_PENDIENTE.pop(chat_id, None)
+    await send_message(
+        chat_id,
+        "⭐ Estos son los planes a los que fuiste y que puedes valorar. Pulsa las estrellas:",
+    )
+    for ev in valorables:
+        await send_message(
+            chat_id,
+            _render_tarjeta_evento_html(ev, estado_insc="confirmada"),
+            buttons=_botones_estrellas(str(ev["id"])),
+            escape=False,
+        )
 
 
 async def _procesar_texto_o_voz(
@@ -844,6 +1163,26 @@ async def _procesar_texto_o_voz(
 
     intencion = resultado.get("intencion", "otro")
     texto_reconocido = (resultado.get("texto") or texto or "").strip()
+
+    # Quiere dejar una reseña: NO se busca en la agenda (si no, salen tarjetas para apuntarse)
+    if _RE_QUIERE_VALORAR.search(_norm_txt(texto_reconocido)):
+        await _manejar_resena_libre(chat_id, perfil, texto_reconocido, force_audio=es_audio)
+        return
+
+    # Preguntas sobre lo suyo: "en los que he participado", "a qué estoy apuntado"
+    norm = _norm_txt(texto_reconocido)
+    if _RE_MIS_EVENTOS.search(norm):
+        if not perfil:
+            perfil = await _asegurar_perfil_telegram(chat_id)
+        await _cmd_mis_planes(chat_id, perfil=perfil)
+        return
+
+    # "Eventos que me interesan", "recomiéndame algo": según a qué se suele apuntar
+    if _RE_INTERESAN.search(norm):
+        if not perfil:
+            perfil = await _asegurar_perfil_telegram(chat_id)
+        await _recomendar_eventos(chat_id, perfil, texto_reconocido, force_audio=es_audio)
+        return
 
     if intencion in {"buscar", "pregunta"}:
         consulta = texto_reconocido or (texto or "").strip()
@@ -1035,16 +1374,24 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         await _enviar_ics_evento(chat_id_int, event_id=event_id)
     elif data.startswith("cancel:") and perfil:
         event_id = data.split(":", 1)[1]
+        ev = _get_evento(event_id)
+        inicio = _parse_dt(ev.get("starts_at")) if ev else None
+        if _evento_terminado(ev) or (inicio and inicio <= datetime.now(timezone.utc)):
+            if msg_id_int:
+                await edit_message_reply_markup(
+                    chat_id_int, msg_id_int, _botones_evento(event_id, "confirmada", ev) or []
+                )
+            await send_message(chat_id_int, "🏁 Este plan ya empezó o terminó: ya no puedes borrarte.")
+            return
         sb.table("inscripciones").update({"status": "cancelada"}).eq("user_id", perfil["id"]).eq(
             "event_id", event_id
         ).execute()
-        ev = _get_evento(event_id)
         if ev and msg_id_int:
             await delete_message(chat_id_int, msg_id_int)
             await send_message(
                 chat_id_int,
                 _render_tarjeta_evento_html(ev, estado_insc=None),
-                buttons=_botones_evento(event_id, None),
+                buttons=_botones_evento(event_id, None, ev),
                 escape=False,
             )
         elif msg_id_int:
@@ -1138,6 +1485,18 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
             on_conflict="event_id,user_id",
         ).execute()
         sb.table("inscripciones").update({"asistio": True}).eq("id", insc[0]["id"]).execute()
+        if msg_id_int:  # quitar las estrellas para no valorar dos veces
+            await edit_message_reply_markup(chat_id_int, msg_id_int, [])
+        pendiente = COMENTARIO_PENDIENTE.pop(chat_id_int, None)
+        if pendiente and pendiente.get("event_id") == event_id and pendiente.get("comentario"):
+            sb.table("resenas").update({"comentario": pendiente["comentario"]}).eq(
+                "event_id", event_id
+            ).eq("user_id", perfil["id"]).execute()
+            await send_message(
+                chat_id_int,
+                f"⭐ ¡Gracias por dar {estrellas} estrella(s) y tu comentario! Tu opinión ayuda a otros vecinos.",
+            )
+            return
         ESPERANDO_RESENA[chat_id_int] = event_id
         await send_message(
             chat_id_int,

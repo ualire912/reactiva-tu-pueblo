@@ -5,12 +5,22 @@ import sys
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
-PARENT_DIR = BASE_DIR.parent
-if str(PARENT_DIR) not in sys.path:
-    sys.path.insert(0, str(PARENT_DIR))
+# La raíz del repo (para "import api...") y api/ (sus módulos se importan entre sí sin "api.")
+for _ruta in (BASE_DIR, BASE_DIR / "api"):
+    if str(_ruta) not in sys.path:
+        sys.path.insert(0, str(_ruta))
+
+# En Windows la consola puede no aceptar emojis en los print
+for _flujo in (sys.stdout, sys.stderr):
+    try:
+        _flujo.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 from dotenv import load_dotenv
 
+# Las claves están en api/.env (Supabase, Gemini, Telegram...); un .env en la raíz también vale
+load_dotenv(dotenv_path=BASE_DIR / "api" / ".env")
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 import httpx  # noqa: E402

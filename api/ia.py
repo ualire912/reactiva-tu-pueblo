@@ -2,10 +2,14 @@
 api/ia.py  ·  C1  ·  Las 6 funciones de IA
 
 Orden de proveedores en cada llamada (si uno falla o tarda, pasa al siguiente):
-    1. Gemini con GEMINI_API_KEY
-    2. Gemini con GEMINI_API_KEY_2   (clave de reserva, otra cuenta)
-    3. NVIDIA NIM con NVIDIA_API_KEY (opcional, solo texto)
-    4. Plan B sin IA (cada función devuelve algo útil)
+    1. freellmpool (principal; 15+ proveedores gratis, solo texto; FREELLMPOOL=0 lo apaga)
+    2. Gemini con GEMINI_API_KEY
+    3. Gemini con GEMINI_API_KEY_2   (clave de reserva, otra cuenta)
+    4. NVIDIA NIM con NVIDIA_API_KEY (opcional, solo texto)
+    5. Plan B sin IA (cada función devuelve algo útil)
+Carteles (imágenes): solo Gemini, porque freellmpool y NVIDIA no ven imágenes.
+Notas de voz: freellmpool las transcribe (Whisper) y se tratan como texto; si no
+puede, Gemini escucha el audio directamente.
 
 REAL ya:   extraer_evento, clasificar_spam
 STUB aún:  entender_mensaje, redactar_recomendacion, responder_chat, revisar_confianza
@@ -176,10 +180,12 @@ def _con_limite(funcion, *args, segundos: int = TIMEOUT_S + 10):
         ex.shutdown(wait=False)
 
 
-def _freellmpool(prompt: str) -> str | None:
+def _freellmpool(prompt: str, como_json: bool = False) -> str | None:
     pool = _pool()
     if not pool:
         return None
+    if como_json:  # freellmpool no tiene modo JSON: se pide en el propio prompt
+        prompt += "\n\nResponde SOLO con un objeto JSON válido, sin texto antes ni después."
     try:
         t0 = time.time()
         r = _con_limite(pool.ask, prompt)
@@ -197,7 +203,7 @@ def _freellmpool(prompt: str) -> str | None:
 
 
 def transcribir_reserva(audio_bytes: bytes) -> str | None:
-    """Si Gemini no puede con una nota de voz, freellmpool la transcribe (Whisper gratis)."""
+    """Transcribe una nota de voz con freellmpool (Whisper gratis). None si no puede."""
     pool = _pool()
     if not pool or not audio_bytes:
         return None
@@ -220,8 +226,18 @@ def _llamar(prompt: str, image_bytes: bytes | None = None,
     if h in _CACHE:
         return _CACHE[h]
 
-    # Hasta 2 vueltas: si todos los modelos están saturados (503) es un pico pasajero,
+    # 1.º freellmpool (principal). Solo texto: carteles y audio van directos a Gemini.
+    if not image_bytes and not audio_bytes:
+        texto = _freellmpool(prompt, como_json)
+        if texto and (not como_json or _json(texto) is not None):
+            _CACHE[h] = texto
+            return texto
+        if texto:
+            print("[ia] freellmpool no devolvió JSON válido -> reserva")
+
+    # Reserva: Gemini. Hasta 2 vueltas: si todos los modelos están saturados (503) es un pico pasajero,
     # se espera 2 s y se reintenta una vez antes de pasar a NVIDIA / Plan B.
+    # (si freellmpool ya falló arriba, no se vuelve a probar)
     for vuelta in range(2):
         saturado = False
         for modelo in GEMINI_MODELOS:
@@ -270,14 +286,6 @@ def _llamar(prompt: str, image_bytes: bytes | None = None,
                 return texto
             except Exception as e:
                 print(f"[ia] NVIDIA {modelo} falló: {type(e).__name__}: {str(e)[:90]}")
-
-    # Último recurso con IA: freellmpool (reparte entre 15+ proveedores gratis, cambia solo
-    # si uno falla). Solo texto. Se desactiva con FREELLMPOOL=0 en el .env.
-    if not audio_bytes:
-        texto = _freellmpool(prompt)
-        if texto:
-            _CACHE[h] = texto
-            return texto
 
     print("[ia] Ningún proveedor disponible -> Plan B sin IA")
     return None
@@ -618,6 +626,14 @@ def clasificar_spam(text: str | None, entidad: dict | None = None) -> dict:
 # ══════════════════════════════════════════════════════════════
 INTENCIONES = ["buscar", "proponer", "apuntarse", "pregunta", "otro"]
 _DIAS_SEMANA = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+# Palabras que delatan cada categoría (las usan las reglas y el RAG)
+SINONIMOS_CATEGORIA = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
+                       "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
+                       "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
+                       "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
+                       "fiestas": ["fiesta", "verbena", "feria", "baile"],
+                       "taller": ["taller", "curso", "manualidad", "esparto"],
+                       "voluntariado": ["voluntari", "ayudar", "solidari"]}
 
 
 def _fecha_de_texto(n: str) -> str | None:
@@ -643,13 +659,7 @@ def _reglas_mensaje(text: str) -> dict:
     p = _pueblo_en_texto(text)
     if p:
         filtros["municipio"] = p
-    sinonimos = {"senderismo": ["senderismo", "ruta", "andar", "caminar", "excursion", "sendero"],
-                 "deporte": ["deporte", "deportiv", "bici", "futbol", "baloncesto", "padel", "yoga", "gimnasia", "petanca", "correr", "carrera", "torneo"],
-                 "cultura": ["cultura", "cultural", "cine", "teatro", "concierto", "museo", "charla", "libro"],
-                 "gastronomia": ["gastronomia", "gastronomic", "comida", "comer", "migas", "degustacion", "mercadillo"],
-                 "fiestas": ["fiesta", "verbena", "feria", "baile"],
-                 "taller": ["taller", "curso", "manualidad", "esparto"],
-                 "voluntariado": ["voluntari", "ayudar", "solidari"]}
+    sinonimos = SINONIMOS_CATEGORIA
     for cat, palabras in sinonimos.items():
         if any(w in n for w in palabras):
             filtros["categoria"] = cat
@@ -719,6 +729,11 @@ def entender_mensaje(text: str | None = None, audio_bytes: bytes | None = None) 
                 return r
             entrada, texto_instr = f'MENSAJE: """{text[:1000]}"""', "el mensaje tal cual"
         elif audio_bytes:
+            # 1.º freellmpool: transcribe (Whisper) y se entiende como texto.
+            # Si no puede, Gemini escucha el audio directamente.
+            transcrito = transcribir_reserva(audio_bytes)
+            if transcrito:
+                return entender_mensaje(text=transcrito)
             entrada = ("Te paso una NOTA DE VOZ en español (acento andaluz, puede haber ruido). "
                        "Transcríbela y entiéndela.")
             texto_instr = "la transcripción literal de lo que dice"
@@ -733,11 +748,6 @@ def entender_mensaje(text: str | None = None, audio_bytes: bytes | None = None) 
             return _validar_mensaje(datos, text or "")
     except Exception as e:
         print(f"[ia] entender_mensaje error: {e}")
-    # Plan B: si era audio, intentar solo transcribir y entenderlo con reglas/IA de texto
-    if audio_bytes and not text:
-        transcrito = transcribir_reserva(audio_bytes)
-        if transcrito:
-            return entender_mensaje(text=transcrito)
     if text:
         return _reglas_mensaje(text)
     return {"intencion": "otro", "filtros": {}, "texto": ""}
