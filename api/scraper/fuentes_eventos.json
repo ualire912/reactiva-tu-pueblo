@@ -1,0 +1,7 @@
+{
+  "_ayuda": "Páginas de Facebook de las que el agente saca eventos reales. 'oficial': true = ayuntamiento u organización de confianza: sus eventos se publican solos si la IA está segura; si no, van al moderador. Cambia las URL RELLENAR por las reales (las que no tengan URL se ignoran).",
+  "facebook": [
+    {"municipio": "Senés", "nombre": "Ayuntamiento de Senés", "url": "https://www.facebook.com/RELLENAR_SENES", "oficial": true},
+    {"municipio": "Lucainena de las Torres", "nombre": "Ayuntamiento de Lucainena de las Torres", "url": "https://www.facebook.com/RELLENAR_LUCAINENA", "oficial": true}
+  ]
+}

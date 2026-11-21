@@ -17,6 +17,9 @@ Regla de oro: reglas antes que IA, nunca inventar, nunca romper el servidor.
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import inspect
 import logging
 import re
 from datetime import datetime
@@ -232,7 +235,21 @@ def _pedir_confirmacion(ingesta_id: str) -> bool:
         log.info("bot.pedir_confirmacion_ingesta aún no existe -> se queda para el panel")
         return False
     try:
-        return bool(pedir_confirmacion_ingesta(ingesta_id))
+        r = pedir_confirmacion_ingesta(ingesta_id)
+        if inspect.isawaitable(r):
+            # Es async (manda mensajes por Telegram). Antes se llamaba sin await: la ingesta
+            # se marcaba "esperando_confirmacion" pero el mensaje NUNCA se enviaba.
+            try:
+                asyncio.get_running_loop()
+                hay_bucle = True
+            except RuntimeError:
+                hay_bucle = False
+            if hay_bucle:  # dentro del servidor: se ejecuta en un hilo con su propio bucle
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    r = ex.submit(asyncio.run, r).result(timeout=60)
+            else:
+                r = asyncio.run(r)
+        return bool(r)
     except Exception:
         log.exception("pedir_confirmacion_ingesta falló")
         return False
@@ -319,8 +336,10 @@ _CAMPOS_EVENTO = ["title", "category", "starts_at", "ends_at", "duration_minutes
                   "description", "is_accessible", "inscripcion_hasta"]
 
 
-def crear_evento_desde_ingesta(ingesta_id: str) -> dict:
-    """Crea el evento. Devuelve la fila creada, o {"error", "missing"} si no se puede."""
+def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None) -> dict:
+    """Crea el evento. Devuelve la fila creada, o {"error", "missing"} si no se puede.
+    publicar=None: decide la entidad/rol (auto_approve, publicador, moderador).
+    publicar=False: siempre a revisión del moderador (p. ej. la IA no está segura)."""
     ing = _una("ingestas", "id", ingesta_id)
     if not ing:
         return {"error": "No existe esa ingesta", "missing": []}
@@ -343,6 +362,8 @@ def crear_evento_desde_ingesta(ingesta_id: str) -> dict:
     autor_id = ing.get("user_id") or (entidad or {}).get("owner_user_id")
     rol = (perfil(autor_id) or {}).get("rol") if autor_id else None
     publica_directo = bool((entidad or {}).get("auto_approve")) or rol in ("publicador", "moderador")
+    if publicar is False:
+        publica_directo = False
 
     fila = {c: ex.get(c) for c in _CAMPOS_EVENTO if ex.get(c) is not None}
     if fila.get("category") not in ia.CATEGORIAS:
