@@ -7,3 +7,5 @@ google-genai>=1.0
 edge-tts>=6.1
 python-multipart>=0.0.9
 tzdata>=2024.1
+pillow
+freellmpool
