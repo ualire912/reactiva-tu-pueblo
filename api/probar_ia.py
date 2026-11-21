@@ -41,7 +41,14 @@ for p in posts:
     if spam["spam_score"] >= 0.8:
         print("  -> SPAM: no se extrae (0 llamadas de extracción)")
         continue
+    no = ia.reglas_no_evento(p["text"])
+    if no:
+        print(f"  -> NO ES UN EVENTO por reglas ({no}): 0 llamadas")
+        continue
     ev = ia.extraer_evento(p["text"])
+    if ev.get("es_evento") is False:
+        print(f"  -> NO ES UN EVENTO según la IA: {ev.get('motivo_no_evento')}")
+        continue
     for k in ("title", "category", "starts_at", "municipio", "location_name",
               "price", "max_capacity", "inscripcion_hasta", "confidence", "missing"):
         print(f"  {k:15}: {ev[k]}")

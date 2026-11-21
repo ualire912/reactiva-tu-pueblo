@@ -378,7 +378,7 @@ Lee el texto (y el cartel si se adjunta) y devuelve SOLO un JSON con exactamente
 title (string corto), category, starts_at, ends_at, duration_minutes (entero), municipio,
 location_name, price (número en euros), max_capacity (entero), min_age, max_age,
 inscripcion_hasta, description (máx. 300 caracteres, en español), is_accessible (boolean),
-confidence (0..1), missing (lista).
+confidence (0..1), missing (lista), es_evento (boolean), motivo_no_evento (string o null).
 
 Reglas:
 - NUNCA inventes. Si un dato no aparece, pon null y añade el nombre de la clave a "missing".
@@ -392,6 +392,11 @@ Reglas:
 - municipio: uno de {pueblos}, o null si no se sabe.
 - is_accessible: true solo si lo dice expresamente; si no, false.
 - confidence: lo seguro que estás de que es un evento real con datos correctos.
+- es_evento: true SOLO si anuncia una actividad a la que la gente puede ir o apuntarse
+  (ruta, fiesta, taller, concierto, mercadillo, reunión abierta...). false si es una noticia,
+  felicitación, esquela o pésame, aviso de servicio (corte de agua/luz, obras), compraventa,
+  objeto perdido, oferta de empleo, publicidad o una foto/recuerdo de algo que ya pasó.
+  Si es_evento es false, explica por qué en motivo_no_evento (frase corta).
 
 TEXTO:
 \"\"\"{texto}\"\"\"
@@ -409,6 +414,7 @@ def _evento_vacio(text: str | None) -> dict:
         "max_capacity": None, "min_age": None, "max_age": None, "inscripcion_hasta": None,
         "description": (text or "")[:300] or None, "is_accessible": False,
         "confidence": 0.0, "missing": [],
+        "es_evento": None,          # None = no se sabe (sin IA): no se descarta
     }
 
 
@@ -442,6 +448,10 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
         if d.get("description"):
             ev["description"] = str(d["description"]).strip()[:500]
         ev["is_accessible"] = d.get("is_accessible") is True
+        if isinstance(d.get("es_evento"), bool):
+            ev["es_evento"] = d["es_evento"]
+            if not d["es_evento"]:
+                ev["motivo_no_evento"] = str(d.get("motivo_no_evento") or "no anuncia una actividad")[:200]
         try:
             ev["confidence"] = max(0.0, min(1.0, float(d.get("confidence") or 0)))
         except (TypeError, ValueError):
@@ -525,6 +535,24 @@ def reglas_spam(text: str | None, entidad: dict | None = None) -> dict | None:
     if tiene_fecha and tiene_lugar:
         return {"spam_score": 0.05, "motivo": "parece un evento normal (fecha y lugar)"}
     return None  # dudoso -> IA
+
+
+_NO_EVENTO = [
+    (r"descanse en paz|\bdep\b|fallec|pesame|condolencia|funeral|esquela", "esquela o pésame"),
+    (r"corte de (agua|luz|suministro)|sin agua|sin luz|averia|obras en la calle", "aviso de servicio"),
+    (r"\bse vende|\bvendo\b|\bse alquila|\balquilo\b|\bse traspasa", "compraventa o alquiler"),
+    (r"\bperdid[oa]\b.*(perro|gato|llaves|cartera|movil)|se ha perdido|se busca (perro|gato)", "objeto o animal perdido"),
+    (r"oferta de empleo|se busca (camarer|trabajador|personal)|buscamos personal", "oferta de empleo"),
+]
+
+
+def reglas_no_evento(text: str | None) -> str | None:
+    """Posts legítimos que claramente NO son eventos (0 tokens). Devuelve el motivo o None."""
+    n = _norm(text or "")
+    for patron, motivo in _NO_EVENTO:
+        if re.search(patron, n):
+            return motivo
+    return None
 
 
 _PROMPT_SPAM = """¿Este post de Facebook es spam/estafa/publicidad ajena, o un evento o anuncio legítimo
