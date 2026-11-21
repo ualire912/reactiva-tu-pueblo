@@ -42,7 +42,8 @@ TZ = ZoneInfo("Europe/Madrid")
 NO_LO_SE = "No lo sé, se lo pregunto al organizador"
 
 # Campos que, si faltan, hay que preguntar al publicador
-CAMPOS_CLAVE = ["title", "starts_at", "municipio", "location_name", "price", "max_capacity"]
+# Lo que hay que preguntar si falta. Las plazas NO: si no se dicen, es "sin límite".
+CAMPOS_CLAVE = ["title", "starts_at", "municipio", "location_name", "price"]
 
 CONSUMO = {"llamadas": 0, "tokens": 0}   # lo expone GET /ia/consumo
 _CACHE: dict[str, str] = {}              # mismo prompt -> misma respuesta, sin pagar dos veces
@@ -397,7 +398,12 @@ inscripcion_hasta, description (máx. 300 caracteres, en español), is_accessibl
 confidence (0..1), missing (lista), es_evento (boolean), motivo_no_evento (string o null).
 
 Reglas:
-- NUNCA inventes. Si un dato no aparece, pon null y añade el nombre de la clave a "missing".
+- NUNCA inventes datos (fecha, hora, lugar, precio, plazas). Si uno no aparece, pon null y añade
+  el nombre de la clave a "missing".
+- title SÍ lo pones siempre que sea un evento: si el texto no trae un título, escribe uno corto y
+  descriptivo de lo que se va a hacer (p. ej. «Quedada para jugar a las canicas»), sin la fecha.
+- description: resume en una frase lo que se hará, con los datos que haya.
+- Si dice cuánto dura ("durará dos horas"), pon duration_minutes y calcula ends_at.
 - starts_at y ends_at en ISO 8601 con el offset de Madrid, p. ej. 2026-11-29T09:30:00+01:00.
 - starts_at necesita día Y hora exacta. Si falta la hora exacta ("por la mañana", "por la tarde",
   sin hora), pon starts_at = null y añade "starts_at" a missing. No supongas horas.

@@ -162,7 +162,8 @@ _OTROS_SITIOS = re.compile(
     r"\b(almeria capital|en almeria\b|nijar|tabernas|sorbas|gergal|roquetas|el ejido|vicar|huercal|"
     r"carboneras|mojacar|garrucha|macael|olula del rio|purchena|tijola|seron|baza|guadix|"
     r"granada|madrid|sevilla|malaga|murcia|valencia|barcelona|cordoba|jaen|cadiz|huelva|"
-    r"aguadulce|adra|berja|cuevas del almanzora|huercal-overa|pulpi|benahadux|rioja|gador)\b")
+    r"aguadulce|adra|berja|cuevas del almanzora|huercal-overa|pulpi|benahadux|rioja|gador|"
+    r"almeria|universidad|ual)\b")
 
 
 def fuera_de_la_mancomunidad(texto: str, extraido: dict) -> bool:

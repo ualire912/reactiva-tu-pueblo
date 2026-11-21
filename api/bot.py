@@ -149,7 +149,9 @@ def _format_fecha_es(iso_str: str | None) -> str:
 
 
 def _format_precio_es(precio_raw: Any) -> str:
-    if precio_raw in (0, "0", 0.0, None, ""):
+    if precio_raw is None or precio_raw == "":  # no se sabe (NO es lo mismo que gratis)
+        return "Precio por confirmar"
+    if precio_raw in (0, "0", 0.0):
         return "Gratis"
     try:
         precio_num = float(precio_raw)
@@ -1490,15 +1492,44 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
         "raw_text": texto, "estado": "nueva",
     }).execute().data or []
     ingesta_id = filas[0]["id"] if filas else None
-    ingesta_mod = _get_ingesta_module()
-    if not ingesta_id or not ingesta_mod or not hasattr(ingesta_mod, "procesar_ingesta"):
-        await _enviar_respuesta(chat_id, "📝 He guardado tu propuesta. Un moderador la revisará.",
-                                perfil=perfil, force_audio=es_audio)
+    if not ingesta_id:
+        await _enviar_respuesta(chat_id, "⚠️ No he podido guardar tu propuesta. Inténtalo de nuevo "
+                                         "en unos minutos.", perfil=perfil, force_audio=es_audio)
         return
     await send_chat_action(chat_id, "typing")
+    await _procesar_y_responder(chat_id, perfil, ingesta_id, es_audio)
+
+
+async def reanudar_propuesta(ingesta_id: str) -> bool:
+    """Una propuesta que se quedó a medias (p. ej. el servidor se reinició al desplegar):
+    se procesa de nuevo y se le contesta al autor como si nada. La llama tareas.py."""
+    fila = (sb.table("ingestas").select("user_id,estado").eq("id", ingesta_id).execute().data or [{}])[0]
+    perfil = _get_perfil_by_user_id(str(fila.get("user_id"))) if fila.get("user_id") else None
+    chat_id = (perfil or {}).get("telegram_chat_id")
+    if not chat_id or fila.get("estado") not in ("nueva", "error"):
+        return False
+    if fila.get("estado") == "error":
+        sb.table("ingestas").update({"estado": "nueva"}).eq("id", ingesta_id).execute()
+    await send_message(int(chat_id), "⏳ Perdona la espera: ya he leído la propuesta que me "
+                                     "mandaste hace un rato.")
+    await _procesar_y_responder(int(chat_id), perfil, ingesta_id, False)
+    return True
+
+
+async def _procesar_y_responder(chat_id: int, perfil: dict[str, Any] | None, ingesta_id: str,
+                                es_audio: bool = False) -> None:
+    """IA + spam + resumen para confirmar. SIEMPRE se le contesta algo al usuario."""
+    ingesta_mod = _get_ingesta_module()
+    if not ingesta_mod or not hasattr(ingesta_mod, "procesar_ingesta"):
+        await _enviar_respuesta(chat_id, "📝 He guardado tu propuesta. Un moderador la revisará "
+                                         "y te avisaré por aquí.", perfil=perfil, force_audio=es_audio)
+        return
     if es_audio:  # el resumen para confirmar también se le dirá en voz alta
         CHATS_CON_VOZ.add(chat_id)
-    await _maybe_await(ingesta_mod.procesar_ingesta(ingesta_id))
+    try:
+        await _maybe_await(ingesta_mod.procesar_ingesta(ingesta_id))
+    except Exception as e:
+        print(f"[bot] procesar_ingesta falló: {e!r}")
     fila = (sb.table("ingestas").select("estado").eq("id", ingesta_id).execute().data or [{}])[0]
     estado = fila.get("estado")
     if estado == "esperando_confirmacion":
@@ -1528,13 +1559,13 @@ async def _crear_propuesta(chat_id: int, perfil: dict[str, Any] | None, texto: s
             "en qué pueblo, qué día y a qué hora (por ejemplo: «Taller de esparto el sábado 12 "
             "de diciembre a las 17:00 en el centro social de Tahal, gratis»).",
             perfil=perfil, force_audio=es_audio)
-    elif estado == "error":
-        await _enviar_respuesta(chat_id, "⚠️ Ahora mismo no puedo leer tu propuesta. "
-                                         "Inténtalo de nuevo en unos minutos.",
+    elif estado in ("error", "nueva"):
+        await _enviar_respuesta(chat_id, "⏳ He guardado tu propuesta, pero ahora mismo no puedo "
+                                         "leerla bien. La reviso en unos minutos y te contesto por aquí.",
                                 perfil=perfil, force_audio=es_audio)
     else:  # extraída pero sin poder pedir confirmación por aquí
-        await _enviar_respuesta(chat_id, "📝 He recibido tu propuesta. Un moderador la "
-                                         "revisará antes de publicarla.",
+        await _enviar_respuesta(chat_id, "📝 He recibido tu propuesta. Se la he pasado al moderador "
+                                         "y te avisaré por aquí en cuanto la revise.",
                                 perfil=perfil, force_audio=es_audio)
 
 
@@ -1841,19 +1872,35 @@ async def _procesar_texto_o_voz(
             parsed = await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))
             respuesta = (parsed or {}).get("texto") or ""
 
+        n_resp = _norm_txt(respuesta).strip(" .!")
+        if re.search(r"\b(olvida\w*|cancela\w*|dejalo|deja la propuesta|ya no|mejor no)\b", n_resp):
+            ESPERANDO_CAMPO.pop(chat_id, None)
+            await send_message(chat_id, "👌 Vale, dejo la propuesta sin publicar. "
+                                        "Si quieres, la retomas cuando quieras con /proponer.")
+            return
+        es_pregunta = respuesta.rstrip().endswith("?") or re.match(
+            r"(dame|dime|que hay|cual|busca|muestrame|ensename|quiero ver|recomienda|mis |"
+            r"quiero apuntarme|apuntame)", n_resp)
         ingesta_mod = _get_ingesta_module()
-        if ingesta_mod and hasattr(ingesta_mod, "completar_campo"):
+        if not es_pregunta and ingesta_mod and hasattr(ingesta_mod, "completar_campo"):
             faltantes = (
                 await _maybe_await(ingesta_mod.completar_campo(ingesta_id, campo, respuesta)) or []
             )
             if faltantes:
                 siguiente = str(faltantes[0])
                 ESPERANDO_CAMPO[chat_id] = {"ingesta_id": ingesta_id, "campo": siguiente}
-                await send_message(chat_id, _pregunta_para_campo(siguiente))
+                aviso = "🤔 No lo he entendido. " if siguiente == campo else "👍 Apuntado. "
+                await send_message(chat_id, aviso + _pregunta_para_campo(siguiente))
             else:
                 ESPERANDO_CAMPO.pop(chat_id, None)
+                await send_message(chat_id, "👍 ¡Ya tengo todo! Revisa el resumen:")
                 await pedir_confirmacion_ingesta(ingesta_id)
-        return
+            return
+        if es_pregunta:  # no contestaba al dato: se atiende la pregunta (la propuesta espera)
+            ESPERANDO_CAMPO.pop(chat_id, None)
+            texto, audio_bytes, es_audio = respuesta, None, False
+        else:
+            return
 
     # Saludos, gracias y ayuda: se contestan como un asistente (sin gastar IA)
     if not es_audio and await _charla(chat_id, perfil, texto or "", force_audio=False):
@@ -2213,11 +2260,21 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
 
             CONFIRMADOS_EN_MEMORIA.add(ingesta_id)
             ESPERANDO_CAMPO.pop(chat_id_int, None)
+            if msg_id_int:  # que no se pueda pulsar dos veces
+                await edit_message_reply_markup(chat_id_int, msg_id_int, [])
             estado_ev = (ev_creado or {}).get("status")
+            titulo = (ev_creado or {}).get("title") or "tu plan"
             if estado_ev == "abierto":
-                await send_message(chat_id_int, "✅ ¡Plan publicado!")
+                await send_message(chat_id_int, f"🎉 ¡«{titulo}» ya está publicado! Los vecinos ya "
+                                                "pueden verlo y apuntarse. Puedes cambiarlo o "
+                                                "cancelarlo desde /mis_propuestas.")
             else:
-                await send_message(chat_id_int, "📩 Enviado para revisión antes de publicar.")
+                await send_message(chat_id_int,
+                                   f"✅ ¡Gracias! He enviado «{titulo}» al moderador para que lo "
+                                   "revise.\n\nTe avisaré por aquí en cuanto tenga su respuesta: "
+                                   "si lo aprueba, se publicará en la agenda. Mientras, puedes verlo "
+                                   "en /mis_propuestas.",
+                                   buttons=[[("🗂️ Mis propuestas", "cmd:mis_propuestas")]])
         else:
             CONFIRMADOS_EN_MEMORIA.add(ingesta_id)
             sb.table("ingestas").update({"estado": "confirmada"}).eq("id", ingesta_id).execute()
