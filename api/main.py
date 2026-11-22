@@ -42,7 +42,7 @@ app.add_middleware(
     # Solo las previews de NUESTRO proyecto en Vercel (no cualquier web *.vercel.app)
     allow_origin_regex=r"https://reactiva-tu-pueblo[a-z0-9-]*\.vercel\.app",
     allow_credentials=False,  # usamos 'Authorization: Bearer', no cookies
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # PUT: cambiar valoración · DELETE: borrar cuenta
     allow_headers=["Authorization", "Content-Type"],
 )
 

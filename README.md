@@ -4,9 +4,9 @@ Hackathon UAL 2026 · Reto 1 "Reactiva tu pueblo". Una agenda y un mapa comunes 
 
 Hoy, lo que pasa en estos pueblos está repartido entre Facebook, carteles y grupos de mensajería. La app recoge lo que ya publican las asociaciones (también desde Facebook, con IA), lo confirma con quien lo publicó por Telegram y avisa a los vecinos a los que les puede interesar. **Las entidades no tienen que publicar dos veces.**
 
-- **App:** https://TU-APP.vercel.app
-- **API:** https://reactiva-api.onrender.com/health
-- **Bot de Telegram:** https://t.me/TU_BOT
+- **App (web, móvil y tableta):** https://reactiva-tu-pueblo.vercel.app
+- **API:** https://reactiva-tu-pueblo.onrender.com/health · documentación en [`/docs`](https://reactiva-tu-pueblo.onrender.com/docs)
+- **Bot de Telegram:** https://t.me/ReactivaPuebloBot
 
 ## Arquitectura (3 piezas)
 
@@ -88,6 +88,12 @@ Proponer (texto, nota de voz o foto del cartel) → **cuestionario** con lo que 
 
 **Reputación y paso a Publicador** (`api/reputacion.py`): de cada evento creado se hace la media de sus reseñas (1-2★ → −1 punto, 3★ → 0, 4-5★ → +0,5) y se suman; con **4 puntos** el usuario pasa a Publicador y se le avisa. Para que la BD use la misma fórmula, ejecuta una vez `supabase/migracion_reputacion.sql` en el SQL editor de Supabase (mientras, el servidor la corrige cada 5 minutos).
 `/mis_propuestas` (estado, ✏️ editar fecha/lugar/precio/plazas, ❌ cancelar; se avisa a los apuntados) · `/moderar` (moderadores: ✅ aprobar / 🚫 rechazar con motivo / ✏️ editar; el autor recibe el aviso, también si se decide en el panel web).
+
+**Carteles automáticos** (`api/cartel_vibrante.py`): cada plan sin cartel propio recibe uno al estilo de los carteles de fiestas del pueblo (foto real del pueblo, lema según el tipo de plan, precio, plazas, lugar y fecha; lo que no se sabe no se inventa). Al aprobar un plan, el autor recibe su cartel por Telegram para reenviarlo; el moderador y el autor pueden regenerarlo con «🎨 Generar cartel».
+
+**Consultas por Telegram:** «¿qué eventos he creado?» (con su cartel y estado), «¿cuántos puntos tengo?» / `/mis_puntos` (puntos evento a evento y lo que falta para Publicador), «¿qué hay este finde en Tahal?», apuntarse, valorar, cambiar una valoración, idioma, respuestas en audio y «hablar con una persona».
+
+**Alta de asociaciones** (`api/alta_entidades.py`, caso completo del Reto 1): la asociación escribe «quiero dar de alta mi asociación» o `/alta` → nombre, pueblo y su página de Facebook → el moderador la aprueba por Telegram → el agente lee esa página cada hora y, cuando publica un plan, **pregunta a su responsable «¿La subimos a la agenda?»** y lo que falte (texto o audio). No se crea nada hasta que confirma; si en 24 h no contesta, pasa al moderador.
 
 **Robustez:** todas las llamadas a Telegram (10 s) y a la IA (15 s) tienen límite de tiempo. Si fallan, el servidor sigue con un plan B sin IA y nunca se queda esperando. Sin IA, los candidatos esperan al moderador en vez de promoverse.
 
