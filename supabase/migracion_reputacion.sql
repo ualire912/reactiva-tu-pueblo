@@ -28,10 +28,18 @@ begin
 
   update profiles set
     reputation_score    = v_rep,
-    rol                 = case when rol = 'usuario' and v_rep >= 4 then 'publicador'::rol_usuario else rol end,
+    -- Sube con 4 puntos; baja a vecino si lo había ganado POR PUNTOS y cae por debajo de 4
+    -- (si lo nombró un moderador, no se toca)
+    rol                 = case when rol = 'usuario' and v_rep >= 4 then 'publicador'::rol_usuario
+                               when rol = 'publicador' and v_rep < 4
+                                    and coalesce(promocion_motivo, '') like 'Reputación de%' then 'usuario'::rol_usuario
+                               else rol end,
     promocion_pendiente = false,
     promocion_motivo    = case when rol = 'usuario' and v_rep >= 4
                                then 'Reputación de ' || v_rep || ' puntos por las reseñas de sus eventos'
+                               when rol = 'publicador' and v_rep < 4
+                                    and coalesce(promocion_motivo, '') like 'Reputación de%'
+                               then 'Vuelve a vecino/a: su reputación bajó a ' || v_rep || ' puntos'
                                else promocion_motivo end
   where id = p_user;
 end $$;

@@ -67,18 +67,41 @@ def recalcular(user_id: str | None, avisar_si_sube: bool = True) -> float | None
         return None
     try:
         total, _ = calcular(user_id)
-        p = (sb.table("profiles").select("rol,reputation_score").eq("id", user_id)
+        p = (sb.table("profiles").select("rol,reputation_score,promocion_motivo").eq("id", user_id)
              .execute().data or [{}])[0]
         cambios: dict = {}
         if float(p.get("reputation_score") or 0) != total:
             cambios["reputation_score"] = total
         sube = p.get("rol") == "usuario" and total >= PUNTOS_PARA_PUBLICADOR
+        # Baja: solo quien llegó a Publicador POR PUNTOS. Si lo nombró un moderador (o la IA a
+        # petición del panel), es su decisión y no se le quita por las reseñas.
+        por_puntos = str(p.get("promocion_motivo") or "").startswith("Reputación de")
+        baja = p.get("rol") == "publicador" and por_puntos and total < PUNTOS_PARA_PUBLICADOR
         if sube:
             cambios.update({"rol": "publicador", "promocion_pendiente": False,
                             "promocion_motivo": f"Reputación de {total:g} puntos (mínimo "
                                                 f"{PUNTOS_PARA_PUBLICADOR:g}) por las reseñas de sus eventos"})
+        if baja:
+            cambios.update({"rol": "usuario", "promocion_pendiente": False,
+                            "promocion_motivo": f"Vuelve a vecino/a: su reputación bajó a {total:g} puntos "
+                                                f"(mínimo {PUNTOS_PARA_PUBLICADOR:g})"})
         if cambios:
             sb.table("profiles").update(cambios).eq("id", user_id).execute()
+        if baja:
+            log.info("[reputacion] %s deja de ser publicador (%s puntos)", user_id, total)
+            if avisar_si_sube:
+                try:
+                    from puentes import avisar
+                    falta = PUNTOS_PARA_PUBLICADOR - total
+                    coma = lambda n: f"{n:g}".replace(".", ",")
+                    avisar(user_id, f"ℹ️ Tus planes tienen ahora {coma(total)} puntos de reputación, por debajo "
+                                    f"de los {PUNTOS_PARA_PUBLICADOR:g} que hacen falta, así que vuelves a ser "
+                                    "vecino/a registrado/a: tus próximos planes los revisará un moderador "
+                                    f"antes de publicarse. Te faltan {coma(falta)} puntos para recuperarlo: "
+                                    "con buenas valoraciones de tus planes lo vuelves a conseguir. "
+                                    "Puedes verlo con /mis_puntos.")
+                except Exception as e:
+                    log.warning("[reputacion] no se pudo avisar: %r", e)
         if sube:
             log.info("[reputacion] %s pasa a publicador (%s puntos)", user_id, total)
             if avisar_si_sube:
