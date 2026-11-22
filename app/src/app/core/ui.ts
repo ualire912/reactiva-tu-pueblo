@@ -20,6 +20,11 @@ const COLORES_PUEBLO: Record<string, string> = {
   tahal: '#2b6f68', // verde azulado
 };
 
+/** Telegram en modo "hablar con una persona del equipo" (el bot pasa el mensaje a los moderadores). */
+export function enlaceHablarConPersona(bot = 'ReactivaPuebloBot'): string {
+  return `https://t.me/${bot}?start=persona`;
+}
+
 export function normalizar(texto: string | null | undefined): string {
   return (texto || '')
     .toLowerCase()

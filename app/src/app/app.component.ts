@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal } from '@angular/core';
 import { NavigationEnd, Router } from '@angular/router';
 import { filter } from 'rxjs';
 import { CommonModule } from '@angular/common';
@@ -35,6 +35,7 @@ import {
   settingsOutline,
 } from 'ionicons/icons';
 import { AjustesService } from './core/ajustes.service';
+import { TraductorService } from './core/traductor.service';
 import { SupabaseService } from './core/supabase.service';
 
 @Component({
@@ -47,6 +48,12 @@ export class AppComponent {
   public sb = inject(SupabaseService);
   /** Aplica tamaño, colores, letra… guardados en este dispositivo desde el primer momento. */
   private ajustes = inject(AjustesService);
+  private traductor = inject(TraductorService);
+  /** Varios idiomas: si el idioma elegido no es español, se traduce lo que hay en pantalla. */
+  private idiomaWeb = effect(() => {
+    const idioma = this.ajustes.ajustes().idioma || 'es';
+    setTimeout(() => this.traductor.activar(idioma), 300);
+  });
   private router = inject(Router);
 
   /** La ficha de un plan forma parte de la agenda: se marca esa pestaña abajo. */

@@ -17,6 +17,9 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { AjustesService, Ajustes } from '../../../core/ajustes.service';
+import { IDIOMAS_WEB } from '../../../core/traductor.service';
+import { enlaceHablarConPersona } from '../../../core/ui';
+import { environment } from '../../../../environments/environment';
 import { SupabaseService } from '../../../core/supabase.service';
 import { AvisosService } from '../../../core/avisos.service';
 import { AlertController } from '@ionic/angular';
@@ -40,6 +43,7 @@ export class AjustesPage implements OnInit {
   private api = inject(ApiService);
   private router = inject(Router);
   borrando = false;
+  readonly enlacePersona = enlaceHablarConPersona(environment.telegramBotUsername);
 
   a = this.ajustesSvc.ajustes;
   perfil = toSignal(this.sb.profile$, { initialValue: this.sb.currentProfile });
@@ -47,6 +51,7 @@ export class AjustesPage implements OnInit {
   hayVoz = 'speechSynthesis' in window;
   hayVibracion = 'vibrate' in navigator;
 
+  readonly idiomas = IDIOMAS_WEB;
   readonly tamanos = [
     { valor: 100, texto: 'Normal' },
     { valor: 115, texto: 'Grande' },

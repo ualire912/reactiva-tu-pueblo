@@ -14,6 +14,17 @@
     <h1 class="sr-only">Ajustes</h1>
     <p class="texto-suave ajustes-intro">Adapta la web a ti. Los cambios se ven al momento y se recuerdan en este dispositivo.</p>
 
+    <!-- ===================== IDIOMA ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-idioma">
+      <h2 id="g-idioma"><span aria-hidden="true">🌍</span> Idioma <span class="notranslate" translate="no">/ Language</span></h2>
+      <p class="texto-suave">La web se traduce automáticamente con inteligencia artificial. Los nombres de los pueblos no se traducen.</p>
+      <div class="opciones" role="radiogroup" aria-label="Idioma / Language" translate="no">
+        @for (i of idiomas; track i.codigo) {
+          <button type="button" role="radio" [attr.lang]="i.codigo" [attr.aria-checked]="(a().idioma || 'es') === i.codigo" [class.on]="(a().idioma || 'es') === i.codigo" (click)="cambiar({ idioma: i.codigo })">{{ i.nombre }}</button>
+        }
+      </div>
+    </section>
+
     <!-- ===================== VER MEJOR ===================== -->
     <section class="ajustes-grupo" aria-labelledby="g-ver">
       <h2 id="g-ver"><ion-icon name="eye-outline" aria-hidden="true"></ion-icon> Ver mejor</h2>
@@ -165,6 +176,13 @@
           {{ guardandoAvisos ? 'Guardando…' : 'Guardar mis avisos' }}
         </ion-button>
       }
+    </section>
+
+    <!-- ===================== AYUDA ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-ayuda">
+      <h2 id="g-ayuda"><span aria-hidden="true">🙋</span> ¿Necesitas ayuda?</h2>
+      <p class="texto-suave">Si algo no funciona o el asistente no te entiende, escribe a una persona del equipo. Te contestará por Telegram.</p>
+      <ion-button fill="outline" [href]="enlacePersona" target="_blank" rel="noopener">Hablar con una persona</ion-button>
     </section>
 
     <div class="ajustes-pie">

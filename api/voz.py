@@ -12,6 +12,8 @@ import hashlib
 import re
 
 VOZ = "es-ES-ElviraNeural"
+VOCES = {"es": VOZ, "en": "en-GB-SoniaNeural", "fr": "fr-FR-DeniseNeural",
+         "de": "de-DE-KatjaNeural", "ro": "ro-RO-AlinaNeural", "ar": "ar-MA-MounaNeural"}
 VELOCIDAD = "-10%"          # algo más lento: más fácil de entender
 MAX_CARACTERES = 1200       # un audio de ~1 minuto como mucho
 TIMEOUT_S = 20
@@ -30,28 +32,29 @@ def _limpiar(texto: str) -> str:
     return re.sub(r"\s+", " ", t).strip()[:MAX_CARACTERES]
 
 
-async def _generar(texto: str) -> bytes:
+async def _generar(texto: str, voz: str = VOZ) -> bytes:
     import edge_tts
     audio = bytearray()
-    async for trozo in edge_tts.Communicate(texto, VOZ, rate=VELOCIDAD).stream():
+    async for trozo in edge_tts.Communicate(texto, voz, rate=VELOCIDAD).stream():
         if trozo["type"] == "audio":
             audio.extend(trozo["data"])
     return bytes(audio)
 
 
-def texto_a_voz(texto: str) -> bytes | None:
+def texto_a_voz(texto: str, idioma: str = "es") -> bytes | None:
     """Devuelve el mp3 o None si no se puede. Nunca lanza excepciones."""
     try:
         limpio = _limpiar(texto)
         if not limpio:
             return None
-        clave = hashlib.sha256(limpio.encode()).hexdigest()
+        voz = VOCES.get(idioma, VOZ)
+        clave = hashlib.sha256(f"{voz}|{limpio}".encode()).hexdigest()
         if clave in _CACHE:
             return _CACHE[clave]
         # En un hilo aparte con su propio bucle asyncio: así funciona igual
         # desde código normal que desde dentro del servidor (que ya tiene uno).
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            mp3 = ex.submit(asyncio.run, _generar(limpio)).result(timeout=TIMEOUT_S)
+            mp3 = ex.submit(asyncio.run, _generar(limpio, voz)).result(timeout=TIMEOUT_S)
         if not mp3:
             return None
         if len(_CACHE) > 200:

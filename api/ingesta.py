@@ -490,6 +490,16 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
         fila["poster_url"] = _copiar_a_storage(fila["poster_url"]) or fila["poster_url"]
     if not fila.get("poster_url"):  # sin cartel original -> uno automático (sin IA)
         fila["poster_url"] = subir_cartel({**ex, **fila})
+    if fila.get("location_name") and fila.get("lat") is None:
+        # El sitio exacto en el mapa (dentro del pueblo); si no se encuentra, la BD
+        # pone el centro del pueblo
+        try:
+            import geo
+            pos = geo.geocodificar(fila["location_name"], ex.get("municipio"))
+            if pos:
+                fila["lat"], fila["lng"] = pos
+        except Exception as e:
+            log.warning("No se pudo situar «%s» en el mapa: %r", fila.get("location_name"), e)
     fila = {k: v for k, v in fila.items() if v is not None}
 
     try:

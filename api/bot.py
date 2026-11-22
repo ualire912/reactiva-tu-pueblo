@@ -27,6 +27,7 @@ try:
         escape_html,
         get_file_bytes,
         send_audio,
+        send_voice,
         send_document,
         send_message,
         send_photo,
@@ -41,12 +42,89 @@ except ImportError:
         escape_html,
         get_file_bytes,
         send_audio,
+        send_voice,
         send_document,
         send_message,
         send_photo,
     )
 
 router = APIRouter(tags=["telegram"])
+
+# ── Varios idiomas ──────────────────────────────────────────
+# El bot está escrito en español. Si la persona usa otro idioma (el de su Telegram o el que
+# elija con /idioma), todo lo que se le manda se traduce con la IA (api/routers/traduccion.py).
+IDIOMAS_BOT = {"es": "Español", "en": "English", "fr": "Français", "de": "Deutsch",
+               "ro": "Română", "ar": "العربية"}
+IDIOMA_CHAT: dict[int, str] = {}
+_send_message_es, _send_photo_es = send_message, send_photo
+
+
+def _idioma_de(chat_id: int | str) -> str:
+    try:
+        cid = int(chat_id)
+    except (TypeError, ValueError):
+        return "es"
+    if cid not in IDIOMA_CHAT:
+        try:
+            filas = sb.table("profiles").select("preferencias").eq("telegram_chat_id", cid).limit(1).execute().data
+            IDIOMA_CHAT[cid] = ((filas[0].get("preferencias") or {}).get("idioma") if filas else None) or "es"
+        except Exception:
+            return "es"
+    return IDIOMA_CHAT[cid]
+
+
+async def _traducir(textos: list[str], idioma: str) -> list[str]:
+    if idioma == "es":
+        return textos
+    import asyncio
+    try:
+        from routers.traduccion import traducir
+    except ImportError:
+        from api.routers.traduccion import traducir
+    return await asyncio.to_thread(traducir, textos, idioma)
+
+
+async def _traducir_salida(chat_id, texto: str, buttons):
+    idioma = _idioma_de(chat_id)
+    if idioma == "es":
+        return texto, buttons
+    etiquetas = [b[0] for fila in (buttons or []) for b in fila]
+    trad = await _traducir([texto or ""] + etiquetas, idioma)
+    if buttons:
+        it = iter(trad[1:])
+        buttons = [[(next(it), b[1]) for b in fila] for fila in buttons]
+    return trad[0], buttons
+
+
+async def send_message(chat_id, text, buttons=None, escape=True):  # noqa: F811 (traduce y envía)
+    text, buttons = await _traducir_salida(chat_id, text, buttons)
+    return await _send_message_es(chat_id, text, buttons=buttons, escape=escape)
+
+
+async def send_photo(chat_id, photo_url, caption="", buttons=None, escape=True):  # noqa: F811
+    caption, buttons = await _traducir_salida(chat_id, caption, buttons)
+    return await _send_photo_es(chat_id, photo_url, caption=caption, buttons=buttons, escape=escape)
+
+
+async def _cmd_idioma(chat_id: int) -> None:
+    botones = [[(nombre, f"idioma:{codigo}")] for codigo, nombre in IDIOMAS_BOT.items()]
+    await _send_message_es(chat_id, "🌍 ¿En qué idioma quieres que te hable? · Choose your language:",
+                           buttons=botones)
+
+
+async def _cambiar_idioma(chat_id: int, perfil: dict[str, Any] | None, idioma: str) -> None:
+    if idioma not in IDIOMAS_BOT:
+        return
+    IDIOMA_CHAT[chat_id] = idioma
+    if perfil and perfil.get("id"):
+        prefs = dict(perfil.get("preferencias") or {})
+        prefs["idioma"] = idioma
+        try:
+            sb.table("profiles").update({"preferencias": prefs}).eq("id", perfil["id"]).execute()
+        except Exception:
+            pass
+    await send_message(chat_id, f"✅ Perfecto, a partir de ahora te hablo en {IDIOMAS_BOT[idioma]}.",
+                       buttons=MENU_PRINCIPAL)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 ESPERANDO_CAMPO: dict[int, dict[str, str]] = {}
@@ -447,8 +525,69 @@ async def _cmd_cartel(chat_id: int, perfil: dict[str, Any] | None, texto: str,
         await send_message(chat_id, "⚠️ Ese plan aún no tiene cartel y no he podido crearlo ahora.")
 
 
+# ── Siempre una persona ─────────────────────────────────────
+HABLANDO_CON_PERSONA: set[int] = set()   # vecinos cuyo próximo mensaje va al equipo
+RESPONDIENDO_A: dict[int, int] = {}      # moderador -> chat del vecino al que contesta
+_RE_PERSONA = re.compile(r"\b(hablar con (una |alguna )?persona|persona (real|de verdad)|"
+                         r"hablar con (alguien|un humano|el equipo|un moderador)|operador|"
+                         r"no me (entiendes|sirves)|quiero una persona)\b")
+
+
+async def _empezar_con_persona(chat_id: int) -> None:
+    HABLANDO_CON_PERSONA.add(chat_id)
+    await send_message(chat_id, "🙋 Claro. Escríbeme (o mándame una nota de voz) lo que necesitas y se lo "
+                                "paso a una persona del equipo. Te contestará por aquí mismo.\n\n"
+                                "Si cambias de idea, escribe «cancelar».")
+
+
+async def _pasar_a_persona(chat_id: int, perfil: dict[str, Any] | None, dicho: str) -> None:
+    if not dicho:
+        await send_message(chat_id, "⚠️ No he podido leer tu mensaje. Inténtalo otra vez.")
+        HABLANDO_CON_PERSONA.add(chat_id)
+        return
+    nombre = (perfil or {}).get("full_name") or "Un vecino"
+    enviados = 0
+    for m in _moderadores_con_telegram():
+        if str(m.get("telegram_chat_id")) == str(chat_id):
+            continue
+        try:
+            await send_message(int(m["telegram_chat_id"]),
+                               f"🙋 {nombre} quiere hablar con una persona:\n\n«{dicho[:900]}»",
+                               buttons=[[("↩️ Responder", f"resp_persona:{chat_id}")]])
+            enviados += 1
+        except Exception:
+            pass
+    try:  # queda registrado para el panel (incidencias abiertas)
+        sb.table("notificaciones").insert({"user_id": (perfil or {}).get("id"), "tipo": "persona",
+                                           "canal": "telegram", "motivo": dicho[:300]}).execute()
+    except Exception:
+        pass
+    if enviados:
+        await send_message(chat_id, "✅ Se lo he pasado al equipo. Una persona te contestará por aquí "
+                                    "en cuanto pueda.", buttons=MENU_PRINCIPAL)
+    else:
+        await send_message(chat_id, "😔 Ahora mismo no hay nadie del equipo conectado. Inténtalo más tarde "
+                                    "o pregunta en el chat del plan en la web.", buttons=MENU_PRINCIPAL)
+
+
+async def _responder_como_persona(chat_id: int, perfil: dict[str, Any] | None, vecino: int,
+                                  dicho: str) -> None:
+    if not dicho:
+        RESPONDIENDO_A[chat_id] = vecino
+        await send_message(chat_id, "⚠️ No he podido leer la respuesta. Escríbela otra vez.")
+        return
+    nombre = ((perfil or {}).get("full_name") or "el equipo").split()[0]
+    ok = await send_message(vecino, f"👤 Te contesta {nombre}, del equipo de Reactiva tu pueblo:\n\n{dicho}",
+                            buttons=[[("🙋 Contestar", "cmd:persona")]])
+    await send_message(chat_id, "✅ Respuesta enviada." if ok else "⚠️ No he podido entregar la respuesta.")
+
+
 async def _cmd_start(chat_id: int, args: str, first_name: str | None) -> None:
     code = args.strip()
+    if code.lower() == "persona":  # "Hablar con una persona" desde la web
+        await _asegurar_perfil_telegram(chat_id, first_name)
+        await _empezar_con_persona(chat_id)
+        return
     if code.upper().startswith("ENTRAR-"):  # "Entrar con Telegram" desde la web
         await _entrar_en_la_web(chat_id, code[7:], first_name)
         return
@@ -584,15 +723,30 @@ def _resumen_hablado(eventos: list[dict[str, Any]], estados: dict[str, str] | No
     return " ".join(_frase_evento(ev, (estados or {}).get(str(ev.get("id")))) for ev in eventos)
 
 
+def _titulo_audio(texto: str) -> str:
+    """Nombre del audio: el plan del que habla («Taller de esparto») o el principio del mensaje."""
+    m = re.search(r"«([^»]{3,60})»", texto or "")
+    if m:
+        return f"«{m.group(1)}»"
+    limpio = re.sub(r"[^\w\s¿?¡!.,:áéíóúñüÁÉÍÓÚÑÜ-]", "", texto or "").strip()
+    primera = re.split(r"(?<=[.!?:])\s|\n", limpio)[0][:50].strip()
+    return primera or "Mensaje"
+
+
 async def _enviar_audio(chat_id: int, texto: str) -> None:
-    """Manda `texto` como nota de voz (solo se llama si el usuario habló por voz)."""
+    """Manda `texto` como nota de voz con un nombre claro (no "reproductor")."""
     voz_mod = _get_voz_module()
     if not voz_mod or not hasattr(voz_mod, "texto_a_voz"):
         return
     try:
-        mp3 = await _maybe_await(voz_mod.texto_a_voz(texto))
+        idioma = _idioma_de(chat_id)
+        dicho = (await _traducir([texto], idioma))[0] if idioma != "es" else texto
+        try:
+            mp3 = await _maybe_await(voz_mod.texto_a_voz(dicho, idioma))
+        except TypeError:  # voz.py antiguo, solo español
+            mp3 = await _maybe_await(voz_mod.texto_a_voz(dicho))
         if mp3:
-            await send_audio(chat_id, mp3, caption="🔊 Pulsa para escuchar")
+            await send_voice(chat_id, mp3, caption=f"🔊 {_titulo_audio(dicho)} · Reactiva tu pueblo")
     except Exception:
         pass
 
@@ -891,6 +1045,14 @@ async def _aplicar_edicion(chat_id: int, perfil: dict[str, Any] | None, respuest
             cambios["max_capacity"] = v
     elif campo in ("title", "location_name", "description") and respuesta:
         cambios[campo] = respuesta[:500 if campo == "description" else 200]
+        if campo == "location_name":  # el pin del mapa se mueve al sitio nuevo
+            try:
+                import geo
+                pos = geo.geocodificar(respuesta, _get_municipio_nombre(ev.get("municipio_id")))
+                if pos:
+                    cambios["lat"], cambios["lng"] = pos
+            except Exception:
+                pass
     elif campo == "starts_at" and respuesta:
         ia_mod = _get_ia_module()
         nuevo = ia_mod.extraer_evento(f"{ev.get('title')}. Nueva fecha y hora: {respuesta}") if ia_mod else {}
@@ -1451,7 +1613,8 @@ MENU_PRINCIPAL: list[list[tuple[str, str]]] = [
     [("📅 Próximos planes", "cmd:agenda"), ("✨ Recomiéndame", "cmd:recomendar")],
     [("📋 Mis planes", "cmd:mis_planes"), ("⭐ Valorar un plan", "cmd:valorar")],
     [("📝 Proponer un plan", "cmd:proponer"), ("🗂️ Mis propuestas", "cmd:mis_propuestas")],
-    [("❓ Ayuda", "cmd:ayuda")],
+    [("❓ Ayuda", "cmd:ayuda"), ("🙋 Hablar con una persona", "cmd:persona")],
+    [("🌍 Idioma / Language", "cmd:idioma")],
 ]
 _RE_SALUDO = re.compile(r"^(hola+|holi|buenas|buenos dias|buenas tardes|buenas noches|hey|ey|"
                         r"saludos|que tal|que pasa|wenas)\b")
@@ -1862,6 +2025,28 @@ async def _procesar_texto_o_voz(
     if es_audio:
         await send_chat_action(chat_id, "record_voice")
 
+    # ── Siempre una persona: el vecino escribe al equipo o el moderador le contesta
+    if chat_id in HABLANDO_CON_PERSONA or chat_id in RESPONDIENDO_A:
+        dicho = (texto or "").strip()
+        if not dicho and es_audio:
+            ia_mod = _get_ia_module()
+            if ia_mod and hasattr(ia_mod, "entender_mensaje"):
+                dicho = ((await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))) or {}).get("texto") or ""
+        if _norm_txt(dicho).strip(" .!") in {"cancelar", "nada", "dejalo", "olvidalo"}:
+            HABLANDO_CON_PERSONA.discard(chat_id)
+            RESPONDIENDO_A.pop(chat_id, None)
+            await send_message(chat_id, "👌 Vale, cancelado.", buttons=MENU_PRINCIPAL)
+            return
+        if chat_id in RESPONDIENDO_A:
+            await _responder_como_persona(chat_id, perfil, RESPONDIENDO_A.pop(chat_id), dicho)
+        else:
+            HABLANDO_CON_PERSONA.discard(chat_id)
+            await _pasar_a_persona(chat_id, perfil, dicho)
+        return
+    if texto and _RE_PERSONA.search(_norm_txt(texto)):
+        await _empezar_con_persona(chat_id)
+        return
+
     if chat_id in ESPERANDO_RESENA:
         event_id = ESPERANDO_RESENA.pop(chat_id)
         comentario = (texto or "").strip()
@@ -2214,6 +2399,16 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         await send_message(chat_id_int, TEXTO_PROPONER)
     elif data == "cmd:ayuda":
         await _mostrar_ayuda(chat_id_int)
+    elif data == "cmd:idioma":
+        await _cmd_idioma(chat_id_int)
+    elif data.startswith("idioma:"):
+        await _cambiar_idioma(chat_id_int, perfil, data.split(":", 1)[1])
+    elif data == "cmd:persona":
+        await _empezar_con_persona(chat_id_int)
+    elif data.startswith("resp_persona:"):
+        if _es_moderador(perfil):
+            RESPONDIENDO_A[chat_id_int] = int(data.split(":", 1)[1])
+            await send_message(chat_id_int, "✍️ Escribe la respuesta y se la mando (o «cancelar»).")
     elif data == "cmd:mis_propuestas":
         await _cmd_mis_propuestas(chat_id_int, perfil)
     elif data == "cmd:mis_valoraciones":
@@ -2487,6 +2682,10 @@ async def procesar_update(update: dict[str, Any]) -> None:
     chat_id_int = int(chat_id)
     from_user = msg.get("from") or {}
     perfil = await _asegurar_perfil_telegram(chat_id_int, from_user.get("first_name"))
+    if chat_id_int not in IDIOMA_CHAT:
+        elegido = ((perfil or {}).get("preferencias") or {}).get("idioma")
+        de_telegram = str(from_user.get("language_code") or "es")[:2].lower()
+        IDIOMA_CHAT[chat_id_int] = elegido or (de_telegram if de_telegram in IDIOMAS_BOT else "es")
 
     if "photo" in msg and msg["photo"]:
         await _manejar_foto(chat_id_int, perfil, msg)
@@ -2515,6 +2714,8 @@ async def procesar_update(update: dict[str, Any]) -> None:
             elif cmd == "/proponer":
                 ESPERANDO_PROPUESTA.add(chat_id_int)
                 await send_message(chat_id_int, TEXTO_PROPONER)
+            elif cmd in ("/idioma", "/language", "/langue", "/sprache", "/limba"):
+                await _cmd_idioma(chat_id_int)
             elif cmd == "/audio":
                 await _toggle_audio(chat_id_int, perfil=perfil, enabled=None)
             elif cmd in ("/ayuda", "/help", "/menu"):

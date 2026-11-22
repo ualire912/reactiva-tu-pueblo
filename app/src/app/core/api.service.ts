@@ -127,6 +127,11 @@ export class ApiService {
     return this.peticion('/moderacion/agente/buscar', { method: 'POST', body: { texto: texto || null, guardar } });
   }
 
+  /** Varios idiomas: traduce textos de la web (sin sesión). */
+  traducir(idioma: string, textos: string[]): Promise<{ traducciones: string[] }> {
+    return this.peticion('/traducir', { method: 'POST', body: { idioma, textos }, auth: false });
+  }
+
   /** Borra la cuenta de quien tiene la sesión abierta. */
   borrarCuenta(): Promise<{ ok: boolean }> {
     return this.peticion('/auth/cuenta', { method: 'DELETE' });

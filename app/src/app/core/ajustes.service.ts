@@ -21,6 +21,8 @@ export interface Ajustes {
   /** Lectura en voz alta: velocidad (0,5 – 1,5) y voz elegida. */
   vozVelocidad: number;
   vozNombre: string;
+  /** Idioma de la web: es, en, fr, de, ro, ar (la IA traduce los textos). */
+  idioma: string;
 }
 
 export const AJUSTES_POR_DEFECTO: Ajustes = {
@@ -34,6 +36,7 @@ export const AJUSTES_POR_DEFECTO: Ajustes = {
   vibracion: true,
   vozVelocidad: 0.95,
   vozNombre: '',
+  idioma: 'es',
 };
 
 const CLAVE = 'reactiva-ajustes';
@@ -85,6 +88,8 @@ export class AjustesService {
     html.classList.toggle('mostrar-etiquetas', a.etiquetas);
     html.style.setProperty('--rp-escala', String(a.tamano / 100));
     html.classList.toggle('escalado', a.tamano !== 100);
+    html.lang = a.idioma || 'es';
+    html.dir = a.idioma === 'ar' ? 'rtl' : 'ltr';
     if (a.legible && !document.getElementById('fuente-legible')) {
       const link = document.createElement('link');
       link.id = 'fuente-legible';

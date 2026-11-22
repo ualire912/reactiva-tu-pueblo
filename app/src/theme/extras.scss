@@ -956,3 +956,14 @@ html.tema-oscuro {
     accent-color: var(--rp-principal);
   }
 }
+
+/* Enlace "Habla con una persona" bajo el chat de cada plan */
+.enlace-persona {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--rp-principal-oscuro);
+}

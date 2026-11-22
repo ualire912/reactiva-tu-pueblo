@@ -1,5 +1,6 @@
 import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { environment } from '../../../../environments/environment';
 import { TiempoEventoComponent } from '../../../components/tiempo-evento/tiempo-evento.component';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterModule } from '@angular/router';
@@ -65,6 +66,7 @@ import {
   estiloCategoria,
   haTerminado,
   esOfensivo,
+  enlaceHablarConPersona,
   iconoCategoria,
   iconoCategoriaLinea,
   partesFecha,
@@ -101,6 +103,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   sb = inject(SupabaseService);
   private ajustesSvc = inject(AjustesService);
+  readonly enlacePersona = enlaceHablarConPersona(environment.telegramBotUsername);
   private api = inject(ApiService);
   private eventosSvc = inject(EventosService);
   private avisos = inject(AvisosService);
