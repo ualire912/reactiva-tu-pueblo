@@ -61,7 +61,7 @@ app.include_router(acceso.router)
 app.include_router(traduccion.router)
 
 # Routers de B2 y C1: si aún no están listos, el servidor arranca igual
-for modulo in ("bot", "ingesta", "whatsapp"):
+for modulo in ("bot", "ingesta"):
     try:
         app.include_router(__import__(modulo).router)
         log.info("Router %s incluido", modulo)
