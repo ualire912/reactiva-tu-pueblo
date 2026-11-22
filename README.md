@@ -59,17 +59,21 @@ También: avisar al autor cuando un moderador aprueba o rechaza su propuesta, **
 ## Eventos reales: agente de Facebook y noticias (arranque en 5 minutos)
 La agenda se llena con eventos **reales** de los pueblos, nunca inventados. La IA propone; el sistema valida; una persona decide.
 
-1. En `api/.env` pon `APIFY_TOKEN=` (apify.com → Settings → API & Integrations) y al menos una clave de visión (`GEMINI_API_KEY` vale).
-2. En `api/scraper/fuentes_eventos.json` pon las URL de las páginas **públicas** de Facebook (ayuntamientos, asociaciones, negocios; nunca perfiles personales ni grupos privados) y, si quieres, más noticias en `articulos`.
+1. En `api/.env` (y en Render) pon `APIFY_TOKEN=` (apify.com → Settings → API & Integrations; el plan gratuito da 5 $/mes) y `GEMINI_API_KEY`.
+2. No hace falta poner direcciones: la app **busca sola** en Facebook por los nombres de los pueblos, guarda las organizaciones que encuentra y lee sus páginas una vez al día con `apify/facebook-posts-scraper`. También lee las **webs de los ayuntamientos** (`webs_ayuntamientos`) con **ScrapeGraphAI + Gemini** (scraping dirigido con IA). Todo se ajusta en `api/scraper/fuentes_eventos.json`.
 3. Desde `api/`:
 ```bash
 python scraper/agente_eventos.py --dry-run      # qué haría, sin escribir nada
 python scraper/agente_eventos.py                # guarda ingestas y eventos en Supabase
 python scraper/agente_eventos.py --archivo pruebas/apify_XXXX.json   # repetir sin gastar crédito
 ```
+```bash
+python scraper/webs_aytos.py --dry-run          # eventos que la IA encuentra en las webs municipales
+```
+**Frecuencia y gasto** (`api/tareas.py`): cada 3 h una búsqueda en Facebook por turnos (8 publicaciones recientes) y una vez al día las páginas de las organizaciones y las webs de los ayuntamientos. Cabe en el plan gratuito de Apify; para mirar más a menudo, `AGENTE_CADA_MIN` en Render (minutos).
 Además de leer páginas concretas, **busca publicaciones** en Facebook con palabras de cada pueblo (`busqueda_facebook` en `fuentes_eventos.json`; el actor de Apify y su formato de entrada se configuran ahí). Lo que no nombra ninguno de los pueblos o no parece un evento se ignora sin guardarse. **Organizaciones** (ayuntamientos, asociaciones…): la IA decide y, si no son de confianza o duda, al moderador. **Personas**: solo si la IA ve claro que proponen un evento, y entonces siempre al moderador; de lo que no es un evento no se guarda el texto. Al moderador no le llegan spam ni publicaciones que no sean eventos.
 
-Cómo decide: cada post pasa por reglas, spam e IA (texto con freellmpool → Gemini; carteles con `extractor_vlm.py`). Las fechas relativas ("este sábado") se calculan desde la fecha de publicación. Los recordatorios del mismo evento no se duplican. Fuente oficial y la IA segura → **publicado**; si falta algo o la IA duda → **borrador_ia**; completo → **pendiente_moderacion**. Las webs de los ayuntamientos bloquean los programas automáticos y no se intenta saltar esa protección.
+Cómo decide: cada post pasa por reglas, spam e IA (texto con freellmpool → Gemini; carteles con `extractor_vlm.py`). Las fechas relativas ("este sábado") se calculan desde la fecha de publicación. Los recordatorios del mismo evento no se duplican. Fuente oficial y la IA segura → **publicado**; si falta algo o la IA duda → **borrador_ia**; completo → **pendiente_moderacion**. Las webs de los ayuntamientos (gestor de la Diputación) se leen tal cual, sin saltarse ninguna protección; la IA descarta plenos, bandos y avisos administrativos.
 
 **Extractor de carteles** (`api/extractor_vlm.py`): cascada de modelos de visión gratuitos (Gemini, NVIDIA, Mistral, Groq, OpenRouter) con segunda opinión si la confianza es baja; nunca inventa (lo que no sale en el cartel va a `missing`). Registra cada llamada en `api/pruebas/ia_llamadas.csv`.
 ```bash

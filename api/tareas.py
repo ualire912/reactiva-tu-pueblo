@@ -14,6 +14,7 @@ Render gratuito se duerme sin visitas: cron-job.org a /health cada 10 min lo man
 """
 import logging
 import threading
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -127,7 +128,7 @@ def _paso_avisos_moderacion():
         if not revisado and autores.get(ev["created_by"]) != "usuario":
             continue  # lo publicó él mismo (publicador/moderador): no hay nada que avisar
         ya = sb.table("notificaciones").select("id").eq("user_id", ev["created_by"]) \
-            .eq("event_id", ev["id"]).eq("tipo", "moderacion").limit(1).execute().data
+            .eq("event_id", ev["id"]).in_("tipo", ["moderacion", "aprobado", "rechazado"]).limit(1).execute().data
         if ya:
             continue
         if ev["status"] == "rechazado":
@@ -189,7 +190,7 @@ def _paso_recordatorios():
             botones = [[("📅 Calendario", f"ics:{ev['id']}"), ("❌ Borrarme", f"cancel:{ev['id']}")],
                        [("🚗 Llevo coche", f"coche:ofrece:{ev['id']}"),
                         ("🙋 Busco coche", f"coche:busca:{ev['id']}")]]
-            if avisar(a["user_id"], texto, botones):
+            if avisar(a["user_id"], texto, botones, tipo="recordatorio"):
                 sb.table("notificaciones").upsert(
                     {"user_id": a["user_id"], "event_id": ev["id"], "tipo": "recordatorio",
                      "canal": "telegram", "motivo": "un día antes"},
@@ -273,7 +274,7 @@ def _paso_recomendaciones():
         texto = (f"✨ {'¡Hola, ' + nombre + '! ' if nombre else ''}Te pueden gustar estos planes:\n\n"
                  + "\n".join(lineas))
         botones = [[(f"✅ Apuntarme: {r['title'][:22]}", f"insc:{r['id']}")] for r in recs]
-        if avisar(u["id"], texto, botones):
+        if avisar(u["id"], texto, botones, tipo="recomendacion"):
             sb.table("notificaciones").upsert(
                 [{"user_id": u["id"], "event_id": r["id"], "tipo": "recomendacion",
                   "canal": "telegram", "motivo": r["motivo"]} for r in recs],
@@ -281,23 +282,100 @@ def _paso_recomendaciones():
             log.info("[tareas] recomendación enviada a %s (%s planes)", u["id"][:8], len(recs))
 
 
-_AGENTE = {"ultimo": 0.0}
-CADA_AGENTE = 6 * 3600  # el agente de eventos reales, cada 6 horas
+_AGENTE = {"ultimo": 0.0, "completo": 0.0, "descubrir": 0.0, "corriendo": False, "inicio": None, "fin": None,
+           "motivo": None, "resultado": None, "error": None}
+# Facebook: cada hora se busca el nombre de un pueblo (por turnos: Senés, Lucainena...),
+# y una vez al día se leen las páginas de las organizaciones y las webs de los ayuntamientos.
+# El moderador puede lanzar la búsqueda al momento desde el panel ("Buscar ahora").
+# Más a menudo: AGENTE_CADA_MIN en Render (minutos). Cada búsqueda gasta crédito de Apify.
+CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "60")) * 60
+CADA_AGENTE_COMPLETO = 24 * 3600
 
 
-def _paso_agente():
-    """Facebook (si hay APIFY_TOKEN y páginas) + noticias -> eventos reales. Cada 6 h."""
-    if time.time() - _AGENTE["ultimo"] < CADA_AGENTE:
-        return
-    _AGENTE["ultimo"] = time.time()
-    import os
+def _ahora_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | None = None,
+                  urls: list[str] | None = None, guardar: bool = False,
+                  descubrir: bool = False) -> bool:
+    """Arranca una pasada del agente en su propio hilo. False si ya hay una en marcha."""
+    if _AGENTE["corriendo"]:
+        return False
     import sys
     carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scraper")
     if carpeta not in sys.path:
         sys.path.insert(0, carpeta)
-    import agente_eventos
-    r = agente_eventos.ejecutar()
-    log.info("[tareas] agente de eventos: %s", r)
+
+    def correr():
+        try:
+            import agente_eventos
+            if urls:  # "Buscar ahora" con la dirección de una página o perfil
+                r = agente_eventos.leer_direcciones(urls, guardar=guardar)
+            elif consultas is not None:  # "Buscar ahora" del panel: solo esas búsquedas
+                r = agente_eventos.ejecutar(semanas=2, solo="busqueda", consultas=consultas,
+                                            descubrir=descubrir)
+            else:
+                # La pasada diaria lee además las páginas de las organizaciones, las webs de
+                # los ayuntamientos y las noticias
+                r = agente_eventos.ejecutar(semanas=6 if completo else 1, rapida=not completo,
+                                            busqueda_completa=False, descubrir=descubrir)
+            _AGENTE["resultado"] = r
+            log.info("[tareas] agente de eventos (%s): %s", motivo, r)
+        except BaseException as e:  # nada de lo que pase aquí para las demás tareas
+            _AGENTE["error"] = f"{type(e).__name__}: {str(e)[:200]}"
+            log.error("[tareas] agente de eventos falló: %r", e)
+        finally:
+            _AGENTE["fin"] = _ahora_iso()
+            _AGENTE["corriendo"] = False
+
+    _AGENTE.update(corriendo=True, inicio=_ahora_iso(), fin=None, motivo=motivo,
+                   resultado=None, error=None)
+    # En su propio hilo: Apify puede tardar minutos y los recordatorios no deben esperar
+    threading.Thread(target=correr, name="agente-eventos", daemon=True).start()
+    return True
+
+
+def estado_agente() -> dict:
+    """Para el panel del moderador: qué hizo la última búsqueda y cuándo toca la siguiente."""
+    falta = CADA_AGENTE - (time.time() - _AGENTE["ultimo"]) if _AGENTE["ultimo"] else 0
+    return {
+        "apify_configurado": bool(os.environ.get("APIFY_TOKEN", "").strip()),
+        "ia_configurada": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "corriendo": _AGENTE["corriendo"],
+        "inicio": _AGENTE["inicio"],
+        "fin": _AGENTE["fin"],
+        "motivo": _AGENTE["motivo"],
+        "resultado": _AGENTE["resultado"],
+        "error": _AGENTE["error"],
+        "cada_minutos": CADA_AGENTE // 60,
+        "proxima_en_minutos": max(0, int(falta // 60)),
+        "detalle": _detalle(),
+    }
+
+
+def _detalle() -> list[dict]:
+    try:
+        import sys
+        mod = sys.modules.get("agente_eventos")
+        return list(getattr(mod, "DETALLE", []))[-200:] if mod else []
+    except Exception:
+        return []
+
+
+def _paso_agente():
+    """Facebook (si hay APIFY_TOKEN) + webs + noticias -> eventos reales."""
+    ahora = time.time()
+    if _AGENTE["corriendo"] or ahora - _AGENTE["ultimo"] < CADA_AGENTE:
+        return
+    completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
+    descubrir = completo and ahora - _AGENTE["descubrir"] >= 7 * 24 * 3600  # páginas: 1 vez/semana
+    if lanzar_agente("diaria" if completo else "cada hora", completo=completo, descubrir=descubrir):
+        _AGENTE["ultimo"] = ahora
+        if completo:
+            _AGENTE["completo"] = ahora
+        if descubrir:
+            _AGENTE["descubrir"] = ahora
 
 
 def ciclo():

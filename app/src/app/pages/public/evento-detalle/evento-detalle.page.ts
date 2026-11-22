@@ -1,6 +1,8 @@
-import { Component, OnInit, OnDestroy, inject, ChangeDetectorRef } from '@angular/core';
-import { CommonModule } from '@angular/common';
+import { Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { environment } from '../../../../environments/environment';
+import { TiempoEventoComponent } from '../../../components/tiempo-evento/tiempo-evento.component';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import {
   IonHeader,
@@ -9,48 +11,80 @@ import {
   IonBackButton,
   IonTitle,
   IonContent,
-  IonCard,
-  IonCardHeader,
-  IonCardTitle,
-  IonCardSubtitle,
-  IonCardContent,
-  IonBadge,
   IonButton,
   IonIcon,
-  IonList,
-  IonItem,
-  IonLabel,
-  IonSelect,
-  IonSelectOption,
-  IonInput,
-  IonTextarea,
   IonSpinner,
-  IonNote,
-  ToastController,
-  AlertController
+  AlertController,
+  IonModal,
 } from '@ionic/angular';
 import { addIcons } from 'ionicons';
 import {
-  calendarOutline,
-  carOutline,
-  chatbubblesOutline,
-  sparklesOutline,
+  calendar,
+  car,
+  chatbubbles,
+  sparkles,
+  star,
   starOutline,
   warningOutline,
-  volumeHighOutline,
-  sendOutline,
-  checkmarkCircleOutline
+  volumeHigh,
+  send,
+  checkmarkCircle,
+  location,
+  time,
+  cash,
+  people,
+  person,
+  accessibility,
+  hourglass,
+  navigate,
+  camera,
+  images,
+  logoGoogle,
+  trash,
+  expandOutline,
+  walkOutline,
+  bicycleOutline,
+  colorPaletteOutline,
+  restaurantOutline,
+  musicalNotesOutline,
+  constructOutline,
+  heartOutline,
+  sparklesOutline,
+  createOutline,
 } from 'ionicons/icons';
 import { SupabaseService } from '../../../core/supabase.service';
+import { AjustesService } from '../../../core/ajustes.service';
 import { ApiService } from '../../../core/api.service';
-import { Evento, Inscripcion, Mensaje, Resena, Incidencia, TipoTransporte } from '../../../core/models';
+import { AvisosService } from '../../../core/avisos.service';
+import { EventoVista, EventosService } from '../../../core/eventos.service';
+import { Evento, Incidencia, Inscripcion, Mensaje, Resena, TipoTransporte } from '../../../core/models';
+import {
+  colorEstado,
+  etiquetaEstado,
+  fechaCorta,
+  fechaLarga,
+  estiloCategoria,
+  haTerminado,
+  esOfensivo,
+  enlaceHablarConPersona,
+  iconoCategoria,
+  iconoCategoriaLinea,
+  partesFecha,
+  porcentajeOcupacion,
+  textoPlazas,
+  textoPrecio,
+  textoValoracion,
+  ubicacionCompleta,
+} from '../../../core/ui';
+
+const TAMANO_MAX_FOTO = 5 * 1024 * 1024; // 5 MB
 
 @Component({
   selector: 'app-evento-detalle',
   templateUrl: './evento-detalle.page.html',
   standalone: true,
   imports: [
-    CommonModule,
+    TiempoEventoComponent,
     FormsModule,
     RouterModule,
     IonHeader,
@@ -59,76 +93,215 @@ import { Evento, Inscripcion, Mensaje, Resena, Incidencia, TipoTransporte } from
     IonBackButton,
     IonTitle,
     IonContent,
-    IonCard,
-    IonCardHeader,
-    IonCardTitle,
-    IonCardSubtitle,
-    IonCardContent,
-    IonBadge,
     IonButton,
     IonIcon,
-    IonList,
-    IonItem,
-    IonLabel,
-    IonSelect,
-    IonSelectOption,
-    IonInput,
-    IonTextarea,
     IonSpinner,
-    IonNote
-  ]
+    IonModal
+  ],
 })
 export class EventoDetallePage implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
-  public sb = inject(SupabaseService);
+  sb = inject(SupabaseService);
+  private ajustesSvc = inject(AjustesService);
+  readonly enlacePersona = enlaceHablarConPersona(environment.telegramBotUsername);
   private api = inject(ApiService);
-  private toastCtrl = inject(ToastController);
+  private eventosSvc = inject(EventosService);
+  private avisos = inject(AvisosService);
   private alertCtrl = inject(AlertController);
-  private cdr = inject(ChangeDetectorRef);
+
+  // Helpers para la plantilla
+  fechaLarga = fechaLarga;
+  fechaCorta = fechaCorta;
+  etiquetaEstado = etiquetaEstado;
+  colorEstado = colorEstado;
 
   eventId = '';
-  evento: Evento | null = null;
-  cargando = true;
+  evento = signal<EventoVista | null>(null);
+  cargando = signal(true);
+  uid = signal<string | null>(null);
+  private perfil = toSignal(this.sb.profile$, { initialValue: null });
 
   // Inscripción
-  miInscripcion: Inscripcion | null = null;
+  miInscripcion = signal<Inscripcion | null>(null);
   transporte: TipoTransporte = 'ninguno';
   transportePlazas = 2;
   transporteMunicipioId: number | null = null;
-  procesandoInscripcion = false;
+  procesando = signal(false);
 
-  // Chat en tiempo real
-  mensajes: Mensaje[] = [];
+  // Chat
+  mensajes = signal<Mensaje[]>([]);
+  @ViewChild('cajaChat') cajaChat?: ElementRef<HTMLElement>;
+  /** Baja el chat al último mensaje cada vez que llega uno nuevo (o el asistente piensa). */
+  private bajarChat = effect(() => {
+    this.mensajes();
+    this.esperandoIa();
+    setTimeout(() => {
+      const caja = this.cajaChat?.nativeElement;
+      if (caja) caja.scrollTo({ top: caja.scrollHeight, behavior: 'smooth' });
+    }, 50);
+  });
+  nombres = signal<Record<string, string>>({});
   nuevoMensaje = '';
-  preguntarIa = false;
-  enviandoMensaje = false;
+  enviando = signal(false);
+  esperandoIa = signal(false);
+
+  // Reseñas y fotos
+  resenas = signal<Resena[]>([]);
+  estrellas = signal(5);
+  comentarioResena = '';
+  fotoSeleccionada = signal<File | null>(null);
+  fotoPrevia = signal<string | null>(null);
+  enviandoResena = signal(false);
+
+  // Organizador
+  propietarioEntidad = signal<string | null>(null);
+  incidenciasEvento = signal<Incidencia[]>([]);
+
   private chatChannel: any;
   private eventoChannel: any;
 
-  // Reseñas e Incidencias (si es publicador organizador)
-  resenas: Resena[] = [];
-  estrellas = 5;
-  comentarioResena = '';
-  editandoResena = false;
-  incidenciasEvento: Incidencia[] = [];
+  // ---------- Derivados ----------
+  terminado = computed(() => {
+    const ev = this.evento();
+    return !!ev && ev.status !== 'cancelado' && haTerminado(ev);
+  });
+  precio = computed(() => textoPrecio(this.evento()?.price));
+  gratis = computed(() => !Number(this.evento()?.price));
+  ubicacion = computed(() => ubicacionCompleta(this.evento()?.location_name, this.evento()?.pueblo));
+  plazas = computed(() => (this.evento() ? textoPlazas(this.evento()!) : ''));
+  ocupacion = computed(() => (this.evento() ? porcentajeOcupacion(this.evento()!) : 0));
+  valoracion = computed(() => textoValoracion(this.evento()?.organizador_media));
+  icono = computed(() => iconoCategoria(this.evento()?.category));
+  iconoLinea = computed(() => iconoCategoriaLinea(this.evento()?.category));
+  estilo = computed(() => estiloCategoria(this.evento()?.category));
+  fechaPartes = computed(() => partesFecha(this.evento()?.starts_at));
+  /** Cartel ampliado a pantalla completa. */
+  fotoAbierta = signal(false);
+  categoriaNombre = computed(() => {
+    this.sb.catalogos();
+    return this.sb.categorias.find((c) => c.slug === this.evento()?.category)?.nombre || 'Actividad';
+  });
+  edades = computed(() => {
+    const ev = this.evento();
+    if (!ev || (ev.min_age == null && ev.max_age == null)) return 'Todas las edades';
+    if (ev.min_age != null && ev.max_age != null) return `De ${ev.min_age} a ${ev.max_age} años`;
+    if (ev.min_age != null) return `Desde ${ev.min_age} años`;
+    return `Hasta ${ev.max_age} años`;
+  });
+  enlaceMapa = computed(() => {
+    const ev = this.evento();
+    if (!ev) return '';
+    if (ev.lat != null && ev.lng != null) return `https://www.google.com/maps/search/?api=1&query=${ev.lat},${ev.lng}`;
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(this.ubicacion() + ', Almería')}`;
+  });
+  enlaceIcs = computed(() => (this.evento() ? this.api.getIcsUrl(this.evento()!.id) : ''));
+
+  /** Ya empezó (o terminó): no se admiten nuevas inscripciones ni cancelaciones. */
+  yaEmpezo = computed(() => {
+    const ev = this.evento();
+    return !!ev && new Date(ev.starts_at).getTime() <= Date.now();
+  });
+  /** Pasó la fecha límite para apuntarse (aunque el estado aún no se haya recalculado). */
+  plazoCerrado = computed(() => {
+    const limite = this.evento()?.inscripcion_hasta;
+    return !!limite && new Date(limite).getTime() <= Date.now();
+  });
+  puedeApuntarse = computed(() => {
+    const s = this.evento()?.status;
+    if (this.yaEmpezo() || this.plazoCerrado()) return false;
+    return s === 'abierto' || s === 'completo';
+  });
+  textoBotonApuntarse = computed(() => {
+    const s = this.evento()?.status;
+    if (this.terminado()) return 'Plan finalizado';
+    if (this.yaEmpezo()) return 'En curso';
+    if (this.plazoCerrado()) return 'Inscripción cerrada';
+    if (s === 'abierto') return 'Apuntarme';
+    if (s === 'completo') return 'Apuntarme a la lista de espera';
+    return 'Inscripción no disponible';
+  });
+  motivoNoApuntarse = computed(() => {
+    const ev = this.evento();
+    if (!ev || this.puedeApuntarse()) return '';
+    if (this.terminado()) return 'Este plan ya se ha celebrado.';
+    if (this.yaEmpezo()) return 'Este plan ya ha empezado.';
+    if (this.plazoCerrado()) return 'El plazo para apuntarse ya ha terminado.';
+    const motivos: Record<string, string> = {
+      inscripcion_cerrada: 'El plazo para apuntarse ya ha terminado.',
+      en_curso: 'Este plan ya ha empezado.',
+      finalizado: 'Este plan ya se ha celebrado.',
+      pospuesto: 'El plan está aplazado. Te avisaremos cuando tenga nueva fecha.',
+      cancelado: 'Este plan se ha cancelado.',
+      pendiente_moderacion: 'El plan está pendiente de revisión.',
+      rechazado: 'Este plan no se ha publicado.',
+    };
+    return motivos[ev.status] || 'Ahora mismo no se admiten inscripciones.';
+  });
+
+  fotos = computed(() => this.resenas().filter((r) => !!r.foto_url));
+  miResena = computed(() => this.resenas().find((r) => r.user_id === this.uid()) || null);
+  puedeValorar = computed(
+    () => this.terminado() && this.miInscripcion()?.status === 'confirmada' && !this.miResena()
+  );
+  /** Cambiando una valoración que ya hizo (estrellas y comentario). */
+  editandoResena = signal(false);
+  mediaEvento = computed(() => {
+    const r = this.resenas();
+    if (!r.length) return null;
+    return textoValoracion(r.reduce((a, x) => a + x.estrellas, 0) / r.length);
+  });
+
+  esOrganizador = computed(() => {
+    const p = this.perfil();
+    const ev = this.evento();
+    if (!p || !ev) return false;
+    if (p.rol === 'moderador') return true;
+    return p.rol === 'publicador' && (ev.created_by === p.id || this.propietarioEntidad() === p.id);
+  });
 
   constructor() {
     addIcons({
-      calendarOutline,
-      carOutline,
-      chatbubblesOutline,
+      createOutline,
+      expandOutline,
+      walkOutline,
+      bicycleOutline,
+      colorPaletteOutline,
+      restaurantOutline,
+      musicalNotesOutline,
+      constructOutline,
+      heartOutline,
       sparklesOutline,
+      calendar,
+      car,
+      chatbubbles,
+      sparkles,
+      star,
       starOutline,
       warningOutline,
-      volumeHighOutline,
-      sendOutline,
-      checkmarkCircleOutline
+      volumeHigh,
+      send,
+      checkmarkCircle,
+      location,
+      time,
+      cash,
+      people,
+      person,
+      accessibility,
+      hourglass,
+      navigate,
+      camera,
+      images,
+      logoGoogle,
+      trash,
     });
   }
 
   async ngOnInit() {
     this.eventId = this.route.snapshot.paramMap.get('id') || '';
     if (!this.eventId) return;
+    const { data: sesion } = await this.sb.client.auth.getSession();
+    this.uid.set(sesion.session?.user?.id ?? null);
+    if (sesion.session?.user && !this.sb.currentProfile) await this.sb.loadProfile(sesion.session.user.id);
 
     await this.cargarFichaCompleta();
 
@@ -139,7 +312,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
         { event: 'INSERT', schema: 'public', table: 'mensajes_evento', filter: `event_id=eq.${this.eventId}` },
         async () => {
           await this.cargarMensajes();
-          this.cdr.detectChanges();
+          this.esperandoIa.set(false);
         }
       )
       .subscribe();
@@ -149,10 +322,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'eventos', filter: `id=eq.${this.eventId}` },
-        async () => {
-          await this.cargarEvento();
-          this.cdr.detectChanges();
-        }
+        () => this.cargarEvento()
       )
       .subscribe();
   }
@@ -160,70 +330,50 @@ export class EventoDetallePage implements OnInit, OnDestroy {
   ngOnDestroy() {
     if (this.chatChannel) this.sb.client.removeChannel(this.chatChannel);
     if (this.eventoChannel) this.sb.client.removeChannel(this.eventoChannel);
+    if (this.fotoPrevia()) URL.revokeObjectURL(this.fotoPrevia()!);
   }
 
   async cargarFichaCompleta() {
-    this.cargando = !this.evento;
-    this.cdr.detectChanges();
-
+    this.cargando.set(!this.evento());
     try {
-      await Promise.all([
-        this.cargarEvento(),
-        this.cargarMiInscripcion(),
-        this.cargarMensajes(),
-        this.cargarResenas()
-      ]);
+      await Promise.all([this.cargarEvento(), this.cargarMiInscripcion(), this.cargarMensajes(), this.cargarResenas()]);
       await this.cargarIncidenciasSiOrganizador();
     } finally {
-      this.cargando = false;
-      this.cdr.detectChanges();
+      this.cargando.set(false);
     }
   }
 
-  /** Terminado por estado o por hora real (el estado puede tardar en recalcularse). */
-  get terminado(): boolean {
-    if (!this.evento) return false;
-    if (this.evento.status === 'finalizado') return true;
-    if (this.evento.status === 'cancelado') return false;
-    const fin = this.evento.ends_at || this.evento.starts_at;
-    return !!fin && new Date(fin).getTime() <= Date.now();
-  }
-
-  /** Ya empezó (o terminó): no se admiten nuevas inscripciones ni cancelaciones. */
-  get yaEmpezo(): boolean {
-    return !!this.evento && new Date(this.evento.starts_at).getTime() <= Date.now();
-  }
-
-  get puedeValorar(): boolean {
-    return this.terminado && !!this.miInscripcion && this.miInscripcion.status === 'confirmada';
-  }
-
-  get miResena(): Resena | null {
-    const uid = this.sb.currentSession?.user?.id;
-    return (uid && this.resenas.find((r) => r.user_id === uid)) || null;
-  }
-
   async cargarEvento() {
-    const { data } = await this.sb.client
-      .from('eventos')
-      .select('*, municipios(nombre)')
-      .eq('id', this.eventId)
-      .single();
+    const { data } = await this.sb.client.from('eventos').select('*, municipios(nombre)').eq('id', this.eventId).maybeSingle();
+    if (!data) return;
 
-    if (data) {
-      this.evento = data as Evento;
-      if (!this.transporteMunicipioId) {
-        this.transporteMunicipioId = this.sb.currentProfile?.municipio_id || this.evento.municipio_id;
-      }
-      this.cdr.detectChanges();
+    // La media del organizador se calcula con todos sus eventos visibles
+    let referencia: Evento[] = [data as Evento];
+    try {
+      referencia = await this.eventosSvc.cargarVisibles();
+    } catch {
+      /* sin media si falla */
+    }
+    const [vista] = await this.eventosSvc.enriquecer([data as Evento], referencia);
+    this.evento.set(vista);
+
+    if (!this.transporteMunicipioId) {
+      this.transporteMunicipioId = this.sb.currentProfile?.municipio_id || vista.municipio_id;
+    }
+    if (vista.entidad_organizadora_id) {
+      const { data: ent } = await this.sb.client
+        .from('entidades')
+        .select('owner_user_id')
+        .eq('id', vista.entidad_organizadora_id)
+        .maybeSingle();
+      this.propietarioEntidad.set(ent?.owner_user_id ?? null);
     }
   }
 
   async cargarMiInscripcion() {
-    const uid = this.sb.currentSession?.user?.id;
+    const uid = this.uid();
     if (!uid) {
-      this.miInscripcion = null;
-      this.cdr.detectChanges();
+      this.miInscripcion.set(null);
       return;
     }
     const { data } = await this.sb.client
@@ -233,9 +383,7 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .eq('user_id', uid)
       .neq('status', 'cancelada')
       .maybeSingle();
-
-    this.miInscripcion = (data as Inscripcion) || null;
-    this.cdr.detectChanges();
+    this.miInscripcion.set((data as Inscripcion) || null);
   }
 
   async cargarMensajes() {
@@ -244,288 +392,366 @@ export class EventoDetallePage implements OnInit, OnDestroy {
       .select('*')
       .eq('event_id', this.eventId)
       .order('created_at', { ascending: true });
-
-    if (data) {
-      this.mensajes = data as Mensaje[];
-      this.cdr.detectChanges();
-    }
+    if (!data) return;
+    this.mensajes.set(data as Mensaje[]);
+    await this.cargarNombres((data as Mensaje[]).map((m) => m.user_id));
   }
 
   async cargarResenas() {
     const { data } = await this.sb.client
       .from('resenas')
       .select('*')
-      .eq('event_id', this.eventId);
+      .eq('event_id', this.eventId)
+      .order('estrellas', { ascending: false });
+    if (!data) return;
+    this.resenas.set(data as Resena[]);
+    await this.cargarNombres((data as Resena[]).map((r) => r.user_id));
+  }
 
-    if (data) {
-      this.resenas = data as Resena[];
-      this.cdr.detectChanges();
+  /** Nombres públicos de autores (chat y reseñas) desde perfiles_publicos. */
+  private async cargarNombres(ids: (string | null)[]) {
+    const conocidos = this.nombres();
+    const faltan = [...new Set(ids.filter((x): x is string => !!x && !(x in conocidos)))];
+    if (!faltan.length) return;
+    const { data } = await this.sb.client.from('perfiles_publicos').select('id, full_name').in('id', faltan);
+    const nuevos = { ...this.nombres() };
+    for (const p of (data || []) as { id: string; full_name: string | null }[]) {
+      nuevos[p.id] = p.full_name || 'Vecino/a';
     }
+    this.nombres.set(nuevos);
   }
 
-  get esPublicadorOrganizador(): boolean {
-    const p = this.sb.currentProfile;
-    return !!p && p.rol === 'publicador' && !!this.evento && this.evento.created_by === p.id;
+  nombreDe(userId: string | null): string {
+    if (!userId) return 'Asistente';
+    if (userId === this.uid()) return 'Tú';
+    return this.nombres()[userId] || 'Vecino/a';
   }
 
+  inicial(userId: string | null): string {
+    return this.nombreDe(userId).charAt(0).toUpperCase();
+  }
+
+  // ---------- Incidencias del organizador ----------
   async cargarIncidenciasSiOrganizador() {
-    if (!this.esPublicadorOrganizador) return;
+    if (!this.esOrganizador()) return;
     const { data } = await this.sb.client
       .from('incidencias')
       .select('*')
       .eq('event_id', this.eventId)
       .order('estado', { ascending: true });
-
-    if (data) {
-      this.incidenciasEvento = data as Incidencia[];
-      this.cdr.detectChanges();
-    }
+    if (data) this.incidenciasEvento.set(data as Incidencia[]);
   }
 
   async resolverIncidenciaPropia(inc: Incidencia) {
-    const { error } = await this.sb.client
-      .from('incidencias')
-      .update({ estado: 'resuelta' })
-      .eq('id', inc.id);
-
-    if (!error) {
-      this.mostrarAviso('Incidencia marcada como resuelta');
-      await this.cargarIncidenciasSiOrganizador();
+    const { error } = await this.sb.client.from('incidencias').update({ estado: 'resuelta' }).eq('id', inc.id);
+    if (error) {
+      this.avisos.error(error);
+      return;
     }
+    this.avisos.ok('Incidencia marcada como resuelta');
+    await this.cargarIncidenciasSiOrganizador();
   }
 
-  etiquetaEstado(status: string): string {
-    const mapa: Record<string, string> = {
-      abierto: 'Abierto',
-      completo: 'Completo (lista de espera)',
-      inscripcion_cerrada: 'Inscripción cerrada',
-      en_curso: 'En curso',
-      finalizado: 'Finalizado',
-      pospuesto: 'Aplazado',
-      cancelado: 'Cancelado'
-    };
-    return mapa[status] || status;
-  }
-
-  get estadoVisible(): string {
-    if (!this.evento) return '';
-    if (this.terminado) return 'finalizado';
-    if (this.yaEmpezo && ['abierto', 'completo', 'inscripcion_cerrada'].includes(this.evento.status)) return 'en_curso';
-    return this.evento.status;
-  }
-
-  get puedeApuntarse(): boolean {
-    const ev = this.evento;
-    if (!ev || this.yaEmpezo) return false;
-    if (ev.inscripcion_hasta && new Date(ev.inscripcion_hasta).getTime() <= Date.now()) return false;
-    return ev.status === 'abierto' || ev.status === 'completo';
-  }
-
-  get textoBotonApuntarse(): string {
-    if (!this.evento) return 'Apuntarme';
-    if (this.terminado) return 'Evento finalizado';
-    if (!this.puedeApuntarse) return this.yaEmpezo ? 'En curso' : 'Inscripción cerrada';
-    if (this.evento.status === 'abierto') return 'Apuntarme';
-    if (this.evento.status === 'completo') return 'Apuntarme a la lista de espera';
-    return this.etiquetaEstado(this.evento.status);
-  }
-
+  // ---------- Inscripción ----------
   async apuntarme() {
-    const uid = this.sb.currentSession?.user?.id;
-    if (!uid || !this.evento) return;
-    if (!this.puedeApuntarse) {
-      this.mostrarAviso(this.terminado ? 'Este evento ya ha terminado' : 'Este evento ya no admite inscripciones');
+    const uid = this.uid();
+    const ev = this.evento();
+    if (!uid || !ev) return;
+    if (!this.puedeApuntarse()) {
+      this.avisos.aviso(this.motivoNoApuntarse() || 'Este plan ya no admite inscripciones.');
       return;
     }
 
-    this.procesandoInscripcion = true;
-    this.cdr.detectChanges();
+    this.procesando.set(true);
     try {
       const { data, error } = await this.sb.client
         .from('inscripciones')
         .insert({
           user_id: uid,
-          event_id: this.evento.id,
+          event_id: ev.id,
           transporte: this.transporte,
-          transporte_plazas: this.transporte === 'ofrece' ? Number(this.transportePlazas) : 0,
-          transporte_desde_municipio_id: this.transporte !== 'ninguno' ? Number(this.transporteMunicipioId) : null
+          transporte_plazas: this.transporte === 'ofrece' ? Math.min(8, Math.max(1, Number(this.transportePlazas) || 1)) : 0,
+          transporte_desde_municipio_id: this.transporte !== 'ninguno' ? Number(this.transporteMunicipioId) : null,
         })
         .select()
         .single();
-
       if (error) throw error;
 
-      this.miInscripcion = data as Inscripcion;
-      this.mostrarAviso(
-        data.status === 'lista_de_espera'
-          ? 'Te hemos apuntado a la lista de espera'
-          : '¡Inscripción confirmada!'
-      );
+      this.miInscripcion.set(data as Inscripcion);
+      if (data.status === 'lista_de_espera') {
+        this.avisos.info('Estás en la lista de espera. Te avisaremos si queda una plaza libre.');
+      } else {
+        this.avisos.ok('¡Ya estás apuntado! Te esperamos.');
+      }
       await this.cargarEvento();
-    } catch (err: any) {
-      this.mostrarAviso(err.message || 'No se pudo completar la inscripción');
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido apuntarte. Inténtalo de nuevo.');
     } finally {
-      this.procesandoInscripcion = false;
-      this.cdr.detectChanges();
+      this.procesando.set(false);
     }
   }
 
   async cancelarInscripcion() {
-    if (!this.miInscripcion) return;
-    this.procesandoInscripcion = true;
-    this.cdr.detectChanges();
-    try {
-      const { error } = await this.sb.client
-        .from('inscripciones')
-        .update({ status: 'cancelada' })
-        .eq('id', this.miInscripcion.id);
-
-      if (error) throw error;
-
-      this.miInscripcion = null;
-      this.mostrarAviso('Inscripción cancelada');
-      await this.cargarEvento();
-    } catch (err: any) {
-      this.mostrarAviso(err.message || 'Error al cancelar');
-    } finally {
-      this.procesandoInscripcion = false;
-      this.cdr.detectChanges();
-    }
-  }
-
-  descargarIcs() {
-    if (!this.evento) return;
-    window.open(this.api.getIcsUrl(this.evento.id), '_blank');
-  }
-
-  abrirGoogleCalendar() {
-    if (!this.evento) return;
-    const inicio = new Date(this.evento.starts_at).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    const finDate = this.evento.ends_at
-      ? new Date(this.evento.ends_at)
-      : new Date(new Date(this.evento.starts_at).getTime() + 7200000);
-    const fin = finDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(this.evento.title)}&dates=${inicio}/${fin}&location=${encodeURIComponent(this.evento.location_name || '')}&details=${encodeURIComponent(this.evento.description || '')}`;
-    window.open(url, '_blank');
-  }
-
-  async enviarMensaje() {
-    const uid = this.sb.currentSession?.user?.id;
-    const texto = this.nuevoMensaje.trim();
-    if (!uid || !texto || !this.evento) return;
-
-    this.enviandoMensaje = true;
-    this.cdr.detectChanges();
-    try {
-      await this.sb.client.from('mensajes_evento').insert({
-        event_id: this.evento.id,
-        user_id: uid,
-        tipo: 'pregunta',
-        contenido: texto
-      });
-
-      this.nuevoMensaje = '';
-      this.cdr.detectChanges();
-
-      if (this.preguntarIa) {
-        await this.api.chatIa(this.evento.id, texto);
-      }
-
-      await this.cargarMensajes();
-    } catch {
-      this.mostrarAviso('Error al enviar el mensaje');
-    } finally {
-      this.enviandoMensaje = false;
-      this.cdr.detectChanges();
-    }
-  }
-
-  /** Abre el formulario con la valoración actual para cambiarla. */
-  empezarCambioResena() {
-    const r = this.miResena;
-    if (!r) return;
-    this.estrellas = r.estrellas;
-    this.comentarioResena = r.comentario || '';
-    this.editandoResena = true;
-  }
-
-  async enviarResena() {
-    const uid = this.sb.currentSession?.user?.id;
-    if (!uid || !this.evento || !this.puedeValorar) return;
-
-    if (this.miResena) {
-      // Ya la había valorado: se cambia por el servidor (la app no puede editar reseñas directamente)
-      if (!this.editandoResena) return;
-      try {
-        await this.api.cambiarResena(this.evento.id, Number(this.estrellas), this.comentarioResena.trim());
-        this.editandoResena = false;
-        this.mostrarAviso('Valoración cambiada. ¡Gracias!');
-        await this.cargarResenas();
-      } catch (err: any) {
-        this.mostrarAviso(err.message || 'No se pudo cambiar la valoración');
-      }
-      return;
-    }
-
-    const { error } = await this.sb.client.from('resenas').insert({
-      event_id: this.evento.id,
-      user_id: uid,
-      estrellas: Number(this.estrellas),
-      comentario: this.comentarioResena.trim() || null
-    });
-
-    if (error) {
-      this.mostrarAviso(error.message || 'Solo puedes reseñar eventos terminados a los que asististe');
-      return;
-    }
-
-    this.comentarioResena = '';
-    this.mostrarAviso('¡Gracias por tu valoración!');
-    await this.cargarResenas();
-  }
-
-  async reportarIncidencia() {
-    const uid = this.sb.currentSession?.user?.id;
-    if (!uid || !this.evento) return;
-
+    const insc = this.miInscripcion();
+    if (!insc) return;
     const alert = await this.alertCtrl.create({
-      header: 'Reportar incidencia',
-      message: 'Cuéntanos qué ocurre con este evento:',
-      inputs: [{ name: 'comentario', type: 'textarea', placeholder: 'Ej. El lugar está cerrado o los datos son erróneos' }],
+      header: '¿Cancelar tu inscripción?',
+      message: 'Dejarás tu plaza libre para otra persona.',
       buttons: [
-        { text: 'Cancelar', role: 'cancel' },
-        {
-          text: 'Enviar reporte',
-          handler: async (vals) => {
-            if (!vals.comentario?.trim()) return;
-            const { error } = await this.sb.client.from('incidencias').insert({
-              event_id: this.evento!.id,
-              user_id: uid,
-              comentario: vals.comentario.trim()
-            });
-            if (!error) {
-              this.mostrarAviso('Incidencia enviada al equipo moderador');
-            }
-          }
-        }
-      ]
+        { text: 'No, mantener', role: 'cancel' },
+        { text: 'Sí, cancelar', role: 'destructive', handler: () => this.confirmarCancelacion(insc) },
+      ],
     });
     await alert.present();
   }
 
-  formatearFecha(iso: string): string {
-    return new Intl.DateTimeFormat('es-ES', {
-      timeZone: 'Europe/Madrid',
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(iso));
+  private async confirmarCancelacion(insc: Inscripcion) {
+    this.procesando.set(true);
+    try {
+      const { error } = await this.sb.client.from('inscripciones').update({ status: 'cancelada' }).eq('id', insc.id);
+      if (error) throw error;
+      this.miInscripcion.set(null);
+      this.avisos.ok('Has cancelado tu inscripción.');
+      await this.cargarEvento();
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido cancelar la inscripción.');
+    } finally {
+      this.procesando.set(false);
+    }
   }
 
-  private async mostrarAviso(message: string) {
-    const toast = await this.toastCtrl.create({ message, duration: 3000 });
-    await toast.present();
+  abrirGoogleCalendar() {
+    const ev = this.evento();
+    if (!ev) return;
+    const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    const inicio = new Date(ev.starts_at);
+    const fin = ev.ends_at ? new Date(ev.ends_at) : new Date(inicio.getTime() + 7200000);
+    const url =
+      'https://calendar.google.com/calendar/render?action=TEMPLATE' +
+      `&text=${encodeURIComponent(ev.title)}&dates=${f(inicio)}/${f(fin)}` +
+      `&location=${encodeURIComponent(this.ubicacion())}&details=${encodeURIComponent(ev.description || '')}`;
+    window.open(url, '_blank', 'noopener');
+  }
+
+  leerEnVozAlta() {
+    const ev = this.evento();
+    if (!ev || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const texto = `${ev.title}. ${fechaLarga(ev.starts_at)}. En ${this.ubicacion()}. ${
+      this.gratis() ? 'Es gratis.' : 'Precio: ' + this.precio() + '.'
+    } Organiza ${ev.organizador_nombre}. ${ev.description || ''}`;
+    // Velocidad y voz elegidas en Ajustes
+    this.ajustesSvc.leer(texto);
+  }
+
+  // ---------- Chat ----------
+  async enviarMensaje(preguntarIa: boolean) {
+    const uid = this.uid();
+    const ev = this.evento();
+    const texto = this.nuevoMensaje.trim();
+    // Evita enviar dos veces (Enter y botón a la vez, o doble clic)
+    if (!uid || !ev || !texto || this.enviando()) return;
+
+    // El chat es público: los insultos no se publican
+    if (esOfensivo(texto)) {
+      this.avisos.aviso('Este chat es público y lo leen vecinos de todas las edades. Escribe tu mensaje sin insultos ni palabrotas, por favor.');
+      return;
+    }
+
+    this.enviando.set(true);
+    this.nuevoMensaje = ''; // se vacía ya, para que no se pueda mandar otra vez
+    try {
+      const { error } = await this.sb.client
+        .from('mensajes_evento')
+        .insert({ event_id: ev.id, user_id: uid, tipo: 'pregunta', contenido: texto.slice(0, 2000) });
+      if (error) {
+        this.nuevoMensaje = texto; // no se ha enviado: se devuelve al campo
+        throw error;
+      }
+      await this.cargarMensajes();
+
+      if (preguntarIa) {
+        this.esperandoIa.set(true);
+        try {
+          const res = await this.api.chatIa(ev.id, texto);
+          if (res?.bloqueado) this.avisos.aviso(res.respuesta);
+          await this.cargarMensajes();
+        } catch {
+          this.avisos.aviso('El asistente no responde ahora mismo. Tu pregunta queda en el chat para los vecinos.');
+        } finally {
+          this.esperandoIa.set(false);
+        }
+      }
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido enviar tu mensaje.');
+    } finally {
+      this.enviando.set(false);
+    }
+  }
+
+  // ---------- Reseñas y fotos post evento ----------
+  elegirEstrellas(n: number) {
+    this.estrellas.set(n);
+  }
+
+  seleccionarFoto(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      this.avisos.aviso('El archivo debe ser una foto.');
+      return;
+    }
+    if (file.size > TAMANO_MAX_FOTO) {
+      this.avisos.aviso('La foto es demasiado grande (máximo 5 MB).');
+      return;
+    }
+    if (this.fotoPrevia()) URL.revokeObjectURL(this.fotoPrevia()!);
+    this.fotoSeleccionada.set(file);
+    this.fotoPrevia.set(URL.createObjectURL(file));
+  }
+
+  quitarFoto() {
+    if (this.fotoPrevia()) URL.revokeObjectURL(this.fotoPrevia()!);
+    this.fotoSeleccionada.set(null);
+    this.fotoPrevia.set(null);
+  }
+
+  private async subirFoto(file: File): Promise<string> {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const ruta = `${this.eventId}/${this.uid()}-${Date.now()}.${ext}`;
+    const { error } = await this.sb.client.storage.from('resenas').upload(ruta, file, { contentType: file.type });
+    if (error) throw error;
+    return this.sb.client.storage.from('resenas').getPublicUrl(ruta).data.publicUrl;
+  }
+
+  /** Abre el formulario con la valoración actual para cambiarla. */
+  empezarCambioResena() {
+    const r = this.miResena();
+    if (!r) return;
+    this.estrellas.set(r.estrellas);
+    this.comentarioResena = r.comentario || '';
+    this.editandoResena.set(true);
+  }
+
+  cancelarCambioResena() {
+    this.editandoResena.set(false);
+    this.comentarioResena = '';
+    this.quitarFoto();
+  }
+
+  async enviarResena() {
+    const uid = this.uid();
+    const ev = this.evento();
+    if (!uid || !ev) return;
+
+    const mia = this.miResena();
+    if (mia) {
+      // Ya la había valorado: se cambia por el servidor (la app no puede editar reseñas directamente)
+      if (!this.editandoResena()) return;
+      this.enviandoResena.set(true);
+      try {
+        await this.api.cambiarResena(ev.id, Number(this.estrellas()), this.comentarioResena.trim());
+        const foto = this.fotoSeleccionada();
+        if (foto) {
+          const url = await this.subirFoto(foto);
+          const { error } = await this.sb.client.from('resenas').update({ foto_url: url }).eq('id', mia.id);
+          if (error) throw error;
+        }
+        this.cancelarCambioResena();
+        this.avisos.ok('Valoración cambiada. ¡Gracias!');
+        await Promise.all([this.cargarResenas(), this.cargarEvento()]);
+      } catch (err) {
+        this.avisos.error(err, 'No hemos podido cambiar tu valoración. Inténtalo de nuevo.');
+      } finally {
+        this.enviandoResena.set(false);
+      }
+      return;
+    }
+    if (!this.puedeValorar()) return;
+
+    this.enviandoResena.set(true);
+    try {
+      let fotoUrl: string | null = null;
+      const foto = this.fotoSeleccionada();
+      if (foto) fotoUrl = await this.subirFoto(foto);
+
+      const { error } = await this.sb.client.from('resenas').insert({
+        event_id: ev.id,
+        user_id: uid,
+        estrellas: this.estrellas(),
+        comentario: this.comentarioResena.trim() || null,
+        foto_url: fotoUrl,
+      });
+      if (error) throw error;
+
+      this.comentarioResena = '';
+      this.quitarFoto();
+      this.avisos.ok('¡Gracias por tu opinión!');
+      await Promise.all([this.cargarResenas(), this.cargarEvento()]);
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido guardar tu opinión. Solo pueden opinar las personas con plaza confirmada.');
+    } finally {
+      this.enviandoResena.set(false);
+    }
+  }
+
+  /** Añadir o cambiar la foto de una opinión ya enviada. */
+  async subirFotoAMiResena(event: Event) {
+    const mia = this.miResena();
+    this.seleccionarFoto(event);
+    const foto = this.fotoSeleccionada();
+    if (!mia || !foto) return;
+
+    this.enviandoResena.set(true);
+    try {
+      const url = await this.subirFoto(foto);
+      const { error } = await this.sb.client.from('resenas').update({ foto_url: url }).eq('id', mia.id);
+      if (error) throw error;
+      this.avisos.ok('¡Foto añadida! Gracias por compartirla.');
+      await this.cargarResenas();
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido subir la foto. Inténtalo de nuevo.');
+    } finally {
+      this.quitarFoto();
+      this.enviandoResena.set(false);
+    }
+  }
+
+  estrellasTexto(n: number): string {
+    return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
+  }
+
+  // ---------- Incidencias ----------
+  async reportarIncidencia() {
+    const uid = this.uid();
+    const ev = this.evento();
+    if (!uid || !ev) return;
+
+    const alert = await this.alertCtrl.create({
+      header: 'Avisar de un problema',
+      message: 'Cuéntanos qué ocurre con este plan:',
+      inputs: [{ name: 'comentario', type: 'textarea', placeholder: 'Ej. El lugar está cerrado o la hora no es correcta' }],
+      buttons: [
+        { text: 'Cancelar', role: 'cancel' },
+        {
+          text: 'Enviar aviso',
+          handler: async (vals) => {
+            const comentario = (vals?.comentario || '').trim();
+            if (!comentario) {
+              alert.message = 'Escribe qué ocurre con este plan para poder enviar el aviso.';
+              alert.cssClass = 'alerta-con-error';
+              return false;
+            }
+            const { error } = await this.sb.client.from('incidencias').insert({ event_id: ev.id, user_id: uid, comentario });
+            if (error) this.avisos.error(error, 'No hemos podido enviar el aviso.');
+            else this.avisos.ok('Gracias. El equipo lo revisará pronto.');
+            return true;
+          },
+        },
+      ],
+    });
+    await alert.present();
   }
 }

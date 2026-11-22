@@ -1,7 +1,5 @@
-import { Component, OnInit, OnDestroy, inject, ChangeDetectorRef } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
-import { RouterModule } from '@angular/router';
+import { Component, OnDestroy, OnInit, ViewChild, computed, inject, signal } from '@angular/core';
+import { ActivatedRoute, RouterModule } from '@angular/router';
 import {
   IonHeader,
   IonToolbar,
@@ -10,49 +8,33 @@ import {
   IonButton,
   IonIcon,
   IonContent,
+  IonFooter,
   IonRefresher,
   IonRefresherContent,
-  IonGrid,
-  IonRow,
-  IonCol,
-  IonItem,
-  IonSelect,
-  IonSelectOption,
-  IonChip,
-  IonLabel,
-  IonCard,
-  IonCardHeader,
-  IonCardTitle,
-  IonCardSubtitle,
-  IonCardContent,
-  IonBadge,
-  IonSpinner,
-  IonNote
 } from '@ionic/angular';
 import { addIcons } from 'ionicons';
-import {
-  locationOutline,
-  volumeHighOutline,
-  contrastOutline,
-  textOutline,
-  calendarOutline,
-  accessibilityOutline,
-  peopleOutline,
-  closeCircleOutline,
-  timeOutline,
-  checkmarkDoneOutline,
-  navigateOutline
-} from 'ionicons/icons';
+import { addCircle, calendarOutline, chevronBack, chevronForward, gridOutline, logInOutline, searchOutline } from 'ionicons/icons';
+import { Subscription } from 'rxjs';
 import { SupabaseService } from '../../../core/supabase.service';
-import { Evento } from '../../../core/models';
+import { AvisosService } from '../../../core/avisos.service';
+import {
+  EventoVista,
+  EventosService,
+  FILTROS_INICIALES,
+  FiltroFecha,
+  Filtros,
+  OPCIONES_FECHA,
+  filtrarEventos,
+} from '../../../core/eventos.service';
+import { FiltrosEventosComponent } from '../../../components/filtros-eventos/filtros-eventos.component';
+import { EventoCardComponent } from '../../../components/evento-card/evento-card.component';
+import { CalendarioEventosComponent } from '../../../components/calendario-eventos/calendario-eventos.component';
 
 @Component({
   selector: 'app-agenda',
   templateUrl: './agenda.page.html',
   standalone: true,
   imports: [
-    CommonModule,
-    FormsModule,
     RouterModule,
     IonHeader,
     IonToolbar,
@@ -61,255 +43,170 @@ import { Evento } from '../../../core/models';
     IonButton,
     IonIcon,
     IonContent,
+    IonFooter,
     IonRefresher,
     IonRefresherContent,
-    IonGrid,
-    IonRow,
-    IonCol,
-    IonItem,
-    IonSelect,
-    IonSelectOption,
-    IonChip,
-    IonLabel,
-    IonCard,
-    IonCardHeader,
-    IonCardTitle,
-    IonCardSubtitle,
-    IonCardContent,
-    IonBadge,
-    IonSpinner,
-    IonNote
-  ]
+    FiltrosEventosComponent,
+    EventoCardComponent,
+    CalendarioEventosComponent,
+  ],
 })
 export class AgendaPage implements OnInit, OnDestroy {
-  public sb = inject(SupabaseService);
-  private cdr = inject(ChangeDetectorRef);
+  sb = inject(SupabaseService);
+  private eventosSvc = inject(EventosService);
+  private avisos = inject(AvisosService);
+  private route = inject(ActivatedRoute);
 
-  eventos: Evento[] = [];
-  eventosFiltrados: Evento[] = [];
-  cargando = false;
+  @ViewChild(IonContent) contenido?: IonContent;
 
-  filtroMunicipio: number | 'todos' = 'todos';
-  filtroCategoria: string = 'todas';
-  filtroFecha: 'todos' | 'hoy' | 'finde' | 'semana' = 'todos';
-  soloAccesibles = false;
-  ordenCercaniaActivo = false;
-  userCoords: { lat: number; lng: number } | null = null;
+  readonly tamanos = [6, 12, 24, 48];
+  readonly esqueletos = [1, 2, 3, 4, 5, 6];
 
-  tamanoLetra: 'normal' | 'lg' | 'xl' = 'normal';
-  altoContraste = false;
+  eventos = signal<EventoVista[]>([]);
+  cargando = signal(true);
+  filtros = signal<Filtros>({ ...FILTROS_INICIALES });
+  coords = signal<{ lat: number; lng: number } | null>(null);
+  porPagina = signal(12);
+  paginaActual = signal(1);
+  haySesion = signal(false);
+
+  filtrados = computed(() => filtrarEventos(this.eventos(), this.filtros(), this.coords()));
+
+  /** Cuadrícula de tarjetas o calendario mensual (se recuerda en este navegador). */
+  vista = signal<'cuadricula' | 'calendario'>(leerVista());
+  /** En el calendario se ven todas las fechas: se navega por meses. */
+  paraCalendario = computed(() => filtrarEventos(this.eventos(), { ...this.filtros(), fecha: 'todas' }, this.coords()));
+
+  // ---------- Cabecera que se encoge al bajar (solo queda el buscador) ----------
+  cabeceraCompacta = signal(false);
+  private ultimoScroll = 0;
+
+  alHacerScroll(ev: CustomEvent) {
+    const y = (ev.detail as { scrollTop: number }).scrollTop;
+    const salto = y - this.ultimoScroll;
+    if (y < 60) {
+      this.cabeceraCompacta.set(false);
+      this.ultimoScroll = y;
+    } else if (Math.abs(salto) > 14) {
+      // Bajando: se encoge; subiendo: vuelve a aparecer entera
+      this.cabeceraCompacta.set(salto > 0);
+      this.ultimoScroll = y;
+    }
+  }
+
+  cambiarVista(v: 'cuadricula' | 'calendario') {
+    this.vista.set(v);
+    try {
+      localStorage.setItem('agenda-vista', v);
+    } catch {
+      /* sin almacenamiento: no pasa nada */
+    }
+    this.contenido?.scrollToTop(200);
+  }
+
+  /** Cuántos planes hay de cada actividad con el resto de filtros aplicados (para los botones de color). */
+  conteoCategorias = computed(() => {
+    const base = filtrarEventos(this.eventos(), { ...this.filtros(), categoria: null }, this.coords());
+    const conteo: Record<string, number> = {};
+    for (const ev of base) conteo[ev.category] = (conteo[ev.category] || 0) + 1;
+    return conteo;
+  });
+  totalPaginas = computed(() => Math.max(1, Math.ceil(this.filtrados().length / this.porPagina())));
+  paginaVisible = computed(() => Math.min(this.paginaActual(), this.totalPaginas()));
+  pagina = computed(() => {
+    const p = this.paginaVisible();
+    const inicio = (p - 1) * this.porPagina();
+    return this.filtrados().slice(inicio, inicio + this.porPagina());
+  });
+  rango = computed(() => {
+    const total = this.filtrados().length;
+    if (!total) return '';
+    const p = this.paginaVisible();
+    const desde = (p - 1) * this.porPagina() + 1;
+    const hasta = Math.min(total, p * this.porPagina());
+    return `${desde}–${hasta} de ${total}`;
+  });
+
   private realtimeChannel: any;
+  private subs: Subscription[] = [];
+  private recarga?: ReturnType<typeof setTimeout>;
 
   constructor() {
-    addIcons({
-      locationOutline,
-      volumeHighOutline,
-      contrastOutline,
-      textOutline,
-      calendarOutline,
-      accessibilityOutline,
-      peopleOutline,
-      closeCircleOutline,
-      timeOutline,
-      checkmarkDoneOutline,
-      navigateOutline
-    });
+    addIcons({ addCircle, calendarOutline, chevronBack, chevronForward, gridOutline, logInOutline, searchOutline });
   }
 
   async ngOnInit() {
+    // Filtros que llegan desde la página de inicio (?pueblo=2&categoria=senderismo&fecha=hoy)
+    this.subs.push(
+      this.route.queryParamMap.subscribe((q) => {
+        if (!q.keys.length) return;
+        const fecha = q.get('fecha') as FiltroFecha | null;
+        this.cambiarFiltros({
+          ...FILTROS_INICIALES,
+          texto: q.get('q') || '',
+          municipio: q.get('pueblo') ? Number(q.get('pueblo')) : null,
+          categoria: q.get('categoria') || null,
+          fecha: fecha && OPCIONES_FECHA.some((o) => o.valor === fecha) ? fecha : 'proximos',
+          accesible: q.get('accesible') === '1',
+        });
+      }),
+      this.sb.session$.subscribe((s) => this.haySesion.set(!!s))
+    );
+
     await this.cargarEventos();
+
     this.realtimeChannel = this.sb.client
       .channel('eventos-agenda-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'eventos' }, () => {
-        this.cargarEventos();
+        clearTimeout(this.recarga);
+        this.recarga = setTimeout(() => this.cargarEventos(), 600);
       })
       .subscribe();
   }
 
   ngOnDestroy() {
-    if (this.realtimeChannel) {
-      this.sb.client.removeChannel(this.realtimeChannel);
-    }
+    this.subs.forEach((s) => s.unsubscribe());
+    clearTimeout(this.recarga);
+    if (this.realtimeChannel) this.sb.client.removeChannel(this.realtimeChannel);
   }
 
   async ionViewWillEnter() {
-    await this.cargarEventos();
+    if (this.eventos().length) await this.cargarEventos();
   }
 
   async cargarEventos(event?: any) {
-    // Solo muestra el spinner si aún no hay eventos cargados en pantalla
-    this.cargando = !event && this.eventos.length === 0;
-    this.cdr.detectChanges();
-
+    if (!this.eventos().length) this.cargando.set(true);
     try {
-      const { data, error } = await this.sb.client
-        .from('eventos')
-        .select('*, municipios(nombre)')
-        .in('status', [
-          'abierto',
-          'completo',
-          'inscripcion_cerrada',
-          'en_curso',
-          'pospuesto',
-          'cancelado',
-          'finalizado'
-        ])
-        .order('starts_at', { ascending: true });
-
-      if (error) {
-        console.error('Error cargando eventos desde Supabase:', error);
-      }
-
-      if (data) {
-        this.eventos = data as Evento[];
-        this.aplicarFiltros();
-      }
+      this.eventos.set(await this.eventosSvc.cargarVisibles());
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido cargar los planes. Inténtalo de nuevo en un momento.');
     } finally {
-      this.cargando = false;
-      if (event) {
-        event.target.complete();
-      }
-      this.cdr.detectChanges();
+      this.cargando.set(false);
+      event?.target?.complete();
     }
   }
 
-  seleccionarCategoria(slug: string) {
-    this.filtroCategoria = this.filtroCategoria === slug ? 'todas' : slug;
-    this.aplicarFiltros();
+  cambiarFiltros(f: Filtros) {
+    this.filtros.set(f);
+    this.irAPagina(1);
   }
 
-  aplicarFiltros() {
-    const ahora = new Date();
-    const finHoy = new Date(ahora);
-    finHoy.setHours(23, 59, 59, 999);
-
-    const finSemana = new Date(ahora);
-    finSemana.setDate(ahora.getDate() + 7);
-
-    let lista = this.eventos.filter((ev) => {
-      if (this.filtroMunicipio !== 'todos' && ev.municipio_id !== Number(this.filtroMunicipio)) {
-        return false;
-      }
-      if (this.filtroCategoria !== 'todas' && ev.category !== this.filtroCategoria) {
-        return false;
-      }
-      if (this.soloAccesibles && !ev.is_accessible) {
-        return false;
-      }
-
-      const fechaEv = new Date(ev.starts_at);
-      if (this.filtroFecha === 'hoy') {
-        return fechaEv >= ahora && fechaEv <= finHoy;
-      }
-      if (this.filtroFecha === 'semana') {
-        return fechaEv >= ahora && fechaEv <= finSemana;
-      }
-      if (this.filtroFecha === 'finde') {
-        const dia = fechaEv.getDay();
-        return fechaEv >= ahora && fechaEv <= finSemana && (dia === 0 || dia === 5 || dia === 6);
-      }
-
-      return true;
-    });
-
-    if (this.ordenCercaniaActivo && this.userCoords) {
-      lista = [...lista].sort((a, b) => {
-        const distA = this.distanciaKm(this.userCoords!.lat, this.userCoords!.lng, a.lat || 37.1, a.lng || -2.25);
-        const distB = this.distanciaKm(this.userCoords!.lat, this.userCoords!.lng, b.lat || 37.1, b.lng || -2.25);
-        return distA - distB;
-      });
-    }
-
-    this.eventosFiltrados = lista;
-    this.cdr.detectChanges();
+  cambiarTamano(valor: string) {
+    this.porPagina.set(Number(valor) || 12);
+    this.irAPagina(1);
   }
 
-  ordenarCercaDeMi() {
-    if (this.ordenCercaniaActivo) {
-      this.ordenCercaniaActivo = false;
-      this.aplicarFiltros();
-      return;
-    }
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition((pos) => {
-      this.userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      this.ordenCercaniaActivo = true;
-      this.aplicarFiltros();
-      this.cdr.detectChanges();
-    });
+  irAPagina(n: number) {
+    const destino = Math.min(Math.max(1, n), this.totalPaginas());
+    this.paginaActual.set(destino);
+    this.contenido?.scrollToTop(250);
   }
+}
 
-  textoPlazas(ev: Evento): string {
-    if (!ev.max_capacity) return 'Entrada libre';
-    const libres = ev.max_capacity - (ev.confirmed_count || 0);
-    return libres > 0 ? `${libres} de ${ev.max_capacity} plazas libres` : 'Lista de espera';
-  }
-
-  etiquetaEstado(status: string): string {
-    const mapa: Record<string, string> = {
-      abierto: 'Abierto',
-      completo: 'Completo (lista de espera)',
-      inscripcion_cerrada: 'Inscripción cerrada',
-      en_curso: 'En curso',
-      finalizado: 'Finalizado',
-      pospuesto: 'Aplazado',
-      cancelado: 'Cancelado'
-    };
-    return mapa[status] || status;
-  }
-
-  colorEstado(status: string): string {
-    if (status === 'abierto') return 'success';
-    if (status === 'completo' || status === 'en_curso') return 'warning';
-    if (status === 'cancelado' || status === 'inscripcion_cerrada') return 'danger';
-    return 'medium';
-  }
-
-  formatearFecha(iso: string): string {
-    return new Intl.DateTimeFormat('es-ES', {
-      timeZone: 'Europe/Madrid',
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit'
-    }).format(new Date(iso));
-  }
-
-  leerEnVozAlta(ev: Evento) {
-    if (!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const texto = `${ev.title}, en ${ev.municipios?.nombre || 'la comarca'}, el ${this.formatearFecha(ev.starts_at)}. ${ev.price === 0 ? 'Entrada gratuita' : 'Precio ' + ev.price + ' euros'}. ${ev.description || ''}`;
-    const utter = new SpeechSynthesisUtterance(texto);
-    utter.lang = 'es-ES';
-    window.speechSynthesis.speak(utter);
-  }
-
-  cambiarTamanoLetra() {
-    document.documentElement.classList.remove('font-lg', 'font-xl');
-    if (this.tamanoLetra === 'normal') {
-      this.tamanoLetra = 'lg';
-      document.documentElement.classList.add('font-lg');
-    } else if (this.tamanoLetra === 'lg') {
-      this.tamanoLetra = 'xl';
-      document.documentElement.classList.add('font-xl');
-    } else {
-      this.tamanoLetra = 'normal';
-    }
-  }
-
-  toggleContraste() {
-    this.altoContraste = !this.altoContraste;
-    document.body.classList.toggle('high-contrast', this.altoContraste);
-  }
-
-  private distanciaKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+function leerVista(): 'cuadricula' | 'calendario' {
+  try {
+    return localStorage.getItem('agenda-vista') === 'calendario' ? 'calendario' : 'cuadricula';
+  } catch {
+    return 'cuadricula';
   }
 }

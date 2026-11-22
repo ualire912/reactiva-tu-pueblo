@@ -1,2 +1,109 @@
-// For information on how to create your own theme, please refer to:
-// https://ionicframework.com/docs/theming/
+// Tema "Reactiva tu pueblo" · paleta «Plaza al sol»:
+// verde olivo azulado (principal), amarillo sol (acento) y fondo crema.
+// Un color suave por tipo de actividad, todos con la misma luminosidad.
+// Los colores con texto blanco cumplen WCAG AA; el rojo solo se usa para errores.
+
+:root {
+  --ion-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --ion-color-primary: #2b6f68;
+  --ion-color-primary-rgb: 43, 111, 104;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-contrast-rgb: 255, 255, 255;
+  --ion-color-primary-shade: #1b4844;
+  --ion-color-primary-tint: #3e8a81;
+
+  --ion-color-secondary: #f4b740;
+  --ion-color-secondary-rgb: 244, 183, 64;
+  --ion-color-secondary-contrast: #3a2a05;
+  --ion-color-secondary-contrast-rgb: 58, 42, 5;
+  --ion-color-secondary-shade: #c98f1c;
+  --ion-color-secondary-tint: #f6c463;
+
+  --ion-color-tertiary: #4e4386;
+  --ion-color-tertiary-rgb: 67, 56, 202;
+  --ion-color-tertiary-contrast: #ffffff;
+  --ion-color-tertiary-contrast-rgb: 255, 255, 255;
+  --ion-color-tertiary-shade: #3f366e;
+  --ion-color-tertiary-tint: #625697;
+
+  --ion-color-success: #1b4844;
+  --ion-color-success-rgb: 21, 128, 61;
+  --ion-color-success-contrast: #ffffff;
+  --ion-color-success-contrast-rgb: 255, 255, 255;
+  --ion-color-success-shade: #163c39;
+  --ion-color-success-tint: #2b6f68;
+
+  --ion-color-warning: #f4b740;
+  --ion-color-warning-rgb: 245, 158, 11;
+  --ion-color-warning-contrast: #24312f;
+  --ion-color-warning-contrast-rgb: 28, 25, 23;
+  --ion-color-warning-shade: #c98f1c;
+  --ion-color-warning-tint: #f6c463;
+
+  --ion-color-danger: #b42318;
+  --ion-color-danger-rgb: 185, 28, 28;
+  --ion-color-danger-contrast: #ffffff;
+  --ion-color-danger-contrast-rgb: 255, 255, 255;
+  --ion-color-danger-shade: #8a1a12;
+  --ion-color-danger-tint: #c4473d;
+
+  --ion-color-medium: #5e6866;
+  --ion-color-medium-rgb: 87, 83, 78;
+  --ion-color-medium-contrast: #ffffff;
+  --ion-color-medium-contrast-rgb: 255, 255, 255;
+  --ion-color-medium-shade: #525c5a;
+  --ion-color-medium-tint: #6f7977;
+
+  --ion-color-light: #fbf7f0;
+  --ion-color-light-rgb: 254, 243, 226;
+  --ion-color-light-contrast: #24312f;
+  --ion-color-light-contrast-rgb: 28, 25, 23;
+  --ion-color-light-shade: #eadfcf;
+  --ion-color-light-tint: #fdfaf5;
+
+  --ion-color-dark: #24312f;
+  --ion-color-dark-rgb: 28, 25, 23;
+  --ion-color-dark-contrast: #ffffff;
+  --ion-color-dark-contrast-rgb: 255, 255, 255;
+  --ion-color-dark-shade: #1b2523;
+  --ion-color-dark-tint: #3d4947;
+
+  --ion-background-color: #fbf7f0;
+  --ion-background-color-rgb: 255, 247, 237;
+  --ion-text-color: #24312f;
+  --ion-text-color-rgb: 28, 25, 23;
+  --ion-item-background: #ffffff;
+  --ion-card-background: #ffffff;
+  --ion-toolbar-background: #ffffff;
+  --ion-tab-bar-background: #ffffff;
+  --ion-border-color: #eadfcf;
+
+  // Propios
+  --rp-verde-precio: #1b4844;
+  --rp-rojo-finalizado: #b42318;
+  --rp-sombra: 0 2px 6px rgba(36, 49, 47, 0.08), 0 8px 24px rgba(36, 49, 47, 0.08);
+  --rp-sombra-hover: 0 6px 14px rgba(36, 49, 47, 0.14), 0 16px 36px rgba(36, 49, 47, 0.14);
+  --rp-radio: 12px;
+  --rp-foco: #1b4844;
+
+  // Paleta «Plaza al sol»
+  --rp-principal: #2b6f68;
+  --rp-principal-oscuro: #1b4844;
+  --rp-principal-suave: #ddeeea;
+  --rp-principal-claro: #eef6f4;
+  --rp-sol: #f4b740;
+  --rp-sol-suave: #fdf0d2;
+  --rp-sol-texto: #6b4a00;
+  --rp-crema: #fbf7f0;
+  --rp-arena: #f4efe6;
+  --rp-borde: #eadfcf;
+  --rp-borde-campo: #d9cdb9;
+  --rp-tinta: #24312f;
+  --rp-tinta-suave: #5e6866;
+  --rp-error: #b42318;
+  --rp-error-suave: #fff8f6;
+  --rp-fuente-titulos: 'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
+  --rp-radio-control: 8px;
+  --rp-radio-etiqueta: 6px;
+}

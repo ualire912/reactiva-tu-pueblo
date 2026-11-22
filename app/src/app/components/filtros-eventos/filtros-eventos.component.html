@@ -1,0 +1,151 @@
+<div class="filtros-bar" role="search" aria-label="Buscar y filtrar planes">
+  <div class="filtros-fila">
+  <label class="buscador filtros-buscador">
+    <ion-icon name="search" aria-hidden="true"></ion-icon>
+    <span class="sr-only">Buscar planes</span>
+    <input
+      type="search"
+      [value]="filtros().texto || ''"
+      (input)="cambiarTexto($any($event.target).value)"
+      placeholder="Busca una ruta, una fiesta, un pueblo…"
+      autocomplete="off" />
+    @if (filtros().texto) {
+      <button type="button" class="buscador-limpiar" data-etiqueta="Borrar" (click)="cambiarTexto('')" aria-label="Borrar la búsqueda">
+        <ion-icon name="close" aria-hidden="true"></ion-icon>
+      </button>
+    }
+  </label>
+  <div class="filtros-controles" [class.sin-cercania]="sinCercania()" [class.sin-categoria]="!!conteoCategorias()">
+    <label class="campo-filtro" [class.activo]="filtros().municipio != null">
+      <span class="campo-etiqueta">Pueblo</span>
+      <select (change)="cambiarMunicipio($any($event.target).value)">
+        <option value="" [selected]="filtros().municipio == null">Todos los pueblos</option>
+        @for (m of sb.municipios; track m.id) {
+          <option [value]="m.id" [selected]="filtros().municipio === m.id">{{ m.nombre }}</option>
+        }
+      </select>
+    </label>
+
+    @if (!conteoCategorias()) {
+      <label class="campo-filtro" [class.activo]="!!filtros().categoria">
+        <span class="campo-etiqueta">Actividad</span>
+        <select (change)="cambiarCategoria($any($event.target).value)">
+          <option value="" [selected]="!filtros().categoria">Todas</option>
+          @for (c of sb.categorias; track c.slug) {
+            <option [value]="c.slug" [selected]="filtros().categoria === c.slug">{{ c.nombre }}</option>
+          }
+        </select>
+      </label>
+    }
+
+    <label class="campo-filtro" [class.activo]="filtros().fecha !== 'proximos'">
+      <span class="campo-etiqueta">Cuándo</span>
+      <select (change)="cambiarFecha($any($event.target).value)">
+        @for (o of opcionesFecha; track o.valor) {
+          <option [value]="o.valor" [selected]="filtros().fecha === o.valor">{{ o.texto }}</option>
+        }
+      </select>
+    </label>
+
+    <div class="filtros-toggles">
+      <button
+        type="button"
+        class="filtro-toggle"
+        [class.on]="filtros().accesible"
+        [attr.aria-pressed]="filtros().accesible"
+        (click)="alternarAccesible()"
+        title="Solo actividades accesibles">
+        <ion-icon name="accessibility" aria-hidden="true"></ion-icon>
+        <span class="toggle-texto">Accesible</span>
+      </button>
+
+      @if (!sinCercania()) {
+        <button
+          type="button"
+          class="filtro-toggle"
+          [class.on]="filtros().cerca"
+          [attr.aria-pressed]="filtros().cerca"
+          [disabled]="buscandoUbicacion()"
+          (click)="alternarCerca()"
+          title="Ordenar por cercanía a mi ubicación">
+          <ion-icon name="navigate" aria-hidden="true"></ion-icon>
+          <span class="toggle-texto">{{ buscandoUbicacion() ? 'Buscando…' : 'Cerca de mí' }}</span>
+        </button>
+      }
+    </div>
+  </div>
+  </div>
+
+  @if (conteoCategorias(); as conteo) {
+    <div class="filtros-categorias">
+      <span class="contador" aria-live="polite">
+        <strong>{{ total() }}</strong> {{ total() === 1 ? 'plan' : 'planes' }}
+      </span>
+      <div class="filtros-categorias-botones" role="group" aria-label="Tipo de actividad">
+      @for (c of categoriasConConteo(); track c.slug) {
+        <button
+          type="button"
+          class="cat-chip"
+          [class.on]="filtros().categoria === c.slug"
+          [attr.aria-pressed]="filtros().categoria === c.slug"
+          [style.--cat-fondo]="c.fondo"
+          [style.--cat-tinta]="c.tinta"
+          (click)="cambiarCategoria(filtros().categoria === c.slug ? '' : c.slug)">
+          {{ c.nombre }} <span class="cat-chip-num">{{ c.n }}</span>
+        </button>
+      }
+      </div>
+      @for (c of chipsSinCategoria(); track c.clave) {
+        <button
+          type="button"
+          class="chip-activo"
+          (click)="quitar(c.clave)"
+          [attr.aria-label]="'Quitar filtro ' + c.texto">
+          <span>{{ c.texto }}</span>
+          <ion-icon name="close" aria-hidden="true"></ion-icon>
+        </button>
+      }
+      @if (chips().length) {
+        <button type="button" class="chip-limpiar" (click)="limpiar()">Quitar filtros</button>
+      }
+    </div>
+  } @else {
+
+  <!-- Fila de chips con altura fija: añadir o quitar chips no mueve nada -->
+  <div class="chips-activos">
+    <span class="contador" aria-live="polite">
+      <strong>{{ total() }}</strong> {{ total() === 1 ? 'plan' : 'planes' }}
+    </span>
+
+    <div class="chips-scroll">
+      @for (c of chips(); track c.clave) {
+        <button
+          type="button"
+          class="chip-activo"
+          [style.--chip-color]="c.color"
+          (click)="quitar(c.clave)"
+          [attr.aria-label]="'Quitar filtro ' + c.texto">
+          <span>{{ c.texto }}</span>
+          <ion-icon name="close" aria-hidden="true"></ion-icon>
+        </button>
+      } @empty {
+        <span class="chips-vacio">
+          <ion-icon name="options-outline" aria-hidden="true"></ion-icon>
+          Mostrando los próximos planes
+        </span>
+      }
+    </div>
+
+    <!-- Siempre ocupa su sitio (se oculta sin desaparecer) para que nada se desplace -->
+    <button
+      type="button"
+      class="chip-limpiar"
+      [class.oculto]="chips().length === 0"
+      [disabled]="chips().length === 0"
+      [attr.aria-hidden]="chips().length === 0"
+      (click)="limpiar()">
+      Quitar filtros
+    </button>
+  </div>
+  }
+</div>

@@ -1,40 +1,97 @@
-<ion-header>
-  <ion-toolbar color="primary">
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
     <ion-buttons slot="start">
-      <ion-back-button defaultHref="/agenda" text="Volver"></ion-back-button>
+      <ion-back-button defaultHref="/inicio" text="Volver"></ion-back-button>
     </ion-buttons>
-    <ion-title>{{ modoRegistro ? 'Crear cuenta' : 'Entrar' }}</ion-title>
+    <ion-title>{{ modoRegistro ? 'Crear cuenta' : 'Iniciar sesión' }}</ion-title>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="ion-padding">
-  <div style="max-width: 450px; margin: 20px auto;">
+<ion-content class="ion-padding rp-fondo">
+  <div class="bloque login-caja">
+    @if (motivo === 'proponer') {
+      <div class="login-motivo" role="note">
+        <ion-icon name="add-circle-outline" aria-hidden="true"></ion-icon>
+        <div>
+          <strong>Para proponer un plan necesitas una cuenta</strong>
+          <p>Así los vecinos saben quién organiza y te podemos avisar cuando se publique. Es gratis y tardas un minuto.</p>
+        </div>
+      </div>
+    }
+
     <h2>{{ modoRegistro ? 'Únete a Reactiva tu pueblo' : 'Hola de nuevo' }}</h2>
-    <p>Entra para apuntarte a planes, compartir coche o proponer actividades en tu pueblo.</p>
+    <p>Apúntate a planes, comparte coche o propón actividades en tu pueblo.</p>
 
-    <ion-list lines="full" class="ion-margin-top">
-      <ion-item *ngIf="modoRegistro">
-        <ion-label position="stacked">Tu nombre completo</ion-label>
-        <ion-input [(ngModel)]="fullName" placeholder="Ej. María García"></ion-input>
-      </ion-item>
+    <!-- Entrar con un toque (Telegram) -->
+    <div class="login-rapido">
+      <button type="button" class="boton-acceso acceso-telegram" (click)="entrarConTelegram()" [disabled]="esperandoTelegram">
+        <ion-icon name="paper-plane" aria-hidden="true"></ion-icon>
+        {{ modoRegistro ? 'Crear cuenta con Telegram' : 'Entrar con Telegram' }}
+      </button>
+    </div>
 
-      <ion-item>
-        <ion-label position="stacked">Correo electrónico</ion-label>
-        <ion-input type="email" [(ngModel)]="email" placeholder="tu@correo.com"></ion-input>
-      </ion-item>
+    @if (esperandoTelegram) {
+      <div class="espera-telegram" role="status" aria-live="polite">
+        <ion-spinner name="dots" aria-hidden="true"></ion-spinner>
+        <div>
+          <strong>Esperando a Telegram…</strong>
+          <p>
+            En Telegram, pulsa <strong>Iniciar</strong> en el chat del bot y vuelve aquí: entrarás solo.
+            @if (enlaceTelegram) {
+              ¿No se ha abierto? <a [href]="enlaceTelegram" target="_blank" rel="noopener">Abrir Telegram</a>
+            }
+          </p>
+          <button type="button" class="boton-sec" (click)="cancelarTelegram()">Cancelar</button>
+        </div>
+      </div>
+    }
 
-      <ion-item>
-        <ion-label position="stacked">Contraseña</ion-label>
-        <ion-input type="password" [(ngModel)]="password" placeholder="Mínimo 6 caracteres"></ion-input>
-      </ion-item>
-    </ion-list>
+    <p class="login-separador"><span>o con tu teléfono</span></p>
+
+    <form class="login-campos" (submit)="$event.preventDefault(); enviar()">
+      @if (modoRegistro) {
+        <label class="campo">
+          <span>Tu nombre</span>
+          <input type="text" name="nombre" [(ngModel)]="fullName" autocomplete="name" placeholder="Ej. María García" />
+        </label>
+        <label class="campo">
+          <span>Teléfono móvil</span>
+          <input type="tel" name="telefono" [(ngModel)]="telefono" autocomplete="tel" inputmode="tel" placeholder="600 11 22 33" />
+        </label>
+        <label class="campo">
+          <span>Correo electrónico <small class="opcional">(opcional)</small></span>
+          <input type="email" name="email" [(ngModel)]="email" autocomplete="email" inputmode="email" placeholder="tu@correo.com" />
+        </label>
+      } @else {
+        <label class="campo">
+          <span>Teléfono <small class="opcional">(o correo, si te registraste con él)</small></span>
+          <input type="text" name="usuario" [(ngModel)]="usuario" autocomplete="username" inputmode="tel" placeholder="600 11 22 33" />
+        </label>
+      }
+
+      <label class="campo">
+        <span>Contraseña</span>
+        <span class="campo-con-boton">
+          <input
+            [type]="verClave ? 'text' : 'password'"
+            name="password"
+            [(ngModel)]="password"
+            [autocomplete]="modoRegistro ? 'new-password' : 'current-password'"
+            placeholder="Mínimo 6 caracteres" />
+          <button type="button" class="boton-sec" [attr.data-etiqueta]="verClave ? 'Ocultar' : 'Mostrar'" (click)="verClave = !verClave" [attr.aria-label]="verClave ? 'Ocultar la contraseña' : 'Mostrar la contraseña'" [attr.aria-pressed]="verClave">
+            <ion-icon [name]="verClave ? 'eye-off-outline' : 'eye-outline'" aria-hidden="true"></ion-icon>
+          </button>
+        </span>
+      </label>
+      <button type="submit" class="sr-only" tabindex="-1">{{ modoRegistro ? 'Crear cuenta' : 'Iniciar sesión' }}</button>
+    </form>
 
     <ion-button expand="block" class="ion-margin-top" (click)="enviar()" [disabled]="cargando">
-      {{ cargando ? 'Cargando...' : (modoRegistro ? 'Registrarme' : 'Entrar') }}
+      {{ cargando ? 'Un momento…' : (modoRegistro ? 'Crear mi cuenta' : 'Iniciar sesión') }}
     </ion-button>
 
     <ion-button expand="block" fill="clear" class="ion-margin-top" (click)="modoRegistro = !modoRegistro">
-      {{ modoRegistro ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate gratis' }}
+      {{ modoRegistro ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Créala gratis' }}
     </ion-button>
   </div>
 </ion-content>

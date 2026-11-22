@@ -31,7 +31,7 @@ def pedir_resenas_evento(ev: dict) -> int:
     for f in inscritos:
         uid = f["user_id"]
         try:
-            if not avisar(uid, texto, botones):
+            if not avisar(uid, texto, botones, tipo="resena"):
                 continue
             enviados += 1
             sb.table("notificaciones").upsert(

@@ -2,7 +2,7 @@ import { inject } from '@angular/core';
 import { CanActivateFn, Router } from '@angular/router';
 import { SupabaseService } from './supabase.service';
 
-export const authGuard: CanActivateFn = async () => {
+export const authGuard: CanActivateFn = async (_route, state) => {
   const sb = inject(SupabaseService);
   const router = inject(Router);
 
@@ -15,7 +15,10 @@ export const authGuard: CanActivateFn = async () => {
     return true;
   }
 
-  return router.createUrlTree(['/login']);
+  // Se explica por qué hace falta entrar y, después, se vuelve a donde iba
+  return router.createUrlTree(['/login'], {
+    queryParams: { volver: state.url, motivo: state.url.startsWith('/proponer') ? 'proponer' : null },
+  });
 };
 
 export const moderadorGuard: CanActivateFn = async () => {

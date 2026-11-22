@@ -1,32 +1,42 @@
 <ion-app>
   <ion-tabs>
-    <ion-tab-bar slot="bottom">
-      <ion-tab-button tab="agenda">
-        <ion-icon name="calendar-outline"></ion-icon>
+    <ion-tab-bar slot="bottom" class="rp-tabbar" aria-label="Navegación principal">
+      <ion-tab-button tab="inicio">
+        <ion-icon name="home-outline" aria-hidden="true"></ion-icon>
+        <ion-label>Inicio</ion-label>
+      </ion-tab-button>
+
+      <ion-tab-button tab="agenda" [class.tab-selected]="enFichaDePlan()" [attr.aria-current]="enFichaDePlan() ? 'page' : null">
+        <ion-icon name="calendar-outline" aria-hidden="true"></ion-icon>
         <ion-label>Agenda</ion-label>
       </ion-tab-button>
 
       <ion-tab-button tab="mapa">
-        <ion-icon name="map-outline"></ion-icon>
+        <ion-icon name="map-outline" aria-hidden="true"></ion-icon>
         <ion-label>Mapa</ion-label>
       </ion-tab-button>
 
       <ion-tab-button tab="proponer">
-        <ion-icon name="add-circle-outline"></ion-icon>
+        <ion-icon name="add-circle-outline" aria-hidden="true"></ion-icon>
         <ion-label>Proponer</ion-label>
       </ion-tab-button>
 
       <ion-tab-button tab="perfil">
-        <ion-icon name="person-outline"></ion-icon>
-        <ion-label>Perfil</ion-label>
+        <ion-icon name="person-outline" aria-hidden="true"></ion-icon>
+        <ion-label>{{ (sb.session$ | async) ? 'Mi perfil' : 'Mi cuenta' }}</ion-label>
       </ion-tab-button>
 
-      <ion-tab-button
-        *ngIf="(sb.profile$ | async)?.rol === 'moderador'"
-        tab="panel">
-        <ion-icon name="shield-checkmark-outline"></ion-icon>
-        <ion-label>Panel</ion-label>
+      <ion-tab-button tab="ajustes">
+        <ion-icon name="settings-outline" aria-hidden="true"></ion-icon>
+        <ion-label>Ajustes</ion-label>
       </ion-tab-button>
+
+      @if ((sb.profile$ | async)?.rol === 'moderador') {
+        <ion-tab-button tab="panel">
+          <ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>
+          <ion-label>Panel</ion-label>
+        </ion-tab-button>
+      }
     </ion-tab-bar>
   </ion-tabs>
 </ion-app>

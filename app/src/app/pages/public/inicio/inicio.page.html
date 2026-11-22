@@ -1,0 +1,188 @@
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>
+      <span class="marca">
+        <span class="marca-logo" aria-hidden="true">R</span>
+        <span class="marca-texto">Reactiva tu pueblo</span>
+      </span>
+    </ion-title>
+    <ion-buttons slot="end">
+      @if (!haySesion()) {
+        <ion-button class="boton-cabecera" routerLink="/login">
+          <ion-icon slot="start" name="log-in-outline" aria-hidden="true"></ion-icon>
+          Iniciar sesión
+        </ion-button>
+      }
+    </ion-buttons>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="rp-fondo">
+  <!-- Portada con fotos de los pueblos que van rotando -->
+  <section class="portada con-fotos" aria-labelledby="titulo-portada">
+    <div class="portada-fotos" aria-hidden="true">
+      @for (f of fotos; track f.src; let i = $index) {
+        <div class="portada-foto" [class.activa]="i === fotoActual()" [style.background-image]="'url(' + f.src + ')'"></div>
+      }
+    </div>
+    <div class="portada-velo" aria-hidden="true"></div>
+    <div class="portada-pie">
+      <span class="portada-pueblo">
+        <ion-icon name="location" aria-hidden="true"></ion-icon> {{ fotos[fotoActual()].pueblo }}
+        <small>{{ fotos[fotoActual()].credito }}</small>
+      </span>
+      <span class="portada-controles">
+        @for (f of fotos; track f.src; let i = $index) {
+          <button type="button" class="portada-punto" [class.on]="i === fotoActual()" [attr.aria-label]="'Ver foto de ' + f.pueblo" [attr.aria-current]="i === fotoActual()" (click)="irAFoto(i)"></button>
+        }
+        <button type="button" class="portada-pausa" [attr.data-etiqueta]="fotosPausadas() ? 'Reanudar' : 'Pausar'" (click)="alternarFotos()" [attr.aria-label]="fotosPausadas() ? 'Reanudar las fotos' : 'Pausar las fotos'">
+          <ion-icon [name]="fotosPausadas() ? 'play' : 'pause'" aria-hidden="true"></ion-icon>
+        </button>
+      </span>
+    </div>
+    <div class="portada-contenido">
+      <span class="portada-insignia" aria-live="polite">
+        {{ cargando() ? 'Buscando planes…' : 'Este finde hay ' + planesFinde() + (planesFinde() === 1 ? ' plan' : ' planes') }}
+      </span>
+      <h1 id="titulo-portada">{{ nombre() ? '¡Hola, ' + nombre() + '! ¿Qué te apetece hacer?' : '¿Qué te apetece hacer en la comarca?' }}</h1>
+      <p>Rutas, fiestas, talleres y comidas en Lucainena, Velefique, Senés, Uleila y Tahal. Todo en un solo sitio.</p>
+    </div>
+    <svg class="portada-colinas" viewBox="0 0 1440 90" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 60 C 180 20, 320 20, 480 50 S 800 90, 980 40 S 1300 10, 1440 50 V90 H0Z" fill="#3e8a81"></path>
+      <path d="M0 75 C 240 50, 420 60, 640 75 S 1040 55, 1200 70 S 1380 80, 1440 72 V90 H0Z" fill="#fbf7f0"></path>
+    </svg>
+  </section>
+
+  <!-- Tarjeta flotante: buscador y atajos -->
+  <div class="portada-tarjeta">
+    <div class="tarjeta">
+      <form class="hero-buscador" role="search" aria-label="Buscar planes" (submit)="buscar($event, campoBusqueda.value)">
+        <label class="buscador">
+          <ion-icon name="search" aria-hidden="true"></ion-icon>
+          <span class="sr-only">Buscar planes</span>
+          <input #campoBusqueda type="search" placeholder="Busca una ruta, una fiesta, un pueblo…" autocomplete="off" />
+        </label>
+        <ion-button type="submit" color="secondary">Buscar</ion-button>
+      </form>
+      <nav class="atajos" aria-label="Atajos de la agenda">
+        @for (a of atajos; track a.texto) {
+          <button type="button" class="atajo" (click)="irAgenda(a.params)">
+            <ion-icon [name]="a.icono" aria-hidden="true"></ion-icon>
+            {{ a.texto }}
+          </button>
+        }
+        <a class="atajo" routerLink="/mapa"><ion-icon name="map" aria-hidden="true"></ion-icon> Ver el mapa</a>
+      </nav>
+    </div>
+  </div>
+
+  <div class="inicio">
+    <!-- Invitación a publicar: dos caminos, los mismos que en Proponer -->
+    <section class="invitar" aria-labelledby="titulo-invitar">
+      <div class="invitar-texto">
+        <span class="invitar-insignia">Tu pueblo te necesita</span>
+        <h2 id="titulo-invitar">¿Organizas algo? Compártelo con la comarca</h2>
+        <p>Una ruta, una comida, un taller, una fiesta… Publicarlo es gratis y se hace en unos minutos.</p>
+      </div>
+      <div class="invitar-caminos">
+        <a class="camino" routerLink="/proponer" [queryParams]="{ modo: 'cartel' }">
+          <span class="camino-icono" aria-hidden="true"><ion-icon name="camera-outline"></ion-icon></span>
+          <span class="camino-textos">
+            <strong>Tengo un cartel</strong>
+            <span>Haz una foto y lo rellenamos por ti</span>
+          </span>
+          <ion-icon class="camino-flecha" name="arrow-forward" aria-hidden="true"></ion-icon>
+        </a>
+        <a class="camino" routerLink="/proponer" [queryParams]="{ modo: 'pasos' }">
+          <span class="camino-icono" aria-hidden="true"><ion-icon name="create-outline"></ion-icon></span>
+          <span class="camino-textos">
+            <strong>Lo cuento yo</strong>
+            <span>4 preguntas sencillas, paso a paso</span>
+          </span>
+          <ion-icon class="camino-flecha" name="arrow-forward" aria-hidden="true"></ion-icon>
+        </a>
+      </div>
+    </section>
+
+    <!-- Accesos rápidos -->
+    <section aria-labelledby="titulo-accesos">
+      <h2 id="titulo-accesos" class="seccion-titulo">Accesos rápidos</h2>
+      <div class="accesos">
+        @for (a of accesos(); track a.titulo) {
+          <a class="acceso" [routerLink]="a.ruta" [style.--acceso]="a.color">
+            <span class="acceso-icono" aria-hidden="true"><ion-icon [name]="a.icono"></ion-icon></span>
+            <span class="acceso-textos">
+              <strong>{{ a.titulo }}</strong>
+              <span>{{ a.texto }}</span>
+            </span>
+          </a>
+        }
+      </div>
+    </section>
+
+    <!-- Próximos planes -->
+    <section aria-labelledby="titulo-proximos">
+      <div class="seccion-cabecera">
+        <h2 id="titulo-proximos" class="seccion-titulo">Próximos planes</h2>
+        <a routerLink="/agenda" class="ver-todo">Ver todos <ion-icon name="arrow-forward" aria-hidden="true"></ion-icon></a>
+      </div>
+      @if (!cargando() && destacados().length === 0) {
+        <p class="texto-suave">Ahora mismo no hay planes próximos. ¡Anímate a proponer uno!</p>
+      }
+      <ul class="rejilla-eventos rejilla-compacta">
+        @for (ev of destacados(); track ev.id) {
+          <li><app-evento-card [ev]="ev"></app-evento-card></li>
+        }
+      </ul>
+    </section>
+
+    <!-- Lo que ya se ha celebrado (últimos 3 meses) -->
+    @if (recientes().length) {
+      <section class="seccion-recientes" aria-labelledby="titulo-recientes">
+        <div class="seccion-cabecera">
+          <div>
+            <h2 id="titulo-recientes" class="seccion-titulo">Así fueron los últimos planes</h2>
+            <p class="texto-suave seccion-sub">Lo que se ha celebrado en la comarca estos meses y qué opinaron los vecinos.</p>
+          </div>
+          <a routerLink="/agenda" [queryParams]="{ fecha: 'pasados' }" class="ver-todo">Ver todos los pasados <ion-icon name="arrow-forward" aria-hidden="true"></ion-icon></a>
+        </div>
+        <ul class="rejilla-eventos rejilla-compacta">
+          @for (ev of recientes(); track ev.id) {
+            <li><app-evento-card [ev]="ev"></app-evento-card></li>
+          }
+        </ul>
+      </section>
+    }
+
+    <!-- Pueblos -->
+    <section aria-labelledby="titulo-pueblos">
+      <h2 id="titulo-pueblos" class="seccion-titulo">Nuestros pueblos</h2>
+      <div class="pueblos">
+        @for (p of pueblos(); track p.id) {
+          <button type="button" class="pueblo" [style.--pueblo]="p.color" (click)="irAgenda({ pueblo: p.id })">
+            <strong>{{ p.nombre }}</strong>
+            <span>{{ p.planes }} {{ p.planes === 1 ? 'plan próximo' : 'planes próximos' }}</span>
+          </button>
+        }
+      </div>
+    </section>
+
+    <!-- Categorías -->
+    <section aria-labelledby="titulo-categorias">
+      <h2 id="titulo-categorias" class="seccion-titulo">Por tipo de actividad</h2>
+      <div class="categorias">
+        @for (c of categorias(); track c.slug) {
+          <button
+            type="button"
+            class="categoria"
+            [style.--cat-fondo]="estiloCategoria(c.slug).fondo"
+            [style.--cat-tinta]="estiloCategoria(c.slug).tinta"
+            (click)="irAgenda({ categoria: c.slug })">
+            <ion-icon [name]="iconoCategoria(c.slug)" aria-hidden="true"></ion-icon>
+            {{ c.nombre }}
+          </button>
+        }
+      </div>
+    </section>
+  </div>
+</ion-content>

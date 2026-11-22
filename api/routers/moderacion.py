@@ -13,6 +13,7 @@ Endpoints (🛡️ solo moderador):
   POST /moderacion/promociones/revisar   -> revisa YA a todos los candidatos (botón del panel/demo)
   POST /moderacion/promociones/decidir   {user_id, accion: promover|descartar|revocar}
 """
+import re
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -135,3 +136,72 @@ def decidir_promocion(body: DecidirIn, _mod=Depends(require_moderador)):
         }).eq("id", body.user_id).execute()
         avisar(body.user_id, MSG_REVOCADO)
     return {"ok": True, "rol": "usuario"}
+
+
+# ── Detectados por IA: crear el plan conservando a su organizador ──
+@router.post("/moderacion/ingestas/{ingesta_id}/crear-plan")
+def crear_plan_de_ingesta(ingesta_id: str, forzar: bool = False, _mod=Depends(require_moderador)):
+    """El moderador rescata una publicación detectada. Se crea con la misma función que usa
+    el bot, así el organizador es quien la publicó (asociación o vecino), no el moderador.
+    Queda pendiente de revisión para que el moderador la repase antes de publicarla.
+    forzar=True: la IA la había descartado (o era un evento ya pasado) y el moderador
+    dice que sí es un plan -> se recupera."""
+    import ia
+    import ingesta
+    if forzar:
+        filas = sb.table("ingestas").select("*").eq("id", ingesta_id).limit(1).execute().data
+        if not filas:
+            raise HTTPException(404, "No existe esa publicación")
+        ing = filas[0]
+        if ing.get("estado") in ("descartada", "spam", "error", "nueva"):
+            ext = ing.get("extracted") or {}
+            if not ext.get("title") and ing.get("raw_text"):
+                ext = ia.extraer_evento(ing["raw_text"]) or {}
+            if not ext:
+                raise HTTPException(400, "No queda texto de esta publicación para crear el plan.")
+            ext["es_evento"] = True
+            ext.pop("motivo_no_evento", None)
+            sb.table("ingestas").update({"estado": "extraida", "extracted": ext,
+                                         "missing": ext.get("missing") or [],
+                                         "spam_reason": "recuperada por un moderador"}) \
+                .eq("id", ingesta_id).execute()
+    ev = ingesta.crear_evento_desde_ingesta(ingesta_id, publicar=False,
+                                            motivo="lo ha rescatado un moderador de Detectados por IA")
+    if "error" in ev:
+        nombres = {"title": "el título", "starts_at": "el día y la hora", "municipio": "el pueblo"}
+        faltan = ", ".join(nombres.get(c, c) for c in ev.get("missing") or [])
+        raise HTTPException(400, f"Falta {faltan} para crear el plan. Edita la publicación o "
+                                 f"créalo a mano." if faltan else ev["error"])
+    return ev
+
+
+# ── Búsqueda de eventos en Facebook: estado y "Buscar ahora" ──
+class BuscarAhora(BaseModel):
+    texto: str | None = None  # vacío = el nombre de los 5 pueblos
+    guardar: bool = False     # con una dirección: leerla siempre como página oficial
+
+
+@router.get("/moderacion/agente")
+def estado_del_agente(_mod=Depends(require_moderador)):
+    import tareas
+    return tareas.estado_agente()
+
+
+@router.post("/moderacion/agente/buscar")
+def buscar_ahora(body: BuscarAhora | None = None, _mod=Depends(require_moderador)):
+    import ia
+    import tareas
+    if not tareas.estado_agente()["apify_configurado"]:
+        raise HTTPException(400, "Falta APIFY_TOKEN en Render: sin él no se puede buscar en Facebook.")
+    texto = ((body.texto if body else None) or "").strip()[:300]
+    if texto.startswith("http"):
+        if not re.match(r"https?://(www\.|m\.|web\.)?(facebook|fb)\.com/", texto):
+            raise HTTPException(400, "Esa dirección no es de Facebook.")
+        if not tareas.lanzar_agente("dirección pegada en el panel", urls=[texto],
+                                    guardar=bool(body and body.guardar)):
+            raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
+        return {"lanzado": True, "consultas": [texto]}
+    consultas = [texto[:100]] if texto else list(ia.PUEBLOS)
+    if not tareas.lanzar_agente("a mano desde el panel", consultas=consultas, descubrir=not texto):
+        raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
+    return {"lanzado": True, "consultas": consultas}

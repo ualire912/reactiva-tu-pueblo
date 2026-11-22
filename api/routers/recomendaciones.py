@@ -47,7 +47,7 @@ def enviar_recomendaciones(body: EnviarIn | None = None, _mod=Depends(require_mo
                             ("🙋 Busco coche", f"coche:busca:{primero}")])
             botones.append([("📅 Calendario", f"ics:{primero}")])
 
-            if not avisar(uid, texto, botones):
+            if not avisar(uid, texto, botones, tipo="recomendacion"):
                 continue
             enviados += 1
 

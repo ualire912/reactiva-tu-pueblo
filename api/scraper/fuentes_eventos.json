@@ -1,16 +1,95 @@
 {
-  "_ayuda": "Fuentes de eventos REALES. 'facebook': páginas que lee Apify ('oficial': true = ayuntamiento u organización de confianza: sus eventos se publican solos si la IA está segura; si no, van al moderador). Cambia las URL RELLENAR por las reales (las que no tengan URL se ignoran). 'articulos': noticias y agendas públicas con eventos de los pueblos; se leen tal cual (sin saltarse ninguna protección) y cada una pasa por la IA. Las webs de los ayuntamientos bloquean los programas automáticos, por eso no están aquí.",
-  "facebook": [
+  "_ayuda": "Fuentes de eventos REALES. La app NO necesita direcciones de páginas de Facebook: busca sola publicaciones públicas con los nombres de los pueblos ('busqueda_facebook', actor de Apify). Las organizaciones que encuentra se guardan como 'entidades' y sus páginas se leen una vez al día con apify/facebook-posts-scraper ('paginas_facebook'). 'webs_ayuntamientos': webs municipales que se leen con ScrapeGraphAI + Gemini una vez al día. 'facebook': páginas extra opcionales. 'articulos': noticias sueltas. Gasto en Apify ajustado al plan gratuito (5 $/mes): AGENTE_CADA_MIN=180 por defecto.",
+  "busqueda_facebook": {
+    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook ({pueblo} se cambia por cada pueblo). Cada hora se busca el nombre de un pueblo, por turnos ('consultas_cada_hora'); el moderador puede lanzar la búsqueda al momento desde el panel (Detectados por IA -> Buscar ahora), con los 5 pueblos o un texto concreto. 'consultas' son las búsquedas más amplias. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones de confianza -> publicadas; resto -> moderador. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' mirando su pestaña Input.",
+    "actor": "scraper_one/facebook-posts-search",
+    "entrada": {
+      "query": "{q}",
+      "resultsCount": "{n}",
+      "searchType": "latest",
+      "startDate": "{desde}"
+    },
+    "por_consulta": 6,
+    "por_pasada_rapida": 1,
+    "pueblos": [
+      "Senés",
+      "Lucainena de las Torres",
+      "Tahal",
+      "Uleila del Campo",
+      "Velefique"
+    ],
+    "consultas": [
+      "{pueblo}",
+      "{pueblo} fiesta",
+      "{pueblo} evento"
+    ],
+    "dias_atras": 14,
+    "consultas_cada_hora": [
+      "{pueblo}"
+    ],
+    "consultas_diarias": [
+      "Ayuntamiento de {pueblo}"
+    ]
+  },
+  "paginas_facebook": {
+    "_ayuda": "Páginas de Facebook que se leen directamente (apify/facebook-posts-scraper). Las OFICIALES (ayuntamientos y organizaciones de confianza) cada hora, solo lo de los últimos días; todas las descubiertas, una vez al día. Una página llamada 'Ayuntamiento de <pueblo>' se marca oficial sola; el moderador puede añadir más desde el panel (Buscar ahora + 'Leer siempre esta página').",
+    "actor": "apify/facebook-posts-scraper",
+    "posts_por_pagina": 10,
+    "posts_por_pagina_cada_hora": 3,
+    "desde_cada_hora": "3 days"
+  },
+  "webs_ayuntamientos": [
     {
       "municipio": "Senés",
       "nombre": "Ayuntamiento de Senés",
-      "url": "https://www.facebook.com/RELLENAR_SENES",
-      "oficial": true
+      "paginas": [
+        "https://www.senes.es",
+        "https://www.senes.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Senes",
+        "https://www.senes.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Senes"
+      ]
     },
     {
       "municipio": "Lucainena de las Torres",
       "nombre": "Ayuntamiento de Lucainena de las Torres",
-      "url": "https://www.facebook.com/RELLENAR_LUCAINENA",
+      "paginas": [
+        "https://www.lucainenadelastorres.es",
+        "https://www.lucainenadelastorres.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Lucainena",
+        "https://www.lucainenadelastorres.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Lucainena"
+      ]
+    },
+    {
+      "municipio": "Tahal",
+      "nombre": "Ayuntamiento de Tahal",
+      "paginas": [
+        "https://www.tahal.es",
+        "https://www.tahal.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=tahal",
+        "https://www.tahal.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=tahal"
+      ]
+    },
+    {
+      "municipio": "Uleila del Campo",
+      "nombre": "Ayuntamiento de Uleila del Campo",
+      "paginas": [
+        "https://www.uleiladelcampo.es",
+        "https://www.uleiladelcampo.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Uleila",
+        "https://www.uleiladelcampo.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Uleila"
+      ]
+    },
+    {
+      "municipio": "Velefique",
+      "nombre": "Ayuntamiento de Velefique",
+      "paginas": [
+        "https://www.velefique.es",
+        "https://www.velefique.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Velefique",
+        "https://www.velefique.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Velefique"
+      ]
+    }
+  ],
+  "facebook": [
+    {
+      "municipio": "Senés",
+      "nombre": "Ayuntamiento de Senés",
+      "url": "https://www.facebook.com/profile.php?id=61551352857893",
       "oficial": true
     }
   ],
@@ -81,28 +160,10 @@
       "url": "https://www.lavozdealmeria.com/vivir/turismo/turismo-rural/615274/pueblo-almeria-celebra-semana-fiesta-emigrante-reencuentros-gran-verbena.html"
     }
   ],
-  "busqueda_facebook": {
-    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> IA (publica si es de confianza y la IA está segura); personas -> solo si la IA ve claro que propone un evento, y entonces al moderador. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
-    "actor": "scraper_one/facebook-posts-search",
-    "entrada": {
-      "query": "{q}",
-      "maxResults": "{n}"
-    },
-    "por_consulta": 15,
-    "pueblos": [
-      "Senés",
-      "Lucainena de las Torres",
-      "Tahal",
-      "Uleila del Campo",
-      "Velefique"
-    ],
-    "consultas": [
-      "{pueblo} quedada",
-      "{pueblo} excursión",
-      "{pueblo} fiesta",
-      "{pueblo} taller",
-      "{pueblo} ruta",
-      "{pueblo} mercadillo"
-    ]
+  "descubrir_paginas": {
+    "_ayuda": "Busca páginas de Facebook por nombre ('Ayuntamiento de <pueblo>', '<pueblo> Almería') una vez por semana y al pulsar 'Buscar ahora' sin texto. Las de ayuntamientos quedan como oficiales.",
+    "actor": "apify/facebook-search-scraper",
+    "tipo": "pages",
+    "por_busqueda": 5
   }
 }

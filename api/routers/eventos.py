@@ -29,7 +29,7 @@ def descargar_ics(event_id: str):
 
 
 class AvisarIn(BaseModel):
-    tipo: Literal["aprobado", "rechazado", "cambio_hora", "cancelacion"]
+    tipo: Literal["aprobado", "rechazado", "cambio_hora", "cancelacion", "aplazado"]
 
 
 def _texto(tipo: str, ev: dict) -> str:
@@ -44,6 +44,12 @@ def _texto(tipo: str, ev: dict) -> str:
     if tipo == "cambio_hora":
         return (f"🕒 Cambio en «{titulo}»: ahora es el {cuando} en {donde}.\n"
                 f"Pulsa Calendario para actualizarlo en tu móvil.")
+    if tipo == "aplazado":
+        if ev.get("status") == "pospuesto":  # aplazado sin fecha nueva todavía
+            return (f"⏸️ «{titulo}» se ha aplazado. Te avisaremos en cuanto tenga nueva fecha.\n"
+                    f"Tu plaza se mantiene.")
+        return (f"📅 «{titulo}» se ha aplazado al {cuando} en {donde}.\n"
+                f"Tu plaza se mantiene. Pulsa Calendario para actualizarlo en tu móvil.")
     return f"🚫 Se ha cancelado «{titulo}» (era el {cuando}). Pulsa Calendario para quitarlo."
 
 
@@ -76,7 +82,7 @@ def avisar_evento(event_id: str, body: AvisarIn, user=Depends(require_user)):
     enviados = 0
     for uid in destinatarios:
         try:
-            if not avisar(uid, texto, botones):
+            if not avisar(uid, texto, botones, tipo="cambio"):
                 continue
             enviados += 1
             # upsert: un segundo cambio de hora también queda registrado (y avisa)
@@ -87,5 +93,10 @@ def avisar_evento(event_id: str, body: AvisarIn, user=Depends(require_user)):
             ).execute()
         except Exception as e:  # si uno falla, siguen los demás
             print(f"[avisar] error con {uid}: {e}")
+
+    # Al publicarse, el autor recibe también su cartel
+    if body.tipo == "aprobado" and ev.get("created_by"):
+        from puentes import avisar_cartel
+        avisar_cartel(ev["created_by"], event_id, "Así ha quedado tu cartel:")
 
     return {"enviados": enviados}

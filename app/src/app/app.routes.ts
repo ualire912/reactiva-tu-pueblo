@@ -4,8 +4,12 @@ import { authGuard, moderadorGuard } from './core/guards';
 export const routes: Routes = [
   {
     path: '',
-    redirectTo: 'agenda',
+    redirectTo: 'inicio',
     pathMatch: 'full',
+  },
+  {
+    path: 'inicio',
+    loadComponent: () => import('./pages/public/inicio/inicio.page').then((m) => m.InicioPage),
   },
   {
     path: 'agenda',
@@ -30,6 +34,10 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/public/perfil/perfil.page').then((m) => m.PerfilPage),
   },
   {
+    path: 'ajustes',
+    loadComponent: () => import('./pages/public/ajustes/ajustes.page').then((m) => m.AjustesPage),
+  },
+  {
     path: 'login',
     loadComponent: () => import('./pages/public/login/login.page').then((m) => m.LoginPage),
   },
@@ -40,6 +48,6 @@ export const routes: Routes = [
   },
   {
     path: '**',
-    redirectTo: 'agenda',
+    redirectTo: 'inicio',
   },
 ];

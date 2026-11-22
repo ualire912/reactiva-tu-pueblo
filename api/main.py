@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import tareas
-from routers import eventos, moderacion, recomendaciones, resenas
+from routers import acceso, eventos, moderacion, recomendaciones, resenas, traduccion
 
 logging.basicConfig(level=logging.INFO)
 # httpx registra cada URL que llama y la de Telegram LLEVA EL TOKEN del bot: no a los logs
@@ -57,6 +57,8 @@ app.include_router(eventos.router)
 app.include_router(recomendaciones.router)
 app.include_router(resenas.router)
 app.include_router(moderacion.router)
+app.include_router(acceso.router)
+app.include_router(traduccion.router)
 
 # Routers de B2 y C1: si aún no están listos, el servidor arranca igual
 for modulo in ("bot", "ingesta"):

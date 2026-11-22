@@ -1,225 +1,412 @@
-<ion-header>
-  <ion-toolbar color="primary">
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
     <ion-buttons slot="start">
-      <ion-back-button defaultHref="/agenda" text="Agenda"></ion-back-button>
+      <ion-back-button defaultHref="/agenda" text="Volver"></ion-back-button>
     </ion-buttons>
     <ion-title>Detalle del plan</ion-title>
   </ion-toolbar>
 </ion-header>
 
-<ion-content class="ion-padding">
-  <div *ngIf="cargando" class="ion-text-center ion-padding">
-    <ion-spinner></ion-spinner>
-  </div>
-
-  <div *ngIf="!cargando && evento">
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <img *ngIf="evento.poster_url" [src]="evento.poster_url" [alt]="evento.title" style="width: 100%; max-height: 240px; object-fit: cover;" />
-      <ion-card-header>
-        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <ion-badge color="primary">{{ evento.municipios?.nombre }}</ion-badge>
-          <ion-badge color="secondary">{{ evento.category }}</ion-badge>
-          <ion-badge [color]="estadoVisible === 'abierto' ? 'success' : (estadoVisible === 'cancelado' ? 'danger' : (estadoVisible === 'finalizado' ? 'medium' : 'warning'))">
-            {{ etiquetaEstado(estadoVisible) }}
-          </ion-badge>
-          <ion-badge *ngIf="evento.is_accessible" color="tertiary">Accesible</ion-badge>
-        </div>
-        <ion-card-title class="ion-margin-top">{{ evento.title }}</ion-card-title>
-        <ion-card-subtitle>
-          📅 {{ formatearFecha(evento.starts_at) }}<br />
-          📍 {{ evento.location_name || 'Lugar por confirmar' }}<br />
-          💶 {{ evento.price === 0 ? 'Gratis' : evento.price + ' €' }}
-          <span *ngIf="evento.max_capacity"> · Plazas: {{ evento.confirmed_count }}/{{ evento.max_capacity }}</span>
-        </ion-card-subtitle>
-      </ion-card-header>
-
-      <ion-card-content>
-        <p *ngIf="evento.inscripcion_hasta" style="color: var(--ion-color-medium); font-weight: 600;">
-          ⏳ Inscripción hasta el {{ formatearFecha(evento.inscripcion_hasta) }}
-        </p>
-        <p class="ion-margin-top">{{ evento.description }}</p>
-
-        <!-- Botones calendario -->
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px;">
-          <ion-button size="small" fill="outline" (click)="descargarIcs()">
-            <ion-icon slot="start" name="calendar-outline"></ion-icon>
-            Descargar .ics
-          </ion-button>
-          <ion-button size="small" fill="outline" (click)="abrirGoogleCalendar()">
-            Google Calendar
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-
-    <!-- BLOQUE DE INSCRIPCIÓN -->
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>Participación</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <div *ngIf="!sb.currentSession">
-          <p>Inicia sesión para apuntarte, compartir coche o preguntar en el chat.</p>
-          <ion-button expand="block" routerLink="/login">Entrar para apuntarme</ion-button>
+<ion-content class="rp-fondo">
+  @if (cargando()) {
+    <div class="cargando-centro" aria-busy="true">
+      <ion-spinner name="crescent"></ion-spinner>
+      <p>Cargando el plan…</p>
+    </div>
+  } @else if (!evento()) {
+    <div class="estado-vacio">
+      <h2>No encontramos este plan</h2>
+      <p>Puede que se haya retirado o que el enlace no sea correcto.</p>
+      <ion-button routerLink="/agenda">Ir a la agenda</ion-button>
+    </div>
+  } @else {
+    @let ev = evento()!;
+    <div class="ficha" [style.--pueblo]="ev.color" [style.--cat-fondo]="estilo().fondo" [style.--cat-tinta]="estilo().tinta">
+      <!-- CABECERA CON CARTEL -->
+      <section class="ficha-hero" [class.terminado]="terminado()">
+        <div class="ficha-poster">
+          @if (ev.poster_url) {
+            <button type="button" class="ficha-poster-boton" (click)="fotoAbierta.set(true)" aria-label="Ver el cartel en grande">
+              <img [src]="ev.poster_url" [alt]="'Cartel de ' + ev.title" />
+              <span class="ficha-ampliar" aria-hidden="true"><ion-icon name="expand-outline"></ion-icon> Ver en grande</span>
+            </button>
+          } @else {
+            <ion-icon class="ev-poster-icono ficha-poster-icono" [name]="iconoLinea()" aria-hidden="true"></ion-icon>
+          }
+          <span class="ev-fecha ficha-fecha" aria-hidden="true">
+            <span class="ev-fecha-num">{{ fechaPartes().num }}</span>
+            <span class="ev-fecha-mes">{{ fechaPartes().mes }}</span>
+            <span class="ev-fecha-anio">{{ fechaPartes().anio }}</span>
+          </span>
+          @if (terminado()) {
+            <span class="ev-sello-finalizado">Finalizado</span>
+          }
         </div>
 
-        <div *ngIf="terminado" class="ion-margin-bottom">
-          <ion-note>Este evento ya ha terminado: no se admiten inscripciones.</ion-note>
-        </div>
+        <div class="ficha-resumen">
+          <div class="ficha-etiquetas">
+            <span class="etiqueta-categoria"><ion-icon [name]="icono()" aria-hidden="true"></ion-icon>{{ categoriaNombre() }}</span>
+            <span class="etiqueta-pueblo">{{ ev.pueblo }}</span>
+            @if (!terminado()) {
+              <span class="etiqueta-estado" [class]="'etiqueta-estado estado-' + ev.status">{{ etiquetaEstado(ev.status) }}</span>
+            }
+          </div>
 
-        <div *ngIf="sb.currentSession && !miInscripcion && !terminado">
-          <ion-list lines="full" *ngIf="puedeApuntarse">
-            <ion-item>
-              <ion-select label="Compartir coche" labelPlacement="stacked" [(ngModel)]="transporte">
-                <ion-select-option value="ninguno">No necesito / voy por mi cuenta</ion-select-option>
-                <ion-select-option value="ofrece">Llevo coche y ofrezco plazas</ion-select-option>
-                <ion-select-option value="busca">Busco plaza en coche</ion-select-option>
-              </ion-select>
-            </ion-item>
+          <h1 class="ficha-titulo">{{ ev.title }}</h1>
 
-            <ion-item *ngIf="transporte === 'ofrece'">
-              <ion-input type="number" label="¿Cuántas plazas libres llevas?" labelPlacement="stacked" [(ngModel)]="transportePlazas"></ion-input>
-            </ion-item>
+          <dl class="ficha-datos">
+            <div>
+              <dt><ion-icon name="time" aria-hidden="true"></ion-icon> Cuándo</dt>
+              <dd>{{ fechaLarga(ev.starts_at) }}</dd>
+            </div>
+            <div>
+              <dt><ion-icon name="location" aria-hidden="true"></ion-icon> Dónde</dt>
+              <dd>
+                {{ ubicacion() }}
+                <a [href]="enlaceMapa()" target="_blank" rel="noopener" class="enlace-mini">Cómo llegar</a>
+              </dd>
+            </div>
+            <div>
+              <dt><ion-icon name="cash" aria-hidden="true"></ion-icon> Precio</dt>
+              <dd><span class="precio-verde grande">{{ precio() }}</span></dd>
+            </div>
+            <div>
+              <dt><ion-icon name="people" aria-hidden="true"></ion-icon> Plazas</dt>
+              <dd>
+                {{ plazas() }}
+                @if (ev.max_capacity) {
+                  <span class="barra" aria-hidden="true"><span [style.width.%]="ocupacion()"></span></span>
+                }
+              </dd>
+            </div>
+            @if (!terminado()) {
+              <div>
+                <dt><span aria-hidden="true">🌡️</span> Tiempo previsto</dt>
+                <dd><app-tiempo-evento [lat]="ev.lat" [lng]="ev.lng" [inicio]="ev.starts_at"></app-tiempo-evento></dd>
+              </div>
+            }
+            <div>
+              <dt><ion-icon name="person" aria-hidden="true"></ion-icon> Organiza</dt>
+              <dd>
+                <strong>{{ ev.organizador_nombre }}</strong>
+                @if (ev.organizador_media != null) {
+                  <span class="valoracion" [attr.aria-label]="'Valoración ' + valoracion() + ' de 5'">
+                    <ion-icon name="star" aria-hidden="true"></ion-icon> {{ valoracion() }}
+                    <small>({{ ev.organizador_resenas }} {{ ev.organizador_resenas === 1 ? 'opinión' : 'opiniones' }})</small>
+                  </span>
+                } @else {
+                  <small class="texto-suave">· aún sin opiniones</small>
+                }
+              </dd>
+            </div>
+            <div>
+              <dt><ion-icon name="accessibility" aria-hidden="true"></ion-icon> Para quién</dt>
+              <dd>{{ edades() }}{{ ev.is_accessible ? ' · Accesible' : '' }}</dd>
+            </div>
+            @if (ev.inscripcion_hasta) {
+              <div class="dato-destacado">
+                <dt><ion-icon name="hourglass" aria-hidden="true"></ion-icon> Inscripción hasta</dt>
+                <dd>{{ fechaLarga(ev.inscripcion_hasta) }}</dd>
+              </div>
+            }
+          </dl>
 
-            <ion-item *ngIf="transporte !== 'ninguno'">
-              <ion-select label="¿Desde qué pueblo?" labelPlacement="stacked" [(ngModel)]="transporteMunicipioId">
-                <ion-select-option *ngFor="let m of sb.municipios" [value]="m.id">
-                  {{ m.nombre }}
-                </ion-select-option>
-              </ion-select>
-            </ion-item>
-          </ion-list>
-
-          <ion-button
-            expand="block"
-            class="ion-margin-top"
-            [color]="!puedeApuntarse ? 'medium' : (evento.status === 'abierto' ? 'success' : 'warning')"
-            [disabled]="!puedeApuntarse || procesandoInscripcion"
-            (click)="apuntarme()">
-            {{ textoBotonApuntarse }}
-          </ion-button>
-        </div>
-
-        <div *ngIf="sb.currentSession && miInscripcion">
-          <ion-badge [color]="miInscripcion.status === 'confirmada' ? 'success' : 'warning'">
-            {{ miInscripcion.status === 'confirmada' ? (terminado ? '✅ Asististe a este plan' : '✅ Plaza confirmada') : '⏳ En lista de espera' }}
-          </ion-badge>
-          <ion-button *ngIf="!yaEmpezo" expand="block" color="danger" fill="outline" class="ion-margin-top" (click)="cancelarInscripcion()" [disabled]="procesandoInscripcion">
-            Cancelar mi inscripción
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-
-    <!-- INCIDENCIAS PARA PUBLICADOR ORGANIZADOR -->
-    <ion-card *ngIf="esPublicadorOrganizador && incidenciasEvento.length > 0" color="light" class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>Incidencias de tu evento</ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <div *ngFor="let inc of incidenciasEvento" class="ion-margin-bottom">
-          <ion-badge [color]="inc.estado === 'abierta' ? 'danger' : 'success'">{{ inc.estado }}</ion-badge>
-          <p>{{ inc.comentario }}</p>
-          <ion-button *ngIf="inc.estado === 'abierta'" size="small" color="success" (click)="resolverIncidenciaPropia(inc)">
-            Marcar resuelta
-          </ion-button>
-        </div>
-      </ion-card-content>
-    </ion-card>
-
-    <!-- HILO / CHAT DEL EVENTO -->
-    <ion-card class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>
-          <ion-icon name="chatbubbles-outline"></ion-icon> Dudas y anuncios
-        </ion-card-title>
-      </ion-card-header>
-      <ion-card-content>
-        <div *ngIf="mensajes.length === 0">
-          <ion-note>Aún no hay mensajes. ¡Pregunta cualquier duda!</ion-note>
-        </div>
-
-        <div *ngFor="let m of mensajes" style="padding: 8px; margin-bottom: 8px; border-radius: 8px; background: rgba(0,0,0,0.04);">
-          <ion-badge *ngIf="m.tipo === 'asistente_ia'" color="secondary">✨ Asistente IA</ion-badge>
-          <ion-badge *ngIf="m.tipo === 'anuncio_fijado'" color="warning">📌 Anuncio</ion-badge>
-          <p style="margin-top: 4px;">{{ m.contenido }}</p>
-        </div>
-
-        <div *ngIf="sb.currentSession" class="ion-margin-top">
-          <ion-item lines="outline">
-            <ion-input placeholder="Escribe una pregunta..." [(ngModel)]="nuevoMensaje"></ion-input>
-          </ion-item>
-          <div style="display: flex; gap: 8px; margin-top: 8px;">
-            <ion-button expand="block" style="flex: 1;" (click)="preguntarIa = false; enviarMensaje()" [disabled]="enviandoMensaje">
-              Enviar
-            </ion-button>
-            <ion-button expand="block" color="secondary" style="flex: 1;" (click)="preguntarIa = true; enviarMensaje()" [disabled]="enviandoMensaje">
-              <ion-icon slot="start" name="sparkles-outline"></ion-icon>
-              Preguntar a IA
-            </ion-button>
+          <div class="ficha-acciones">
+            <a class="boton-sec" [href]="enlaceIcs()" target="_blank" rel="noopener">
+              <ion-icon name="calendar" aria-hidden="true"></ion-icon> Añadir al calendario
+            </a>
+            <button type="button" class="boton-sec" (click)="abrirGoogleCalendar()">
+              <ion-icon name="logo-google" aria-hidden="true"></ion-icon> Google Calendar
+            </button>
+            <button type="button" class="boton-sec" (click)="leerEnVozAlta()">
+              <ion-icon name="volume-high" aria-hidden="true"></ion-icon> Escuchar
+            </button>
           </div>
         </div>
-      </ion-card-content>
-    </ion-card>
+      </section>
 
-    <!-- RESEÑAS (SI FINALIZADO: SOLO PARA QUIENES ASISTIERON) -->
-    <ion-card id="resenas" *ngIf="terminado" class="ion-no-margin ion-margin-bottom">
-      <ion-card-header>
-        <ion-card-title>Valoraciones del organizador</ion-card-title>
-        <ion-card-subtitle>Las valoraciones positivas ayudan a verificar a los organizadores</ion-card-subtitle>
-      </ion-card-header>
-      <ion-card-content>
-        <div *ngFor="let r of resenas" class="ion-margin-bottom" style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.04);">
-          <strong>{{ '⭐'.repeat(r.estrellas) }}</strong>
-          <p *ngIf="r.comentario" style="margin-top: 4px;">{{ r.comentario }}</p>
+      <div class="ficha-columnas">
+        <div class="ficha-col-principal">
+          @if (ev.description) {
+            <section class="bloque">
+              <h2>Sobre el plan</h2>
+              <p class="descripcion">{{ ev.description }}</p>
+            </section>
+          }
+
+          <!-- FOTOS Y OPINIONES (después del evento) -->
+          @if (terminado()) {
+            <section class="bloque" aria-labelledby="titulo-fotos">
+              <h2 id="titulo-fotos">
+                <ion-icon name="images" aria-hidden="true"></ion-icon> Fotos y opiniones
+                @if (mediaEvento()) {
+                  <span class="valoracion"><ion-icon name="star" aria-hidden="true"></ion-icon> {{ mediaEvento() }}</span>
+                }
+              </h2>
+
+              @if (fotos().length) {
+                <div class="galeria">
+                  @for (r of fotos(); track r.id) {
+                    <a [href]="r.foto_url" target="_blank" rel="noopener" class="galeria-foto">
+                      <img [src]="r.foto_url" [alt]="'Foto del evento compartida por ' + nombreDe(r.user_id)" loading="lazy" />
+                    </a>
+                  }
+                </div>
+              } @else {
+                <p class="texto-suave">Todavía no hay fotos. ¿Estuviste? ¡Comparte la tuya!</p>
+              }
+
+              <!-- Formulario de opinión + foto -->
+              @if (puedeValorar() || editandoResena()) {
+                <div class="form-resena">
+                  <h3>{{ editandoResena() ? 'Cambia tu valoración' : '¿Qué te pareció?' }}</h3>
+                  <div class="selector-estrellas" role="radiogroup" aria-label="Tu puntuación">
+                    @for (n of [1, 2, 3, 4, 5]; track n) {
+                      <button
+                        type="button"
+                        role="radio"
+                        [attr.aria-checked]="estrellas() === n"
+                        [attr.aria-label]="n + (n === 1 ? ' estrella' : ' estrellas')"
+                        [class.on]="n <= estrellas()"
+                        (click)="elegirEstrellas(n)">
+                        <ion-icon [name]="n <= estrellas() ? 'star' : 'star-outline'" aria-hidden="true"></ion-icon>
+                      </button>
+                    }
+                  </div>
+
+                  <label class="campo">
+                    <span>Comentario (opcional)</span>
+                    <textarea rows="3" [(ngModel)]="comentarioResena" maxlength="1000" placeholder="Cuéntanos qué tal fue"></textarea>
+                  </label>
+
+                  <div class="subir-foto">
+                    <input type="file" accept="image/*" id="foto-resena" class="sr-only" (change)="seleccionarFoto($event)" />
+                    @if (fotoPrevia()) {
+                      <div class="foto-previa">
+                        <img [src]="fotoPrevia()" alt="Vista previa de tu foto" />
+                        <button type="button" class="boton-sec peligro" (click)="quitarFoto()">
+                          <ion-icon name="trash" aria-hidden="true"></ion-icon> Quitar foto
+                        </button>
+                      </div>
+                    } @else {
+                      <label for="foto-resena" class="boton-sec">
+                        <ion-icon name="camera" aria-hidden="true"></ion-icon> Añadir una foto del evento
+                      </label>
+                    }
+                  </div>
+
+                  <ion-button expand="block" color="success" (click)="enviarResena()" [disabled]="enviandoResena()">
+                    {{ enviandoResena() ? 'Enviando…' : editandoResena() ? 'Guardar el cambio' : 'Enviar mi opinión' }}
+                  </ion-button>
+                  @if (editandoResena()) {
+                    <ion-button expand="block" fill="clear" (click)="cancelarCambioResena()" [disabled]="enviandoResena()">Cancelar</ion-button>
+                  }
+                </div>
+              } @else if (miResena()) {
+                @let mia = miResena()!;
+                <div class="mi-resena">
+                  <p><strong>Tu opinión:</strong> <span class="estrellas-texto" [attr.aria-label]="mia.estrellas + ' de 5 estrellas'">{{ estrellasTexto(mia.estrellas) }}</span></p>
+                  @if (mia.comentario) {
+                    <p class="texto-suave">«{{ mia.comentario }}»</p>
+                  }
+                  <button type="button" class="boton-sec" (click)="empezarCambioResena()">
+                    <ion-icon name="create-outline" aria-hidden="true"></ion-icon> Cambiar mi valoración
+                  </button>
+                  <input type="file" accept="image/*" id="foto-mi-resena" class="sr-only" (change)="subirFotoAMiResena($event)" />
+                  <label for="foto-mi-resena" class="boton-sec">
+                    <ion-icon name="camera" aria-hidden="true"></ion-icon>
+                    {{ enviandoResena() ? 'Subiendo…' : mia.foto_url ? 'Cambiar mi foto' : 'Añadir una foto del evento' }}
+                  </label>
+                </div>
+              } @else {
+                <p class="texto-suave">Solo las personas con plaza confirmada pueden opinar y subir fotos.</p>
+              }
+
+              @for (r of resenas(); track r.id) {
+                <article class="resena">
+                  <span class="avatar" aria-hidden="true">{{ inicial(r.user_id) }}</span>
+                  <div>
+                    <p class="resena-cabecera">
+                      <strong>{{ nombreDe(r.user_id) }}</strong>
+                      <span class="estrellas-texto" [attr.aria-label]="r.estrellas + ' de 5 estrellas'">{{ estrellasTexto(r.estrellas) }}</span>
+                    </p>
+                    @if (r.comentario) {
+                      <p>{{ r.comentario }}</p>
+                    }
+                  </div>
+                </article>
+              }
+            </section>
+          }
+
+          <!-- CHAT -->
+          <section class="bloque" aria-labelledby="titulo-chat">
+            <h2 id="titulo-chat"><ion-icon name="chatbubbles" aria-hidden="true"></ion-icon> Dudas y anuncios</h2>
+
+            <div class="chat" #cajaChat aria-live="polite">
+              @for (m of mensajes(); track m.id) {
+                <div class="mensaje" [class.mio]="m.user_id === uid()" [class.ia]="m.tipo === 'asistente_ia'" [class.anuncio]="m.tipo === 'anuncio_fijado'">
+                  <span class="avatar" aria-hidden="true">
+                    @if (m.tipo === 'asistente_ia') {
+                      <ion-icon name="sparkles"></ion-icon>
+                    } @else {
+                      {{ inicial(m.user_id) }}
+                    }
+                  </span>
+                  <div class="burbuja">
+                    <p class="mensaje-autor">
+                      {{ m.tipo === 'asistente_ia' ? 'Asistente' : nombreDe(m.user_id) }}
+                      @if (m.tipo === 'anuncio_fijado') {
+                        <span class="chip-mini">Anuncio</span>
+                      }
+                      <small>{{ fechaCorta(m.created_at) }}</small>
+                    </p>
+                    <p>{{ m.contenido }}</p>
+                  </div>
+                </div>
+              } @empty {
+                <p class="texto-suave">Aún no hay mensajes. ¡Pregunta lo que necesites!</p>
+              }
+              @if (esperandoIa()) {
+                <p class="texto-suave escribiendo"><ion-spinner name="dots"></ion-spinner> El asistente está pensando… (puede tardar hasta un minuto)</p>
+              }
+            </div>
+
+            @if (uid()) {
+              <div class="chat-form">
+                <label class="sr-only" for="nuevo-mensaje">Escribe tu pregunta</label>
+                <input
+                  id="nuevo-mensaje"
+                  type="text"
+                  [(ngModel)]="nuevoMensaje"
+                  maxlength="2000"
+                  placeholder="Escribe tu pregunta…"
+                  (keyup.enter)="enviarMensaje(false)" />
+                <div class="chat-botones">
+                  <ion-button (click)="enviarMensaje(false)" [disabled]="enviando() || !nuevoMensaje.trim()">
+                    <ion-icon slot="start" name="send" aria-hidden="true"></ion-icon> Enviar
+                  </ion-button>
+                  <ion-button color="tertiary" (click)="enviarMensaje(true)" [disabled]="enviando() || !nuevoMensaje.trim()">
+                    <ion-icon slot="start" name="sparkles" aria-hidden="true"></ion-icon> Preguntar al asistente
+                  </ion-button>
+                </div>
+              </div>
+              <a class="enlace-persona" [href]="enlacePersona" target="_blank" rel="noopener">
+                <span aria-hidden="true">🙋</span> ¿El asistente no te ayuda? Habla con una persona del equipo
+              </a>
+            } @else {
+              <p class="texto-suave"><a routerLink="/login">Inicia sesión</a> para preguntar en el chat.</p>
+            }
+          </section>
         </div>
 
-        <ion-note *ngIf="resenas.length === 0">Aún no hay valoraciones.</ion-note>
+        <aside class="ficha-col-lateral">
+          <!-- PARTICIPACIÓN -->
+          <section class="bloque bloque-inscripcion" aria-labelledby="titulo-participar">
+            <h2 id="titulo-participar">Participa</h2>
 
-        <div *ngIf="puedeValorar && miResena && !editandoResena" class="ion-margin-top">
-          <ion-note>
-            ✅ Tu valoración: {{ '⭐'.repeat(miResena.estrellas) }}
-            <span *ngIf="miResena.comentario"> · «{{ miResena.comentario }}»</span>
-          </ion-note>
-          <ion-button expand="block" fill="outline" size="small" class="ion-margin-top" (click)="empezarCambioResena()">
-            ✏️ Cambiar mi valoración
-          </ion-button>
-        </div>
+            @if (!uid()) {
+              <p>Inicia sesión para apuntarte, compartir coche o preguntar.</p>
+              <ion-button expand="block" routerLink="/login" [disabled]="!puedeApuntarse()">Iniciar sesión para apuntarme</ion-button>
+            } @else if (miInscripcion()) {
+              @let insc = miInscripcion()!;
+              <div class="estado-inscripcion" [class.espera]="insc.status !== 'confirmada'">
+                <ion-icon [name]="insc.status === 'confirmada' ? 'checkmark-circle' : 'hourglass'" aria-hidden="true"></ion-icon>
+                <span>{{ insc.status === 'confirmada' ? (terminado() ? 'Asististe a este plan' : 'Tienes plaza confirmada') : 'Estás en la lista de espera' }}</span>
+              </div>
+              @if (insc.transporte === 'ofrece') {
+                <p class="texto-suave"><ion-icon name="car" aria-hidden="true"></ion-icon> Ofreces {{ insc.transporte_plazas }} plazas en tu coche.</p>
+              } @else if (insc.transporte === 'busca') {
+                <p class="texto-suave"><ion-icon name="car" aria-hidden="true"></ion-icon> Buscas plaza en un coche.</p>
+              }
+              @if (!yaEmpezo()) {
+                <ion-button expand="block" color="danger" fill="outline" (click)="cancelarInscripcion()" [disabled]="procesando()">
+                  Cancelar mi inscripción
+                </ion-button>
+              }
+            } @else {
+              @if (puedeApuntarse()) {
+                <label class="campo">
+                  <span><ion-icon name="car" aria-hidden="true"></ion-icon> ¿Compartes coche?</span>
+                  <select [(ngModel)]="transporte">
+                    <option value="ninguno">Voy por mi cuenta</option>
+                    <option value="ofrece">Llevo coche y ofrezco plazas</option>
+                    <option value="busca">Busco plaza en un coche</option>
+                  </select>
+                </label>
+                @if (transporte === 'ofrece') {
+                  <label class="campo">
+                    <span>¿Cuántas plazas libres llevas?</span>
+                    <select [(ngModel)]="transportePlazas">
+                      @for (n of [1, 2, 3, 4, 5, 6, 7, 8]; track n) {
+                        <option [ngValue]="n">{{ n }}</option>
+                      }
+                    </select>
+                  </label>
+                }
+                @if (transporte !== 'ninguno') {
+                  <label class="campo">
+                    <span>¿Desde qué pueblo?</span>
+                    <select [(ngModel)]="transporteMunicipioId">
+                      @for (m of sb.municipios; track m.id) {
+                        <option [ngValue]="m.id">{{ m.nombre }}</option>
+                      }
+                    </select>
+                  </label>
+                }
+              } @else {
+                <p class="motivo-no">{{ motivoNoApuntarse() }}</p>
+              }
 
-        <!-- Formulario: valorar por primera vez, o cambiar la valoración que ya hizo -->
-        <div *ngIf="puedeValorar && (!miResena || editandoResena)" class="ion-margin-top">
-          <ion-item>
-            <ion-select label="Tu puntuación" labelPlacement="stacked" [(ngModel)]="estrellas">
-              <ion-select-option [value]="5">⭐⭐⭐⭐⭐ (5)</ion-select-option>
-              <ion-select-option [value]="4">⭐⭐⭐⭐ (4)</ion-select-option>
-              <ion-select-option [value]="3">⭐⭐⭐ (3)</ion-select-option>
-              <ion-select-option [value]="2">⭐⭐ (2)</ion-select-option>
-              <ion-select-option [value]="1">⭐ (1)</ion-select-option>
-            </ion-select>
-          </ion-item>
-          <ion-item>
-            <ion-input label="Comentario (opcional)" labelPlacement="stacked" [(ngModel)]="comentarioResena"></ion-input>
-          </ion-item>
-          <ion-button expand="block" color="success" class="ion-margin-top" (click)="enviarResena()">
-            {{ editandoResena ? 'Guardar el cambio' : 'Enviar valoración' }}
-          </ion-button>
-          <ion-button *ngIf="editandoResena" expand="block" fill="clear" (click)="editandoResena = false">
-            Cancelar
-          </ion-button>
-        </div>
+              <ion-button
+                expand="block"
+                size="large"
+                [color]="!puedeApuntarse() ? 'medium' : ev.status === 'abierto' ? 'success' : 'warning'"
+                [disabled]="!puedeApuntarse() || procesando()"
+                (click)="apuntarme()">
+                {{ procesando() ? 'Un momento…' : textoBotonApuntarse() }}
+              </ion-button>
+            }
+          </section>
 
-        <!-- Aviso si no asistió o no está logueado -->
-        <div *ngIf="!puedeValorar" class="ion-margin-top">
-          <ion-note>
-            Solo los asistentes confirmados de este evento pueden dejar una valoración.
-          </ion-note>
-        </div>
-      </ion-card-content>
-    </ion-card>
+          <!-- INCIDENCIAS DEL ORGANIZADOR -->
+          @if (esOrganizador() && incidenciasEvento().length > 0) {
+            <section class="bloque bloque-aviso" aria-labelledby="titulo-incidencias">
+              <h2 id="titulo-incidencias">Avisos de problemas en tu plan</h2>
+              @for (inc of incidenciasEvento(); track inc.id) {
+                <div class="incidencia">
+                  <span class="chip-mini" [class.rojo]="inc.estado === 'abierta'">{{ inc.estado === 'abierta' ? 'Pendiente' : 'Resuelta' }}</span>
+                  <p>{{ inc.comentario }}</p>
+                  @if (inc.estado === 'abierta') {
+                    <ion-button size="small" color="success" (click)="resolverIncidenciaPropia(inc)">Marcar como resuelta</ion-button>
+                  }
+                </div>
+              }
+            </section>
+          }
 
-    <ion-button *ngIf="sb.currentSession" expand="block" fill="clear" color="danger" (click)="reportarIncidencia()">
-      <ion-icon slot="start" name="warning-outline"></ion-icon>
-      Reportar incidencia en este evento
-    </ion-button>
-  </div>
+          @if (uid()) {
+            <button type="button" class="enlace-peligro" (click)="reportarIncidencia()">
+              <ion-icon name="warning-outline" aria-hidden="true"></ion-icon> Avisar de un problema con este plan
+            </button>
+          }
+        </aside>
+      </div>
+    </div>
+  }
 </ion-content>
+
+<!-- Cartel en grande -->
+<ion-modal [isOpen]="fotoAbierta()" (didDismiss)="fotoAbierta.set(false)" class="modal-foto">
+  <ng-template>
+    <div class="visor-foto" (click)="fotoAbierta.set(false)">
+      <button type="button" class="visor-cerrar" (click)="fotoAbierta.set(false)" aria-label="Cerrar la foto">
+        <ion-icon name="close" aria-hidden="true"></ion-icon> Cerrar
+      </button>
+      @if (evento()?.poster_url) {
+        <img [src]="evento()!.poster_url" [alt]="'Cartel de ' + evento()!.title" (click)="$event.stopPropagation()" />
+      }
+    </div>
+  </ng-template>
+</ion-modal>
+

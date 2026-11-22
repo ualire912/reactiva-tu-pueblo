@@ -69,8 +69,25 @@ def avisar_moderadores(event_id: str) -> int:
         return 0
 
 
-def avisar(user_id: str, texto: str, buttons=None) -> bool:
-    """Envía por Telegram. True solo si se envió de verdad."""
+def quiere_aviso(user_id: str, tipo: str | None) -> bool:
+    """Ajustes de la web (preferencias.avisos): la persona puede apagar cada tipo de aviso.
+    Tipos: 'recordatorio', 'recomendacion', 'cambio', 'resena'. Sin ajuste -> sí."""
+    if not tipo:
+        return True
+    try:
+        from db import sb
+        fila = (sb.table("profiles").select("preferencias").eq("id", user_id).limit(1)
+                .execute().data or [{}])[0]
+        return (fila.get("preferencias") or {}).get("avisos", {}).get(tipo, True) is not False
+    except Exception:
+        return True
+
+
+def avisar(user_id: str, texto: str, buttons=None, tipo: str | None = None) -> bool:
+    """Envía por Telegram. True solo si se envió de verdad.
+    tipo: si la persona lo ha desactivado en Ajustes, no se envía (devuelve False)."""
+    if not quiere_aviso(user_id, tipo):
+        return False
     if _avisar_usuario is None:
         # Sin bot: se imprime pero NO cuenta como enviado (no ensucia 'notificaciones')
         print(f"[SIN BOT, no enviado] {user_id}: {texto} | botones={buttons}")
@@ -79,6 +96,18 @@ def avisar(user_id: str, texto: str, buttons=None) -> bool:
         return bool(_con_limite(LIMITE_TELEGRAM, _avisar_usuario, user_id, texto, buttons))
     except Exception as e:
         log.error("avisar_usuario falló o tardó demasiado para %s: %r", user_id, e)
+        return False
+
+
+def avisar_cartel(user_id: str, event_id: str, intro: str = "") -> bool:
+    """Manda por Telegram el cartel del plan (si no tiene, se crea). True si llegó."""
+    if not quiere_aviso(user_id, "cambio"):
+        return False
+    try:
+        from bot import avisar_cartel as _avisar_cartel
+        return bool(_con_limite(LIMITE_TELEGRAM * 3, _avisar_cartel, user_id, event_id, intro))
+    except Exception as e:
+        log.error("avisar_cartel falló para %s: %r", event_id, e)
         return False
 
 

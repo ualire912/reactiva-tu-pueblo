@@ -1,0 +1,200 @@
+<ion-header class="rp-header">
+  <ion-toolbar class="rp-toolbar">
+    <ion-title>
+      <a routerLink="/inicio" class="marca" aria-label="Reactiva tu pueblo, ir al inicio">
+        <span class="marca-logo" aria-hidden="true">R</span>
+        <span class="marca-texto">Ajustes</span>
+      </a>
+    </ion-title>
+  </ion-toolbar>
+</ion-header>
+
+<ion-content class="rp-fondo">
+  <div class="ajustes">
+    <h1 class="sr-only">Ajustes</h1>
+    <p class="texto-suave ajustes-intro">Adapta la web a ti. Los cambios se ven al momento y se recuerdan en este dispositivo.</p>
+
+    <!-- ===================== IDIOMA ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-idioma">
+      <h2 id="g-idioma"><span aria-hidden="true">🌍</span> Idioma <span class="notranslate" translate="no">/ Language</span></h2>
+      <p class="texto-suave">La web se traduce automáticamente con inteligencia artificial. Los nombres de los pueblos no se traducen.</p>
+      <div class="opciones" role="radiogroup" aria-label="Idioma / Language" translate="no">
+        @for (i of idiomas; track i.codigo) {
+          <button type="button" role="radio" [attr.lang]="i.codigo" [attr.aria-checked]="(a().idioma || 'es') === i.codigo" [class.on]="(a().idioma || 'es') === i.codigo" (click)="cambiar({ idioma: i.codigo })">{{ i.nombre }}</button>
+        }
+      </div>
+    </section>
+
+    <!-- ===================== VER MEJOR ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-ver">
+      <h2 id="g-ver"><ion-icon name="eye-outline" aria-hidden="true"></ion-icon> Ver mejor</h2>
+
+      <div class="ajuste">
+        <div class="ajuste-texto">
+          <strong id="t-tamano">Tamaño de la letra</strong>
+          <span>Agranda el texto y los botones de toda la web.</span>
+        </div>
+        <div class="opciones" role="radiogroup" aria-labelledby="t-tamano">
+          @for (t of tamanos; track t.valor) {
+            <button type="button" role="radio" [attr.aria-checked]="a().tamano === t.valor" [class.on]="a().tamano === t.valor" (click)="cambiar({ tamano: t.valor })">
+              <span [style.font-size.px]="12 + (t.valor - 100) / 8">Aa</span> {{ t.texto }}
+            </button>
+          }
+        </div>
+      </div>
+
+      <div class="ajuste">
+        <div class="ajuste-texto">
+          <strong id="t-tema">Modo de color</strong>
+          <span>Oscuro cansa menos la vista por la noche. "Automático" sigue a tu móvil u ordenador.</span>
+        </div>
+        <div class="opciones" role="radiogroup" aria-labelledby="t-tema">
+          @for (t of temas; track t.valor) {
+            <button type="button" role="radio" [attr.aria-checked]="a().tema === t.valor" [class.on]="a().tema === t.valor" (click)="cambiar({ tema: t.valor })">{{ t.texto }}</button>
+          }
+        </div>
+      </div>
+
+      <label class="ajuste">
+        <div class="ajuste-texto">
+          <strong>Letra muy legible</strong>
+          <span>Usa Atkinson Hyperlegible, una letra pensada para personas con baja visión.</span>
+        </div>
+        <ion-toggle [checked]="a().legible" (ionChange)="cambiar({ legible: $event.detail.checked })" aria-label="Letra muy legible"></ion-toggle>
+      </label>
+
+      <label class="ajuste">
+        <div class="ajuste-texto">
+          <strong>Colores para daltonismo</strong>
+          <span>Cambia los colores de los pueblos y de los estados por otros que se distinguen sin ver bien el rojo y el verde.</span>
+        </div>
+        <ion-toggle [checked]="a().daltonismo" (ionChange)="cambiar({ daltonismo: $event.detail.checked })" aria-label="Colores para daltonismo"></ion-toggle>
+      </label>
+
+      <label class="ajuste">
+        <div class="ajuste-texto">
+          <strong>Texto junto a los iconos</strong>
+          <span>Los botones que solo tienen un dibujo muestran también lo que hacen.</span>
+        </div>
+        <ion-toggle [checked]="a().etiquetas" (ionChange)="cambiar({ etiquetas: $event.detail.checked })" aria-label="Mostrar siempre el texto junto a los iconos"></ion-toggle>
+      </label>
+    </section>
+
+    <!-- ===================== MOVIMIENTO Y SONIDO ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-sonido">
+      <h2 id="g-sonido"><ion-icon name="musical-notes-outline" aria-hidden="true"></ion-icon> Movimiento y sonido</h2>
+
+      <label class="ajuste">
+        <div class="ajuste-texto">
+          <strong>Nada que se mueva o suene solo</strong>
+          <span>Las fotos del inicio no cambian solas y no se reproduce nada sin que lo pulses.</span>
+        </div>
+        <ion-toggle [checked]="a().sinAutoplay" (ionChange)="cambiar({ sinAutoplay: $event.detail.checked })" aria-label="Sin reproducción automática"></ion-toggle>
+      </label>
+
+      <label class="ajuste">
+        <div class="ajuste-texto">
+          <strong>Sonidos</strong>
+          <span>Un pitido corto al confirmar algo o si hay un error.</span>
+        </div>
+        <ion-toggle [checked]="a().sonidos" (ionChange)="cambiar({ sonidos: $event.detail.checked })" aria-label="Sonidos"></ion-toggle>
+      </label>
+
+      @if (hayVibracion) {
+        <label class="ajuste">
+          <div class="ajuste-texto">
+            <strong>Vibración</strong>
+            <span>El móvil vibra un momento al confirmar algo o si hay un error.</span>
+          </div>
+          <ion-toggle [checked]="a().vibracion" (ionChange)="cambiar({ vibracion: $event.detail.checked })" aria-label="Vibración"></ion-toggle>
+        </label>
+      }
+    </section>
+
+    <!-- ===================== LEER EN VOZ ALTA ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-voz">
+      <h2 id="g-voz"><ion-icon name="volume-high-outline" aria-hidden="true"></ion-icon> Leer en voz alta</h2>
+      @if (!hayVoz) {
+        <p class="texto-suave">Este navegador no puede leer en voz alta.</p>
+      } @else {
+        <p class="texto-suave">En la ficha de cualquier plan, pulsa <strong>Escuchar</strong> y te la leemos.</p>
+        <div class="ajuste columna">
+          <label class="ajuste-texto" for="velocidad">
+            <strong>Velocidad: {{ a().vozVelocidad < 0.85 ? 'lenta' : a().vozVelocidad > 1.15 ? 'rápida' : 'normal' }}</strong>
+          </label>
+          <input id="velocidad" type="range" min="0.5" max="1.5" step="0.05" [value]="a().vozVelocidad" (input)="cambiar({ vozVelocidad: +$any($event.target).value })" />
+        </div>
+        <div class="ajuste columna">
+          <label class="ajuste-texto" for="voz"><strong>Voz</strong></label>
+          <select id="voz" class="selector" [value]="a().vozNombre" (change)="cambiar({ vozNombre: $any($event.target).value })">
+            <option value="">La voz en español del dispositivo</option>
+            @for (v of voces(); track v.name) {
+              <option [value]="v.name" [selected]="v.name === a().vozNombre">{{ v.name }}</option>
+            }
+          </select>
+        </div>
+        <ion-button fill="outline" (click)="probarVoz()">
+          <ion-icon slot="start" name="volume-high-outline" aria-hidden="true"></ion-icon> Probar la voz
+        </ion-button>
+      }
+    </section>
+
+    <!-- ===================== AVISOS POR TELEGRAM ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-avisos">
+      <h2 id="g-avisos"><ion-icon name="notifications-outline" aria-hidden="true"></ion-icon> Avisos por Telegram</h2>
+      @if (!perfil()) {
+        <p class="texto-suave"><a routerLink="/login">Inicia sesión</a> y conecta Telegram para elegir qué avisos quieres recibir.</p>
+      } @else if (!perfil()?.telegram_linked) {
+        <p class="texto-suave">Tu cuenta aún no está conectada con Telegram. Conéctala desde <a routerLink="/perfil">Mi perfil</a> para recibir avisos en el móvil.</p>
+      } @else {
+        <label class="ajuste">
+          <div class="ajuste-texto">
+            <strong>Recibir avisos</strong>
+            <span>Si lo apagas, el bot no te escribirá por su cuenta (podrás seguir hablando con él).</span>
+          </div>
+          <ion-toggle [(ngModel)]="notificacionesActivas" aria-label="Recibir avisos por Telegram"></ion-toggle>
+        </label>
+        @if (notificacionesActivas) {
+          @for (t of tiposAviso; track t.tipo) {
+            <label class="ajuste sangrado">
+              <div class="ajuste-texto">
+                <strong>{{ t.texto }}</strong>
+                <span>{{ t.explica }}</span>
+              </div>
+              <ion-toggle [(ngModel)]="avisosTipo[t.tipo]" [attr.aria-label]="t.texto"></ion-toggle>
+            </label>
+          }
+          <label class="ajuste">
+            <div class="ajuste-texto">
+              <strong>También en audio</strong>
+              <span>El bot te manda los mensajes también como nota de voz.</span>
+            </div>
+            <ion-toggle [(ngModel)]="audio" aria-label="Avisos también en audio"></ion-toggle>
+          </label>
+        }
+        <ion-button (click)="guardarAvisos()" [disabled]="guardandoAvisos">
+          {{ guardandoAvisos ? 'Guardando…' : 'Guardar mis avisos' }}
+        </ion-button>
+      }
+    </section>
+
+    <!-- ===================== AYUDA ===================== -->
+    <section class="ajustes-grupo" aria-labelledby="g-ayuda">
+      <h2 id="g-ayuda"><span aria-hidden="true">🙋</span> ¿Necesitas ayuda?</h2>
+      <p class="texto-suave">Si algo no funciona o el asistente no te entiende, escribe a una persona del equipo. Te contestará por Telegram.</p>
+      <ion-button fill="outline" [href]="enlacePersona" target="_blank" rel="noopener">Hablar con una persona</ion-button>
+    </section>
+
+    <div class="ajustes-pie">
+      <ion-button fill="clear" color="danger" (click)="restablecer()">
+        <ion-icon slot="start" name="refresh-outline" aria-hidden="true"></ion-icon> Restablecer valores por defecto
+      </ion-button>
+      @if (perfil()) {
+        <ion-button fill="clear" color="medium" size="small" (click)="borrarCuenta()" [disabled]="borrando">
+          <ion-icon slot="start" name="trash-outline" aria-hidden="true"></ion-icon>
+          {{ borrando ? 'Borrando…' : 'Borrar mi cuenta' }}
+        </ion-button>
+      }
+    </div>
+  </div>
+</ion-content>

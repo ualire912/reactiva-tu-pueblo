@@ -163,6 +163,32 @@ async def send_audio(
     return None
 
 
+async def send_voice(
+    chat_id: int | str,
+    audio_bytes: bytes,
+    caption: str = "",
+) -> dict[str, Any] | None:
+    """Nota de voz (no archivo de música): Telegram no la mete en la lista de reproducción
+    con los audios antiguos del chat, así que al acabar no salta a otro audio ya escuchado.
+    sendVoice admite MP3 (además de OGG/Opus y M4A)."""
+    token = _get_token()
+    if not token or not audio_bytes:
+        return None
+    url = f"https://api.telegram.org/bot{token}/sendVoice"
+    data: dict[str, Any] = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1000]
+    files = {"voice": ("reactiva-tu-pueblo.mp3", audio_bytes, "audio/mpeg")}
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(url, data=data, files=files)
+            if resp.status_code == 200:
+                return resp.json().get("result")
+    except Exception:
+        pass
+    return None
+
+
 async def send_document(
     chat_id: int | str,
     filename: str,
