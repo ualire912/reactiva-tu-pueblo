@@ -119,7 +119,9 @@ def paginas_descubiertas() -> list[dict]:
             continue
         paginas.append({"municipio": municipios.get(e.get("municipio_id")) or "",
                         "nombre": e.get("nombre") or "Organización", "url": url,
-                        "oficial": entidad_de_confianza(e)})
+                        "oficial": entidad_de_confianza(e),
+                        # dada de alta por su responsable: se lee cada hora y se le pregunta
+                        "con_responsable": bool(e.get("owner_user_id"))})
     return paginas
 
 
@@ -852,7 +854,7 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
         # Cada hora: las páginas OFICIALES (ayuntamientos y organizaciones de confianza),
         # solo sus publicaciones de los últimos días, y una búsqueda por turnos
         solo = solo or "rapida"
-        paginas = [p for p in paginas if p.get("oficial")]
+        paginas = [p for p in paginas if p.get("oficial") or p.get("con_responsable")]
     resumen: dict[str, int] = {}
 
     def anotar(res: str, municipio: str, fecha: str, texto: str, url: str | None = None,

@@ -510,7 +510,9 @@ def crear_evento_desde_ingesta(ingesta_id: str, publicar: bool | None = None,
 
     _actualizar_ingesta(ingesta_id, estado="confirmada", event_id=ev["id"])
     log.info("Ingesta %s -> evento %s (%s)", ingesta_id, ev["id"], ev.get("status"))
-    if ev.get("status") in ("pendiente_moderacion", "borrador_ia") and ing.get("origen") == "telegram":
+    confirmado_por_persona = ing.get("origen") == "telegram" or (
+        publicar is None and ing.get("estado") == "esperando_confirmacion")  # su responsable lo confirmó
+    if ev.get("status") in ("pendiente_moderacion", "borrador_ia") and confirmado_por_persona:
         try:  # los moderadores lo reciben por Telegram con botones Aprobar / Rechazar
             from puentes import avisar_moderadores
             avisar_moderadores(ev["id"])
