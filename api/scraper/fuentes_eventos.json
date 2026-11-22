@@ -159,5 +159,11 @@
       "municipio": "Uleila del Campo",
       "url": "https://www.lavozdealmeria.com/vivir/turismo/turismo-rural/615274/pueblo-almeria-celebra-semana-fiesta-emigrante-reencuentros-gran-verbena.html"
     }
-  ]
+  ],
+  "descubrir_paginas": {
+    "_ayuda": "Busca páginas de Facebook por nombre ('Ayuntamiento de <pueblo>', '<pueblo> Almería') una vez por semana y al pulsar 'Buscar ahora' sin texto. Las de ayuntamientos quedan como oficiales.",
+    "actor": "apify/facebook-search-scraper",
+    "tipo": "pages",
+    "por_busqueda": 5
+  }
 }

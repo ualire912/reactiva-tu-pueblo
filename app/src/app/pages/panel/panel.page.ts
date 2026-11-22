@@ -750,6 +750,60 @@ export class PanelPage implements OnInit {
     return partes.length ? partes.join(', ') + '.' : 'No ha encontrado publicaciones nuevas.';
   }
 
+  // ---------- Descartadas: ver por qué y recuperar ----------
+  descartadas: Ingesta[] = [];
+  recuperando: string | null = null;
+
+  async cargarDescartadas() {
+    const { data } = await this.sb.client
+      .from('ingestas')
+      .select('*')
+      .in('estado', ['descartada', 'spam'])
+      .is('event_id', null)
+      .order('created_at', { ascending: false })
+      .limit(40);
+    this.descartadas = (data || []) as Ingesta[];
+    this.cdr.detectChanges();
+  }
+
+  /** La IA se equivocó: se crea el plan igualmente (queda en Pendientes para revisarlo). */
+  async recuperarIngesta(ing: Ingesta) {
+    this.recuperando = ing.id;
+    this.cdr.detectChanges();
+    try {
+      await this.api.crearPlanDeIngesta(ing.id, true);
+      this.avisos.ok('Plan creado. Revísalo en Pendientes antes de publicarlo.');
+      await Promise.all([this.cargarDescartadas(), this.cargarPendientesYActivos()]);
+    } catch (err) {
+      this.avisos.error(err, 'No se ha podido crear el plan con esta publicación.');
+    } finally {
+      this.recuperando = null;
+      this.cdr.detectChanges();
+    }
+  }
+
+  textoResultado(r: string): string {
+    if (r.startsWith('evento_abierto') || r.startsWith('evento_completo')) return 'Publicado';
+    if (r.startsWith('evento_')) return 'Para revisar';
+    if (r === 'duplicado' || r === 'ya_visto' || r === 'repetido') return 'Ya la conocía';
+    if (r === 'pagina_oficial_encontrada') return 'Página oficial encontrada';
+    if (r === 'pagina_encontrada') return 'Página encontrada';
+    if (r.startsWith('ignorado_no_es')) return 'No es de los pueblos';
+    if (r.startsWith('ignorado_no_parece') || r === 'descartado_reglas') return 'No parece un plan';
+    if (r === 'descartada' || r === 'no_evento') return 'Descartada por la IA';
+    if (r === 'spam') return 'Spam';
+    if (r.startsWith('falta')) return 'Le faltan datos';
+    if (r.startsWith('error')) return 'Error';
+    return r;
+  }
+
+  claseResultado(r: string): string {
+    if (r.startsWith('evento_abierto') || r.startsWith('pagina')) return 'ok';
+    if (r.startsWith('evento_') || r.startsWith('falta')) return 'revisar';
+    if (r === 'duplicado' || r === 'ya_visto' || r === 'repetido') return 'neutro';
+    return 'fuera';
+  }
+
   async cargarIngestas() {
     // Solo posibles EVENTOS pendientes de revisar: el spam, lo descartado (no es un evento,
     // fuera de la Mancomunidad...) y lo ya convertido en evento no le llegan al moderador

@@ -56,6 +56,21 @@ ACTOR = "apify~facebook-posts-scraper"
 POSTS_POR_PAGINA = 30
 UMBRAL_CONFIANZA = 0.6  # por debajo, aunque sea oficial, lo revisa el moderador
 
+# Lo que ha hecho la última pasada, publicación a publicación (lo enseña el panel).
+# De las publicaciones de PARTICULARES que no son planes no se guarda el texto.
+DETALLE: list[dict] = []
+
+
+def apuntar(res: str, donde: str, fecha: str, texto: str, url: str | None = None,
+            particular: bool = False) -> None:
+    descartada = res.startswith(("ignorado", "descart", "no_evento", "spam"))
+    DETALLE.append({
+        "resultado": res, "donde": donde, "fecha": (fecha or "")[:10], "url": url,
+        "texto": ("(publicación de un particular que no era un plan: no se guarda su texto)"
+                  if particular and descartada else (texto or "")[:220]),
+    })
+    del DETALLE[:-300]
+
 
 # ── Utilidades ────────────────────────────────────────────────
 def _norm(t: str) -> str:
@@ -67,6 +82,10 @@ def _url_limpia(u: str) -> str:
     """Dirección comparable: sin parámetros ni www/m., salvo el id de profile.php
     (las páginas de tipo perfil se distinguen SOLO por ese id)."""
     u = (u or "").strip().lower()
+    # /people/Nombre-de-la-pagina/12345/ es la misma página que profile.php?id=12345
+    gente = re.search(r"facebook\.com/people/[^/?#]+/(\d+)", u)
+    if gente:
+        return f"https://www.facebook.com/profile.php?id={gente.group(1)}"
     base_ = re.sub(r"^https?://(www\.|m\.|web\.)?", "https://www.", u.split("?")[0].split("#")[0]).rstrip("/")
     ident = re.search(r"[?&]id=(\d+)", u)
     if base_.endswith("/profile.php") and ident:
@@ -102,6 +121,62 @@ def paginas_descubiertas() -> list[dict]:
                         "nombre": e.get("nombre") or "Organización", "url": url,
                         "oficial": entidad_de_confianza(e)})
     return paginas
+
+
+def descubrir_paginas(dry: bool = False) -> dict[str, int]:
+    """Busca páginas de Facebook por nombre (apify/facebook-search-scraper): "Ayuntamiento de
+    <pueblo>" y "<pueblo> Almería". Las de los ayuntamientos se guardan como OFICIALES (se
+    leen cada hora y sus planes se publican solos); las demás (asociaciones, clubes...) se
+    guardan sin confianza (sus planes van al moderador). No hace falta dar direcciones."""
+    token = os.getenv("APIFY_TOKEN", "").strip()
+    resumen: dict[str, int] = {}
+    if not token:
+        return resumen
+    cfg = cargar_config().get("descubrir_paginas") or {}
+    actor = cfg.get("actor", "apify/facebook-search-scraper").replace("/", "~")
+    por_busqueda = int(cfg.get("por_busqueda", 5))
+    ya = sb.table("entidades").select("nombre,facebook_page_url,auto_approve").execute().data or []
+    vistas = {_url_limpia(e.get("facebook_page_url") or "") for e in ya}
+    for pueblo in ia.PUEBLOS:
+        tiene_oficial = any(es_ayuntamiento(e.get("nombre") or "") and _norm(pueblo) in _norm(e.get("nombre") or "")
+                            for e in ya)
+        busquedas = [] if tiene_oficial else [f"Ayuntamiento de {pueblo}"]
+        busquedas.append(f"{pueblo} Almería")
+        for q in busquedas:
+            entrada = {"categories": [q], "searchType": cfg.get("tipo", "pages"),
+                       "resultsLimit": por_busqueda}
+            try:
+                r = httpx.post(f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
+                               headers={"Authorization": f"Bearer {token}"}, json=entrada, timeout=300)
+                paginas = r.json() if r.status_code < 400 else []
+                if r.status_code >= 400:
+                    print(f"Descubrir páginas: Apify respondió {r.status_code}: {r.text[:200]}")
+            except Exception as e:
+                print(f"Descubrir páginas «{q}»: {e!r}")
+                paginas = []
+            for pg in paginas if isinstance(paginas, list) else []:
+                # En este actor 'url' es la página y 'facebookUrl' la dirección de la búsqueda
+                url = next((u for u in (pg.get("url"), pg.get("pageUrl"), pg.get("facebookUrl"))
+                            if u and "/search" not in u), None)
+                nombre = (pg.get("name") or pg.get("title") or pg.get("pageName") or "").strip()
+                if not url or not nombre or _url_limpia(url) in vistas:
+                    continue
+                textos = _norm(" ".join(str(pg.get(k) or "") for k in ("name", "title", "address", "intro", "categories")))
+                if _norm(pueblo) not in textos:  # una página de otro sitio
+                    resumen["pagina_de_otro_sitio"] = resumen.get("pagina_de_otro_sitio", 0) + 1
+                    continue
+                oficial = es_ayuntamiento(nombre)
+                vistas.add(_url_limpia(url))
+                res = "pagina_oficial_encontrada" if oficial else "pagina_encontrada"
+                resumen[res] = resumen.get(res, 0) + 1
+                apuntar(res, pueblo, "", f"{nombre} · {url}", url)
+                if not dry:
+                    # Dirección en el formato que el lector de páginas ya sabe leer
+                    gente = re.search(r"facebook\.com/people/[^/?#]+/(\d+)", url)
+                    if gente:
+                        url = f"https://www.facebook.com/profile.php?id={gente.group(1)}"
+                    asegurar_entidad({"url": url, "nombre": nombre[:120], "municipio": pueblo, "oficial": oficial})
+    return resumen
 
 
 def entidad_de_confianza(entidad: dict | None) -> bool:
@@ -286,6 +361,11 @@ def buscar_en_facebook(cfg: dict, semanas: int, rapida: bool = False,
     return resultados
 
 
+# Sitios con el mismo nombre en otros países o provincias (no son nuestros pueblos)
+_OTRO_SITIO = re.compile(r"\b(loma senes|argentina|chaco|formosa|corrientes|misiones|tucuman|salta|"
+                         r"mexico|colombia|venezuela|peru|chile|uruguay|paraguay|bolivia|ecuador)\b")
+
+
 def procesar_resultado_busqueda(res: dict, dry: bool, vistos: set[str]) -> str:
     """Una publicación encontrada buscando. Solo sigue si nombra uno de los pueblos y
     parece un evento; si no, se ignora SIN guardarla (no se almacenan posts personales
@@ -297,7 +377,7 @@ def procesar_resultado_busqueda(res: dict, dry: bool, vistos: set[str]) -> str:
         return "repetido"
     vistos.add(url)
     pueblo = ia._pueblo_en_texto(texto)
-    if not pueblo:
+    if not pueblo or _OTRO_SITIO.search(_norm(texto + " " + str(res.get("autor_nombre") or ""))):
         return "ignorado_no_es_de_los_pueblos"
     if not parece_evento(texto, bool(post.get("_imagen")), pagina_de_pueblo=False):
         return "ignorado_no_parece_evento"
@@ -507,8 +587,11 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
     ingesta.procesar_ingesta(fila["id"])
     ing = sb.table("ingestas").select("*").eq("id", fila["id"]).execute().data[0]
     ext0 = ing.get("extracted") or {}
-    if (origen == "web" and ing["estado"] == "descartada" and ext0.get("title")
+    pasado_oficial = (fuente.get("oficial") and "ya ha pasado" in (ing.get("spam_reason") or ""))
+    if ((origen == "web" or pasado_oficial) and ing["estado"] == "descartada" and ext0.get("title")
             and ext0.get("starts_at") and (ing.get("spam_score") or 0) < 0.5):
+        # Un ayuntamiento u organización de confianza anuncia algo que ya se celebró: se
+        # guarda como plan pasado (sale en "Así fueron los últimos planes")
         # Noticia revisada de un evento ya celebrado: la IA la toma por "noticia", pero
         # tiene título y fecha reales -> se recupera (el historial también cuenta)
         ingesta._actualizar_ingesta(fila["id"], estado="extraida",
@@ -562,6 +645,7 @@ def leer_direcciones(urls: list[str], dry: bool = False, semanas: int = 4,
     pasan por el circuito de siempre. Sirve para cuentas que el buscador de Facebook no
     muestra (perfiles nuevos o con poca actividad)."""
     resumen: dict[str, int] = {}
+    DETALLE.clear()
     if not os.getenv("APIFY_TOKEN", "").strip():
         raise RuntimeError("Falta APIFY_TOKEN en el servidor: no se puede leer Facebook")
     for url in urls:
@@ -578,7 +662,7 @@ def leer_direcciones(urls: list[str], dry: bool = False, semanas: int = 4,
             # "Leer siempre esta página": queda como fuente fija y de confianza
             pueblos_vistos = [ia._pueblo_en_texto(p.get("text") or "") for p in posts]
             pueblos_vistos = [p for p in pueblos_vistos if p]
-            nombre_pagina = next((p.get("pageName") for p in posts if p.get("pageName")), None)
+            nombre_pagina = next((nombre_legible(p.get("pageName")) for p in posts if p.get("pageName")), None)
             entidad = asegurar_entidad({
                 "url": url, "oficial": True,
                 "nombre": (nombre_pagina or "Página de Facebook")[:120],
@@ -596,7 +680,7 @@ def leer_direcciones(urls: list[str], dry: bool = False, semanas: int = 4,
                               "oficial": entidad_de_confianza(entidad), "url": url}
                 else:  # perfil de una persona: como siempre, al moderador
                     usuario = post.get("user") if isinstance(post.get("user"), dict) else {}
-                    nombre = post.get("pageName") or usuario.get("name") or "una persona"
+                    nombre = nombre_legible(post.get("pageName")) or usuario.get("name") or "una persona"
                     fuente = {"municipio": pueblo, "nombre": f"publicación de {nombre} en Facebook",
                               "oficial": False, "persona": True}
                 try:
@@ -604,8 +688,16 @@ def leer_direcciones(urls: list[str], dry: bool = False, semanas: int = 4,
                 except Exception as e:
                     res = f"error: {type(e).__name__}"
             resumen[res] = resumen.get(res, 0) + 1
+            apuntar(res, (entidad or {}).get("nombre") or url, post.get("time") or "", texto,
+                    post.get("url") or post.get("postUrl"), particular=not entidad)
             print(f"  [{res}] {texto[:70]!r}")
     return resumen
+
+
+def nombre_legible(page_name: str | None) -> str:
+    """'Ayuntamiento-de-Sen%C3%A9s' (como lo da Apify) -> 'Ayuntamiento de Senés'."""
+    from urllib.parse import unquote
+    return unquote(page_name or "").replace("-", " ").strip()
 
 
 def municipio_nombre(municipio_id) -> str | None:
@@ -627,10 +719,13 @@ def cargar_busqueda(ruta: str = FUENTES) -> dict:
 def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
              fuentes: str = FUENTES, solo: str | None = None,
              archivo_busqueda: str | None = None, rapida: bool = False,
-             busqueda_completa: bool = True, consultas: list[str] | None = None) -> dict[str, int]:
+             busqueda_completa: bool = True, consultas: list[str] | None = None,
+             descubrir: bool = False) -> dict[str, int]:
     """Una pasada. La usa también la tarea programada de Render (tareas.py).
     solo='paginas' | 'busqueda' | 'webs' | 'articulos' | None (todo).
     rapida=True (cada hora): solo unas pocas búsquedas por turnos; sin páginas ni artículos."""
+    DETALLE.clear()
+    descubiertas = descubrir_paginas(dry) if descubrir else {}
     paginas, articulos = cargar_fuentes(fuentes)
     cfg_paginas = cargar_config(fuentes).get("paginas_facebook") or {}
     if not archivo:
@@ -644,8 +739,10 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
         paginas = [p for p in paginas if p.get("oficial")]
     resumen: dict[str, int] = {}
 
-    def anotar(res: str, municipio: str, fecha: str, texto: str) -> None:
+    def anotar(res: str, municipio: str, fecha: str, texto: str, url: str | None = None,
+               particular: bool = False) -> None:
         resumen[res] = resumen.get(res, 0) + 1
+        apuntar(res, municipio, fecha, texto, url, particular)
         print(f"  [{res}] {municipio} · {fecha[:10]} · {texto[:70]!r}")
 
     # ── Facebook: páginas concretas (Apify)
@@ -676,7 +773,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             if not fuente:  # no se sabe de qué página es: no se pierde, va al moderador
                 pueblo = ia._pueblo_en_texto(post.get("text") or "")
                 if not pueblo:
-                    anotar("ignorado_no_es_de_los_pueblos", "?", post.get("time") or "", post.get("text") or "")
+                    anotar("ignorado_no_es_de_los_pueblos", post.get("pageName") or "?", post.get("time") or "",
+                           post.get("text") or "", post.get("url"))
                     continue
                 fuente = {"municipio": pueblo, "nombre": post.get("pageName") or "página de Facebook",
                           "oficial": False}
@@ -684,7 +782,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
                 res = procesar_post(post, fuente, dry)
             except Exception as e:  # un post raro no para a los demás
                 res = f"error: {type(e).__name__}"
-            anotar(res, fuente["municipio"], post.get("time") or "", post.get("text") or "(solo cartel)")
+            anotar(res, f'{fuente.get("nombre") or ""} ({fuente["municipio"]})', post.get("time") or "",
+                   post.get("text") or "(solo cartel)", post.get("url") or post.get("postUrl"))
     elif solo in (None, "paginas", "rapida"):
         print("Facebook (páginas): sin APIFY_TOKEN o sin páginas con URL real -> se salta")
 
@@ -709,8 +808,10 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             except Exception as e:
                 r = f"error: {type(e).__name__}"
             if r != "repetido":
-                quien = "org" if res["es_organizacion"] else "persona"
-                anotar(r, quien, res["post"].get("time") or "", res["post"]["text"] or "(solo foto)")
+                quien = (res.get("autor_nombre") or "organización") if res["es_organizacion"] else "un particular"
+                anotar(r, f"Búsqueda «{res.get('consulta') or ''}» · {quien}", res["post"].get("time") or "",
+                       res["post"]["text"] or "(solo foto)", res["post"].get("url"),
+                       particular=not res["es_organizacion"])
     elif solo in (None, "busqueda"):
         print("Facebook (búsqueda): sin APIFY_TOKEN o sin consultas -> se salta")
 
@@ -747,6 +848,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
                 res = f"error: {type(e).__name__}"
             anotar(res, art["municipio"], leido.get("time") or "", leido["text"].split("\n")[0])
 
+    for k, v in descubiertas.items():
+        resumen[k] = resumen.get(k, 0) + v
     print("\nResumen:", ", ".join(f"{k}: {v}" for k, v in sorted(resumen.items())) or "nada")
     return resumen
 

@@ -273,7 +273,7 @@ def _paso_recomendaciones():
             log.info("[tareas] recomendación enviada a %s (%s planes)", u["id"][:8], len(recs))
 
 
-_AGENTE = {"ultimo": 0.0, "completo": 0.0, "corriendo": False, "inicio": None, "fin": None,
+_AGENTE = {"ultimo": 0.0, "completo": 0.0, "descubrir": 0.0, "corriendo": False, "inicio": None, "fin": None,
            "motivo": None, "resultado": None, "error": None}
 # Facebook: cada hora se busca el nombre de un pueblo (por turnos: Senés, Lucainena...),
 # y una vez al día se leen las páginas de las organizaciones y las webs de los ayuntamientos.
@@ -288,7 +288,8 @@ def _ahora_iso() -> str:
 
 
 def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | None = None,
-                  urls: list[str] | None = None, guardar: bool = False) -> bool:
+                  urls: list[str] | None = None, guardar: bool = False,
+                  descubrir: bool = False) -> bool:
     """Arranca una pasada del agente en su propio hilo. False si ya hay una en marcha."""
     if _AGENTE["corriendo"]:
         return False
@@ -303,12 +304,13 @@ def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | No
             if urls:  # "Buscar ahora" con la dirección de una página o perfil
                 r = agente_eventos.leer_direcciones(urls, guardar=guardar)
             elif consultas is not None:  # "Buscar ahora" del panel: solo esas búsquedas
-                r = agente_eventos.ejecutar(semanas=2, solo="busqueda", consultas=consultas)
+                r = agente_eventos.ejecutar(semanas=2, solo="busqueda", consultas=consultas,
+                                            descubrir=descubrir)
             else:
                 # La pasada diaria lee además las páginas de las organizaciones, las webs de
                 # los ayuntamientos y las noticias
                 r = agente_eventos.ejecutar(semanas=6 if completo else 1, rapida=not completo,
-                                            busqueda_completa=False)
+                                            busqueda_completa=False, descubrir=descubrir)
             _AGENTE["resultado"] = r
             log.info("[tareas] agente de eventos (%s): %s", motivo, r)
         except BaseException as e:  # nada de lo que pase aquí para las demás tareas
@@ -339,7 +341,17 @@ def estado_agente() -> dict:
         "error": _AGENTE["error"],
         "cada_minutos": CADA_AGENTE // 60,
         "proxima_en_minutos": max(0, int(falta // 60)),
+        "detalle": _detalle(),
     }
+
+
+def _detalle() -> list[dict]:
+    try:
+        import sys
+        mod = sys.modules.get("agente_eventos")
+        return list(getattr(mod, "DETALLE", []))[-200:] if mod else []
+    except Exception:
+        return []
 
 
 def _paso_agente():
@@ -348,10 +360,13 @@ def _paso_agente():
     if _AGENTE["corriendo"] or ahora - _AGENTE["ultimo"] < CADA_AGENTE:
         return
     completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
-    if lanzar_agente("diaria" if completo else "cada hora", completo=completo):
+    descubrir = completo and ahora - _AGENTE["descubrir"] >= 7 * 24 * 3600  # páginas: 1 vez/semana
+    if lanzar_agente("diaria" if completo else "cada hora", completo=completo, descubrir=descubrir):
         _AGENTE["ultimo"] = ahora
         if completo:
             _AGENTE["completo"] = ahora
+        if descubrir:
+            _AGENTE["descubrir"] = ahora
 
 
 def ciclo():

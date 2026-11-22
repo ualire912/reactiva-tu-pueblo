@@ -22,6 +22,8 @@ export interface EstadoAgente {
   error: string | null;
   cada_minutos: number;
   proxima_en_minutos: number;
+  /** Lo que ha hecho la última búsqueda, publicación a publicación. */
+  detalle?: { resultado: string; donde: string; fecha: string; texto: string; url: string | null }[];
 }
 
 // El servidor gratuito de Render puede tardar ~50 s en despertar
@@ -113,8 +115,8 @@ export class ApiService {
   }
 
   /** Detectados por IA → plan pendiente, con su organizador real (no el moderador). */
-  crearPlanDeIngesta(ingestaId: string): Promise<{ id: string; status: string }> {
-    return this.peticion(`/moderacion/ingestas/${ingestaId}/crear-plan`, { method: 'POST' });
+  crearPlanDeIngesta(ingestaId: string, forzar = false): Promise<{ id: string; status: string }> {
+    return this.peticion(`/moderacion/ingestas/${ingestaId}/crear-plan${forzar ? '?forzar=true' : ''}`, { method: 'POST' });
   }
 
   /** Búsqueda de eventos en Facebook: qué hizo la última vez y si está configurada. */

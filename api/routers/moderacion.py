@@ -140,11 +140,31 @@ def decidir_promocion(body: DecidirIn, _mod=Depends(require_moderador)):
 
 # ── Detectados por IA: crear el plan conservando a su organizador ──
 @router.post("/moderacion/ingestas/{ingesta_id}/crear-plan")
-def crear_plan_de_ingesta(ingesta_id: str, _mod=Depends(require_moderador)):
+def crear_plan_de_ingesta(ingesta_id: str, forzar: bool = False, _mod=Depends(require_moderador)):
     """El moderador rescata una publicación detectada. Se crea con la misma función que usa
     el bot, así el organizador es quien la publicó (asociación o vecino), no el moderador.
-    Queda pendiente de revisión para que el moderador la repase antes de publicarla."""
+    Queda pendiente de revisión para que el moderador la repase antes de publicarla.
+    forzar=True: la IA la había descartado (o era un evento ya pasado) y el moderador
+    dice que sí es un plan -> se recupera."""
+    import ia
     import ingesta
+    if forzar:
+        filas = sb.table("ingestas").select("*").eq("id", ingesta_id).limit(1).execute().data
+        if not filas:
+            raise HTTPException(404, "No existe esa publicación")
+        ing = filas[0]
+        if ing.get("estado") in ("descartada", "spam", "error", "nueva"):
+            ext = ing.get("extracted") or {}
+            if not ext.get("title") and ing.get("raw_text"):
+                ext = ia.extraer_evento(ing["raw_text"]) or {}
+            if not ext:
+                raise HTTPException(400, "No queda texto de esta publicación para crear el plan.")
+            ext["es_evento"] = True
+            ext.pop("motivo_no_evento", None)
+            sb.table("ingestas").update({"estado": "extraida", "extracted": ext,
+                                         "missing": ext.get("missing") or [],
+                                         "spam_reason": "recuperada por un moderador"}) \
+                .eq("id", ingesta_id).execute()
     ev = ingesta.crear_evento_desde_ingesta(ingesta_id, publicar=False,
                                             motivo="lo ha rescatado un moderador de Detectados por IA")
     if "error" in ev:
@@ -182,6 +202,6 @@ def buscar_ahora(body: BuscarAhora | None = None, _mod=Depends(require_moderador
             raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
         return {"lanzado": True, "consultas": [texto]}
     consultas = [texto[:100]] if texto else list(ia.PUEBLOS)
-    if not tareas.lanzar_agente("a mano desde el panel", consultas=consultas):
+    if not tareas.lanzar_agente("a mano desde el panel", consultas=consultas, descubrir=not texto):
         raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
     return {"lanzado": True, "consultas": consultas}

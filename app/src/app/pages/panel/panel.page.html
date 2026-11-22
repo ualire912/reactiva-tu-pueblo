@@ -219,8 +219,62 @@
               Leer siempre esta página (es un ayuntamiento u organización de confianza: sus planes se publicarán solos y se mirará cada hora)
             </label>
           }
-          <p class="texto-suave agente-ayuda">Sin texto, busca el nombre de los 5 pueblos. Facebook no enseña en su buscador las publicaciones de perfiles nuevos o con poca actividad: en ese caso, pega aquí la dirección del perfil o de la página (por ejemplo, https://www.facebook.com/…) y se leen sus últimas publicaciones. Lo que encuentre aparece aquí o en Pendientes; si es de una organización de confianza, se publica solo.</p>
+          @if (estadoAgente?.detalle?.length) {
+            <details class="agente-detalle">
+              <summary>Ver qué ha encontrado la última búsqueda ({{ estadoAgente!.detalle!.length }})</summary>
+              <ul>
+                @for (d of estadoAgente!.detalle!; track $index) {
+                  <li [class]="'agente-item ' + claseResultado(d.resultado)">
+                    <span class="agente-etiqueta">{{ textoResultado(d.resultado) }}</span>
+                    <span class="agente-donde">{{ d.donde }}{{ d.fecha ? ' · ' + d.fecha : '' }}</span>
+                    <span class="agente-texto">{{ d.texto }}</span>
+                    @if (d.url) {
+                      <a [href]="d.url" target="_blank" rel="noopener">Abrir en Facebook</a>
+                    }
+                  </li>
+                }
+              </ul>
+            </details>
+          }
+          <p class="texto-suave agente-ayuda">Sin texto, busca el nombre de los 5 pueblos y sus páginas de Facebook (ayuntamientos, asociaciones…). Facebook no enseña en su buscador las publicaciones de perfiles nuevos o con poca actividad: en ese caso, pega aquí la dirección del perfil o de la página (por ejemplo, https://www.facebook.com/…) y se leen sus últimas publicaciones. Lo que encuentre aparece aquí o en Pendientes; si es de una organización de confianza, se publica solo.</p>
         </section>
+
+        <!-- Descartadas: para comprobar que la IA no se equivoca y recuperar lo que sí era un plan -->
+        <details class="agente-card descartadas" (toggle)="$any($event.target).open && cargarDescartadas()">
+          <summary>
+            <strong>Descartadas recientemente</strong>
+            <span class="texto-suave">— la IA dijo que no eran planes. Si alguna sí lo era, recupérala.</span>
+          </summary>
+          @if (descartadas.length === 0) {
+            <p class="texto-suave">No hay publicaciones descartadas.</p>
+          }
+          <ul class="lista-descartadas">
+            @for (ing of descartadas; track ing.id) {
+              <li class="descartada">
+                <div class="descartada-info">
+                  <strong>{{ ing.extracted?.title || 'Publicación sin título' }}</strong>
+                  <span class="motivo">{{ ing.estado === 'spam' ? 'Spam o inapropiada' : 'Descartada' }}: {{ ing.spam_reason || 'sin motivo' }}</span>
+                  <span class="texto-suave">{{ etiquetaOrigen(ing.origen) }} · {{ fechaCorta(ing.created_at) }}</span>
+                  @if (ing.raw_text) {
+                    <p class="descartada-texto">{{ ing.raw_text.length > 260 ? ing.raw_text.slice(0, 257) + '…' : ing.raw_text }}</p>
+                  } @else {
+                    <p class="descartada-texto texto-suave">(Publicación de un particular que no era un plan: no se guarda su texto.)</p>
+                  }
+                </div>
+                <div class="descartada-acciones">
+                  @if (ing.source_url && ing.source_url.startsWith('http')) {
+                    <a [href]="ing.source_url" target="_blank" rel="noopener">Ver original</a>
+                  }
+                  @if (ing.raw_text || ing.extracted?.title) {
+                    <ion-button size="small" (click)="recuperarIngesta(ing)" [disabled]="recuperando === ing.id">
+                      {{ recuperando === ing.id ? 'Creando…' : 'Sí era un plan: crearlo' }}
+                    </ion-button>
+                  }
+                </div>
+              </li>
+            }
+          </ul>
+        </details>
 
         @if (ingestas.length === 0) {
           <p class="texto-suave">Aún no hay publicaciones. Prueba a lanzar una desde la sección Demo.</p>
