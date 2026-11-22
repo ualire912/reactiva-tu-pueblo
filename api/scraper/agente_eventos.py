@@ -119,7 +119,9 @@ def paginas_descubiertas() -> list[dict]:
             continue
         paginas.append({"municipio": municipios.get(e.get("municipio_id")) or "",
                         "nombre": e.get("nombre") or "Organización", "url": url,
-                        "oficial": entidad_de_confianza(e)})
+                        "oficial": entidad_de_confianza(e),
+                        # dada de alta por su responsable: se lee cada hora y se le pregunta
+                        "con_responsable": bool(e.get("owner_user_id"))})
     return paginas
 
 
@@ -636,8 +638,9 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
 
 
 def de_ingesta_a_evento(ingesta_id: str, fuente: dict, origen: str, publicado: str | None,
-                        texto: str) -> str:
-    """Ingesta ya leída por la IA -> evento (publicado o al moderador), duplicado o descarte."""
+                        texto: str, sin_respuesta: bool = False) -> str:
+    """Ingesta ya leída por la IA -> evento (publicado o al moderador), duplicado o descarte.
+    sin_respuesta=True: se le preguntó a su responsable y no ha contestado (va al moderador)."""
     fila = {"id": ingesta_id}
     ing = sb.table("ingestas").select("*").eq("id", fila["id"]).execute().data[0]
     ext0 = ing.get("extracted") or {}
@@ -664,6 +667,10 @@ def de_ingesta_a_evento(ingesta_id: str, fuente: dict, origen: str, publicado: s
             # (solo el enlace, para no volver a procesarla)
             ingesta._actualizar_ingesta(fila["id"], raw_text=None, image_url=None, extracted=None)
         return ing["estado"]  # spam / descartada / error
+    if ing["estado"] == "esperando_confirmacion" and not sin_respuesta:
+        # Pasos 5-6 del reto: la página tiene responsable y ya se le ha preguntado por
+        # Telegram «¿La subimos?». El evento se crea cuando él confirma (no antes).
+        return "esperando_confirmacion"
     muni_id = municipio_id(ext.get("municipio") or "") or municipio_id(fuente["municipio"])
     cambiado = corregir_anio(ext, publicado, texto)
     if not ext.get("municipio"):  # el post es de una página del pueblo: ese es el pueblo
@@ -683,8 +690,10 @@ def de_ingesta_a_evento(ingesta_id: str, fuente: dict, origen: str, publicado: s
     segura = (float(ext.get("confidence") or 0) >= UMBRAL_CONFIANZA and not ext.get("dudas")
               and ("hora" not in (ext.get("missing") or []) or ya_paso))
     # Fuente oficial/verificada y la IA segura -> publicado. Si duda -> moderador.
-    publicar = bool(fuente.get("oficial") and segura and not fuente.get("dudoso"))
-    if fuente.get("persona"):
+    publicar = bool(fuente.get("oficial") and segura and not fuente.get("dudoso") and not sin_respuesta)
+    if sin_respuesta:
+        motivo = "su responsable no ha contestado en 24 h: lo revisa un moderador"
+    elif fuente.get("persona"):
         motivo = "propuesta de un vecino en Facebook: la revisa un moderador"
     elif not fuente.get("oficial"):
         motivo = "publicado por una organización que aún no es de confianza"
@@ -727,15 +736,18 @@ def reintentar_atascadas(dry: bool = False, maximo: int = 25) -> dict[str, int]:
                       "oficial": entidad_de_confianza(entidad) or es_ayuntamiento(nombre or "")}
         m = re.search(r"\[Publicado el (\d\d)/(\d\d)/(\d{4})\]", fila.get("raw_text") or "")
         publicado = f"{m.group(3)}-{m.group(2)}-{m.group(1)}T12:00:00+00:00" if m else fila["created_at"]
+        sin_respuesta = fila["estado"] == "esperando_confirmacion"
+        if sin_respuesta and datetime.fromisoformat(fila["created_at"].replace("Z", "+00:00"))                 > datetime.now(timezone.utc) - timedelta(hours=24):
+            continue  # se le preguntó hace poco a su responsable: se le espera
         if dry:
             print(f"  [reintento] {pueblo} · {ext.get('title')} · {ext.get('starts_at')}")
             continue
         try:
-            if not ext.get("starts_at"):
+            if not ext.get("starts_at") and not sin_respuesta:
                 ingesta._actualizar_ingesta(fila["id"], estado="nueva")
                 ingesta.procesar_ingesta(fila["id"])
             res = de_ingesta_a_evento(fila["id"], fuente, fila["origen"], publicado,
-                                      fila.get("raw_text") or "")
+                                      fila.get("raw_text") or "", sin_respuesta=sin_respuesta)
         except Exception as e:
             res = f"error: {type(e).__name__}"
         apuntar(res, (fuente.get("nombre") or pueblo) + " · reintento", publicado, ext.get("title") or "",
@@ -842,7 +854,7 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
         # Cada hora: las páginas OFICIALES (ayuntamientos y organizaciones de confianza),
         # solo sus publicaciones de los últimos días, y una búsqueda por turnos
         solo = solo or "rapida"
-        paginas = [p for p in paginas if p.get("oficial")]
+        paginas = [p for p in paginas if p.get("oficial") or p.get("con_responsable")]
     resumen: dict[str, int] = {}
 
     def anotar(res: str, municipio: str, fecha: str, texto: str, url: str | None = None,

@@ -1135,8 +1135,14 @@ async def _cmd_moderar(chat_id: int, perfil: dict[str, Any] | None) -> None:
         return
     evs = sb.table("eventos").select("*").in_("status", ["pendiente_moderacion", "borrador_ia"]) \
         .order("created_at").limit(10).execute().data or []
+    import alta_entidades
+    altas = alta_entidades.pendientes()
+    for ent in altas:  # asociaciones que piden el alta
+        sol = alta_entidades._alta_de(ent).get("solicitante")
+        await alta_entidades.avisar_moderadores_a(chat_id, ent, _get_perfil_by_user_id(sol) or {})
     if not evs:
-        await send_message(chat_id, "🛡️ No hay propuestas pendientes de revisar. ¡Todo al día!")
+        if not altas:
+            await send_message(chat_id, "🛡️ No hay propuestas pendientes de revisar. ¡Todo al día!")
         return
     await send_message(chat_id, f"🛡️ <b>Propuestas pendientes</b> ({len(evs)})", escape=False)
     for ev in evs:
@@ -1684,7 +1690,8 @@ TEXTO_EJEMPLOS = (
     "⭐ «Quiero valorar un plan al que fui»\n"
     "📝 «Propongo una ruta el sábado en Senés»\n"
     "🗂️ «¿Qué eventos he creado?» (con su cartel)\n"
-    "🏅 «¿Cuántos puntos tengo?»"
+    "🏅 «¿Cuántos puntos tengo?»\n"
+    "🏢 «Quiero dar de alta mi asociación» (para que recoja lo que publicáis en Facebook)"
 )
 TEXTO_PROPONER = ("📝 ¡Genial que quieras organizar algo!\n\n"
                   "Mándame una foto del cartel 📸, o cuéntame el plan por escrito o con una nota "
@@ -1716,6 +1723,7 @@ async def _mostrar_ayuda(chat_id: int, force_audio: bool = False) -> None:
              + "\n\n<b>Comandos</b>\n/agenda · próximos planes\n/mis_planes · tus planes\n"
              "/proponer · proponer un plan\n/mis_propuestas · lo que has creado (cartel, editar o cancelar)\n"
              "/mis_puntos · tus puntos como organizador/a\n"
+             "/alta · dar de alta tu asociación, ayuntamiento o negocio\n"
              "/moderar · propuestas por revisar (moderadores)\n/ayuda · esta ayuda")
     await send_message(chat_id, texto, buttons=MENU_PRINCIPAL, escape=False)
     if force_audio:
@@ -2152,6 +2160,20 @@ async def _procesar_texto_o_voz(
             await _aplicar_edicion(chat_id, perfil, dicho, force_audio=es_audio)
         return
 
+    # Alta de una asociación (nombre -> pueblo -> página de Facebook)
+    import alta_entidades
+    if chat_id in alta_entidades.ESPERANDO_ALTA:
+        dicho = (texto or "").strip()
+        if not dicho and es_audio:
+            ia_mod = _get_ia_module()
+            if ia_mod and hasattr(ia_mod, "entender_mensaje"):
+                dicho = ((await _maybe_await(ia_mod.entender_mensaje(audio_bytes=audio_bytes))) or {}).get("texto") or ""
+        await alta_entidades.continuar(chat_id, perfil, dicho)
+        return
+    if texto and alta_entidades.RE_ALTA.search(_norm_txt(texto)):
+        await alta_entidades.empezar(chat_id, perfil)
+        return
+
     if chat_id in ESPERANDO_PROPUESTA:  # le pedimos los datos del plan: esto es la propuesta
         ESPERANDO_PROPUESTA.discard(chat_id)
         propuesta = (texto or "").strip()
@@ -2290,6 +2312,10 @@ async def _procesar_texto_o_voz(
 
     # Preguntas sobre lo suyo: "en los que he participado", "a qué estoy apuntado"
     norm = _norm_txt(texto_reconocido)
+    import alta_entidades
+    if alta_entidades.RE_ALTA.search(norm):
+        await alta_entidades.empezar(chat_id, perfil)
+        return
     if _RE_MIS_PUNTOS.search(norm):
         if not perfil:
             perfil = await _asegurar_perfil_telegram(chat_id)
@@ -2459,6 +2485,16 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
         await send_message(chat_id_int, TEXTO_PROPONER)
     elif data == "cmd:ayuda":
         await _mostrar_ayuda(chat_id_int)
+    elif data == "cmd:alta":
+        import alta_entidades
+        await alta_entidades.empezar(chat_id_int, perfil)
+    elif data.startswith("alta_pueblo:"):
+        import alta_entidades
+        await alta_entidades.elegir_pueblo(chat_id_int, perfil, int(data.split(":", 1)[1]))
+    elif data.startswith(("alta_ok:", "alta_no:")):
+        import alta_entidades
+        await alta_entidades.decidir(chat_id_int, perfil, data.split(":", 1)[1],
+                                     aprobar=data.startswith("alta_ok:"))
     elif data == "cmd:idioma":
         await _cmd_idioma(chat_id_int)
     elif data.startswith("idioma:"):
@@ -2803,6 +2839,9 @@ async def procesar_update(update: dict[str, Any]) -> None:
                 await _cmd_mis_propuestas(chat_id_int, perfil)
             elif cmd == "/moderar":
                 await _cmd_moderar(chat_id_int, perfil)
+            elif cmd in ("/alta", "/asociacion", "/entidad"):
+                import alta_entidades
+                await alta_entidades.empezar(chat_id_int, perfil)
             else:
                 await _procesar_texto_o_voz(chat_id_int, perfil, texto=clean)
         else:
@@ -2945,6 +2984,20 @@ async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:
     titulo = ext.get("title") or "Tu plan"
     voz = chat_id_int in CHATS_CON_VOZ
     sb.table("ingestas").update({"estado": "esperando_confirmacion"}).eq("id", ingesta_id).execute()
+
+    if ing.get("origen") in ("facebook", "web") and not ing.get("user_id")             and ing.get("estado") != "esperando_confirmacion":  # solo la primera vez
+        # Lo ha detectado el agente en la página de su entidad (pasos 4-5 del reto):
+        # se le pregunta a su responsable antes de subirlo
+        ent = sb.table("entidades").select("nombre").eq("id", ing.get("entidad_id")).limit(1) \
+            .execute().data if ing.get("entidad_id") else []
+        de = (ent[0]["nombre"] if ent else "vuestra página")
+        donde = "Facebook" if ing.get("origen") == "facebook" else "vuestra web"
+        aviso = (f"👋 ¡Hola{_nombre_de(perfil)}! He visto una publicación nueva de "
+                 f"<b>{escape_html(de)}</b> en {donde}: <b>{escape_html(titulo)}</b>.\n\n"
+                 "¿La subimos a la agenda y al mapa? Revísala aquí abajo 👇")
+        if ing.get("source_url"):
+            aviso += f"\n<a href=\"{escape_html(ing['source_url'])}\">Ver la publicación original</a>"
+        await send_message(chat_id_int, aviso, escape=False)
 
     # 1) Faltan datos -> PRIMERO el cuestionario (nada se inventa ni se crea todavía)
     if missing:
