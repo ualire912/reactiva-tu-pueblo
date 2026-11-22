@@ -284,7 +284,7 @@ CADA_AGENTE_COMPLETO = 24 * 3600
 def _paso_agente():
     """Facebook (si hay APIFY_TOKEN) + noticias -> eventos reales."""
     ahora = time.time()
-    if ahora - _AGENTE["ultimo"] < CADA_AGENTE:
+    if _AGENTE.get("corriendo") or ahora - _AGENTE["ultimo"] < CADA_AGENTE:
         return
     _AGENTE["ultimo"] = ahora
     completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
@@ -296,8 +296,22 @@ def _paso_agente():
     if carpeta not in sys.path:
         sys.path.insert(0, carpeta)
     import agente_eventos
-    r = agente_eventos.ejecutar(semanas=6 if completo else 1)
-    log.info("[tareas] agente de eventos (%s): %s", "completo" if completo else "rápido", r)
+
+    def correr():
+        try:
+            # La pasada diaria lee además las páginas de las organizaciones y las noticias;
+            # las búsquedas siguen por turnos (la rotación horaria ya las cubre cada ~10 h)
+            r = agente_eventos.ejecutar(semanas=6 if completo else 1, rapida=not completo,
+                                        busqueda_completa=False)
+            log.info("[tareas] agente de eventos (%s): %s", "completo" if completo else "rápido", r)
+        except BaseException as e:  # nada de lo que pase aquí para las demás tareas
+            log.error("[tareas] agente de eventos falló: %r", e)
+        finally:
+            _AGENTE["corriendo"] = False
+
+    # En su propio hilo: Apify puede tardar minutos y los recordatorios no deben esperar
+    _AGENTE["corriendo"] = True
+    threading.Thread(target=correr, name="agente-eventos", daemon=True).start()
 
 
 def ciclo():

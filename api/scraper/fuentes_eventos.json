@@ -1,19 +1,6 @@
 {
-  "_ayuda": "Fuentes de eventos REALES. 'facebook': páginas que lee Apify ('oficial': true = ayuntamiento u organización de confianza: sus eventos se publican solos si la IA está segura; si no, van al moderador). Cambia las URL RELLENAR por las reales (las que no tengan URL se ignoran). 'articulos': noticias y agendas públicas con eventos de los pueblos; se leen tal cual (sin saltarse ninguna protección) y cada una pasa por la IA. Las webs de los ayuntamientos bloquean los programas automáticos, por eso no están aquí.",
-  "facebook": [
-    {
-      "municipio": "Senés",
-      "nombre": "Ayuntamiento de Senés",
-      "url": "https://www.facebook.com/RELLENAR_SENES",
-      "oficial": true
-    },
-    {
-      "municipio": "Lucainena de las Torres",
-      "nombre": "Ayuntamiento de Lucainena de las Torres",
-      "url": "https://www.facebook.com/RELLENAR_LUCAINENA",
-      "oficial": true
-    }
-  ],
+  "_ayuda": "Fuentes de eventos REALES. La app NO necesita direcciones de páginas: busca sola en Facebook publicaciones públicas con los nombres de los pueblos ('busqueda_facebook'). Las organizaciones que encuentra (ayuntamientos, asociaciones, clubes...) se guardan como 'entidades' y sus páginas se leen también una vez al día. 'facebook': páginas extra opcionales (se pueden dejar vacías). 'articulos': noticias y agendas públicas con eventos de los pueblos; cada una pasa por la IA.",
+  "facebook": [],
   "articulos": [
     {
       "municipio": "Lucainena de las Torres",
@@ -82,13 +69,14 @@
     }
   ],
   "busqueda_facebook": {
-    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> IA (publica si es de confianza y la IA está segura); personas -> solo si la IA ve claro que propone un evento, y entonces al moderador. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
+    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Cada hora se lanzan 'por_pasada_rapida' búsquedas (por turnos) y una vez al día todas. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> se publican solas si son de confianza (marcadas por el moderador o con responsable Publicador) y la IA está segura; si no, al moderador. Personas -> al moderador, solo si la IA ve claro que proponen un evento. Spam y contenido inapropiado se descartan. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
     "actor": "scraper_one/facebook-posts-search",
     "entrada": {
       "query": "{q}",
       "maxResults": "{n}"
     },
     "por_consulta": 15,
+    "por_pasada_rapida": 6,
     "pueblos": [
       "Senés",
       "Lucainena de las Torres",
@@ -97,12 +85,18 @@
       "Velefique"
     ],
     "consultas": [
-      "{pueblo} quedada",
-      "{pueblo} excursión",
+      "{pueblo}",
+      "{pueblo} Almería",
       "{pueblo} fiesta",
+      "{pueblo} fiestas patronales",
+      "{pueblo} feria",
+      "{pueblo} ruta senderismo",
       "{pueblo} taller",
-      "{pueblo} ruta",
-      "{pueblo} mercadillo"
+      "{pueblo} concierto",
+      "{pueblo} mercadillo",
+      "{pueblo} jornada",
+      "{pueblo} ayuntamiento",
+      "{pueblo} asociación"
     ]
   }
 }

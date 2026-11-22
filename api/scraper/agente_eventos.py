@@ -82,6 +82,21 @@ def municipio_id(nombre: str) -> int | None:
     return None
 
 
+def paginas_descubiertas() -> list[dict]:
+    """Páginas de Facebook de las organizaciones que la búsqueda ya encontró (o que el
+    moderador dio de alta). Se leen una vez al día."""
+    municipios = {m["id"]: m["nombre"] for m in sb.table("municipios").select("id,nombre").execute().data or []}
+    paginas = []
+    for e in sb.table("entidades").select("*").not_.is_("facebook_page_url", "null").execute().data or []:
+        url = (e.get("facebook_page_url") or "").strip()
+        if not url.startswith("http") or "RELLENAR" in url:
+            continue
+        paginas.append({"municipio": municipios.get(e.get("municipio_id")) or "",
+                        "nombre": e.get("nombre") or "Organización", "url": url,
+                        "oficial": entidad_de_confianza(e)})
+    return paginas
+
+
 def entidad_de_confianza(entidad: dict | None) -> bool:
     """Una organización publica sola si el moderador la marcó (auto_approve) o si su
     responsable es Publicador/a o moderador/a."""
@@ -112,8 +127,8 @@ def asegurar_entidad(fuente: dict) -> dict:
 # ── 1. Leer Facebook con Apify ────────────────────────────────
 def leer_facebook(paginas: list[dict], semanas: int) -> list[dict]:
     token = os.getenv("APIFY_TOKEN", "").strip()
-    if not token:
-        sys.exit("Falta APIFY_TOKEN en api/.env (apify.com -> Settings -> API & Integrations)")
+    if not token or not paginas:
+        return []
     entrada = {
         "startUrls": [{"url": p["url"]} for p in paginas],
         "resultsLimit": POSTS_POR_PAGINA,
@@ -123,7 +138,8 @@ def leer_facebook(paginas: list[dict], semanas: int) -> list[dict]:
     r = httpx.post(f"https://api.apify.com/v2/acts/{ACTOR}/run-sync-get-dataset-items",
                    headers={"Authorization": f"Bearer {token}"}, json=entrada, timeout=360)
     if r.status_code >= 400:
-        sys.exit(f"Apify respondió {r.status_code}: {r.text[:300]}")
+        print(f"Apify respondió {r.status_code}: {r.text[:300]}")
+        return []
     return r.json()
 
 
@@ -185,19 +201,33 @@ def normalizar_resultado(r: dict) -> dict:
     es_org = bool(autor.get("isPage") or r.get("isPage") or tipo in ("page", "pagina")
                   or _ORGANIZACION.search(_norm(nombre)))
     return {"post": post, "autor_url": autor.get("url") or autor.get("profileUrl") or r.get("pageUrl"),
-            "es_organizacion": es_org, "consulta": r.get("searchQuery") or r.get("query") or ""}
+            "autor_nombre": nombre, "es_organizacion": es_org,
+            "consulta": r.get("searchQuery") or r.get("query") or ""}
 
 
-def buscar_en_facebook(cfg: dict, semanas: int) -> list[dict]:
+def consultas_de_la_pasada(cfg: dict, rapida: bool, hora: int | None = None) -> list[str]:
+    """Todas las búsquedas (pueblo x palabra). En la pasada rápida (cada hora) solo unas
+    pocas, por turnos: a lo largo del día se cubren todas sin gastar de más en Apify."""
+    pueblos = cfg.get("pueblos") or ia.PUEBLOS
+    todas = [c.replace("{pueblo}", p) for c in cfg.get("consultas", []) for p in pueblos] \
+        if "{pueblo}" in "".join(cfg.get("consultas", [])) else list(cfg.get("consultas", []))
+    k = int(cfg.get("por_pasada_rapida", 6))
+    if not rapida or k <= 0 or k >= len(todas):
+        return todas
+    turnos = -(-len(todas) // k)
+    turno = (hora if hora is not None else int(datetime.now(timezone.utc).timestamp() // 3600)) % turnos
+    return todas[turno * k:(turno + 1) * k]
+
+
+def buscar_en_facebook(cfg: dict, semanas: int, rapida: bool = False) -> list[dict]:
     """Lanza el actor de búsqueda de Apify con cada consulta. La forma de la entrada se
     configura en fuentes_eventos.json ('entrada'), porque cada actor la pide distinta."""
     token = os.getenv("APIFY_TOKEN", "").strip()
     actor = cfg.get("actor", "scraper_one/facebook-posts-search").replace("/", "~")
     plantilla = cfg.get("entrada") or {"query": "{q}", "maxResults": "{n}"}
     n = int(cfg.get("por_consulta", 15))
-    consultas = [c.replace("{pueblo}", p) for c in cfg.get("consultas", [])
-                 for p in (cfg.get("pueblos") or ia.PUEBLOS)] if "{pueblo}" in "".join(cfg.get("consultas", [])) \
-        else cfg.get("consultas", [])
+    consultas = consultas_de_la_pasada(cfg, rapida)
+    print(f"Facebook (búsqueda): {len(consultas)} consultas{' (pasada rápida)' if rapida else ''}")
     resultados: list[dict] = []
     for q in consultas:
         entrada = json.loads(json.dumps(plantilla).replace("{q}", q).replace('"{n}"', str(n))
@@ -236,9 +266,16 @@ def procesar_resultado_busqueda(res: dict, dry: bool, vistos: set[str]) -> str:
     if res["es_organizacion"]:
         entidad = None
         if res.get("autor_url"):
-            filas = sb.table("entidades").select("auto_approve,owner_user_id").eq(
-                "facebook_page_url", str(res["autor_url"]).rstrip("/")).execute().data
-            entidad = filas[0] if filas else None
+            datos = {"url": str(res["autor_url"]), "municipio": pueblo,
+                     "nombre": (res.get("autor_nombre") or "Organización de " + pueblo)[:120]}
+            if dry:
+                filas = sb.table("entidades").select("*").eq(
+                    "facebook_page_url", datos["url"].rstrip("/")).execute().data
+                entidad = filas[0] if filas else None
+            else:
+                # Nueva organización descubierta: se guarda SIN confianza (sus planes van al
+                # moderador hasta que él la marque o su responsable sea Publicador/a)
+                entidad = asegurar_entidad(datos)
         fuente = {"municipio": pueblo, "nombre": "organización en Facebook",
                   "oficial": entidad_de_confianza(entidad),
                   "url": res.get("autor_url")}
@@ -486,10 +523,18 @@ def cargar_busqueda(ruta: str = FUENTES) -> dict:
 
 def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
              fuentes: str = FUENTES, solo: str | None = None,
-             archivo_busqueda: str | None = None) -> dict[str, int]:
-    """Una pasada completa. La usa también la tarea programada de Render (tareas.py).
-    solo='paginas' | 'busqueda' | 'articulos' | None (todo)."""
+             archivo_busqueda: str | None = None, rapida: bool = False,
+             busqueda_completa: bool = True) -> dict[str, int]:
+    """Una pasada. La usa también la tarea programada de Render (tareas.py).
+    solo='paginas' | 'busqueda' | 'articulos' | None (todo).
+    rapida=True (cada hora): solo unas pocas búsquedas por turnos; sin páginas ni artículos."""
     paginas, articulos = cargar_fuentes(fuentes)
+    if rapida:
+        solo = solo or "busqueda"
+    elif not archivo:
+        # Además de las páginas del archivo, las organizaciones que ya se descubrieron
+        vistas = {_url_limpia(p["url"]) for p in paginas}
+        paginas += [p for p in paginas_descubiertas() if _url_limpia(p["url"]) not in vistas]
     resumen: dict[str, int] = {}
 
     def anotar(res: str, municipio: str, fecha: str, texto: str) -> None:
@@ -535,7 +580,7 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             with open(archivo_busqueda, encoding="utf-8") as f:
                 crudos = json.load(f)
         else:
-            crudos = buscar_en_facebook(busqueda, semanas)
+            crudos = buscar_en_facebook(busqueda, semanas, rapida or not busqueda_completa)
         vistos: set[str] = set()
         for crudo in crudos:
             res = normalizar_resultado(crudo)
