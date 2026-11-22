@@ -5,6 +5,16 @@ from typing import Any
 import httpx
 
 
+def _wa():
+    """Módulo de WhatsApp si el chat es de WhatsApp (ver whatsapp.py), o None."""
+    try:
+        import whatsapp
+        return whatsapp
+    except ImportError:
+        from api import whatsapp  # type: ignore
+        return whatsapp
+
+
 def _get_token() -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
@@ -38,6 +48,8 @@ async def send_message(
     buttons: list[list[tuple[str, str]]] | None = None,
     escape: bool = True,
 ) -> dict[str, Any] | None:
+    if _wa().es_whatsapp(chat_id):
+        return await _wa().enviar_texto(chat_id, text, buttons, escapado=escape)
     token = _get_token()
     if not token:
         return None
@@ -68,6 +80,8 @@ async def edit_message_reply_markup(
     message_id: int,
     buttons: list[list[tuple[str, str]]] | None = None,
 ) -> bool:
+    if _wa().es_whatsapp(chat_id):
+        return True  # en WhatsApp los botones ya enviados no se pueden quitar
     token = _get_token()
     if not token:
         return False
@@ -90,6 +104,8 @@ async def edit_message_reply_markup(
 
 
 async def delete_message(chat_id: int | str, message_id: int) -> bool:
+    if _wa().es_whatsapp(chat_id):
+        return True
     token = _get_token()
     if not token:
         return False
@@ -113,6 +129,8 @@ async def send_photo(
     buttons: list[list[tuple[str, str]]] | None = None,
     escape: bool = True,
 ) -> dict[str, Any] | None:
+    if _wa().es_whatsapp(chat_id):
+        return await _wa().enviar_foto(chat_id, photo_url, caption, buttons, escapado=escape)
     token = _get_token()
     if not token:
         return None
@@ -144,6 +162,8 @@ async def send_audio(
     caption: str = "",
     filename: str = "respuesta.mp3",
 ) -> dict[str, Any] | None:
+    if _wa().es_whatsapp(chat_id):
+        return await _wa().enviar_audio(chat_id, audio_bytes, caption)
     token = _get_token()
     if not token or not audio_bytes:
         return None
@@ -171,6 +191,8 @@ async def send_voice(
     """Nota de voz (no archivo de música): Telegram no la mete en la lista de reproducción
     con los audios antiguos del chat, así que al acabar no salta a otro audio ya escuchado.
     sendVoice admite MP3 (además de OGG/Opus y M4A)."""
+    if _wa().es_whatsapp(chat_id):
+        return await _wa().enviar_audio(chat_id, audio_bytes, caption)
     token = _get_token()
     if not token or not audio_bytes:
         return None
@@ -195,6 +217,8 @@ async def send_document(
     doc_bytes: bytes,
     caption: str = "",
 ) -> dict[str, Any] | None:
+    if _wa().es_whatsapp(chat_id):
+        return await _wa().enviar_documento(chat_id, filename, doc_bytes, caption)
     token = _get_token()
     if not token or not doc_bytes:
         return None
@@ -215,6 +239,8 @@ async def send_document(
 
 
 async def answer_callback(callback_query_id: str, text: str = "") -> bool:
+    if not callback_query_id:  # pulsación que viene de WhatsApp
+        return True
     token = _get_token()
     if not token:
         return False
@@ -247,6 +273,8 @@ async def delete_webhook() -> bool:
 
 
 async def get_file_bytes(file_id: str) -> bytes | None:
+    if str(file_id).startswith("wa:"):  # nota de voz o foto de WhatsApp
+        return await _wa().descargar_medio(str(file_id)[3:])
     token = _get_token()
     if not token or not file_id:
         return None
