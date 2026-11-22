@@ -241,19 +241,55 @@ def leer_facebook(paginas: list[dict], semanas: int, por_pagina: int = POSTS_POR
     return r.json()
 
 
-def imagen_del_post(post: dict) -> str | None:
-    """Busca el cartel en 'media' (la estructura de Apify varía según el post)."""
-    for m in post.get("media") or []:
-        if not isinstance(m, dict):
-            continue
-        for k in ("photo_image", "image"):
-            v = m.get(k)
-            if isinstance(v, dict) and v.get("uri"):
-                return v["uri"]
-        for k in ("thumbnail", "url"):
-            if isinstance(m.get(k), str) and m[k].startswith("http") and "video" not in m[k]:
-                return m[k]
+_CLAVES_NO_CARTEL = re.compile(r"profile|avatar|author|user|owner|page_?(pic|logo)|logo|icon|reaction",
+                               re.I)
+
+
+def _primera_imagen(obj, profundidad: int = 0) -> str | None:
+    """Primera URL de imagen dentro de un trozo del post (sin fotos de perfil ni logos)."""
+    if profundidad > 5 or obj is None:
+        return None
+    if isinstance(obj, str):
+        if obj.startswith("http") and re.search(r"scontent|fbcdn|\.(jpe?g|png|webp)(\?|$)", obj) \
+                and not re.search(r"\.mp4|video", obj):
+            return obj
+        return None
+    if isinstance(obj, dict):
+        for k in ("photo_image", "image", "full_picture", "fullPicture", "imageUrl", "image_url",
+                  "uri", "thumbnail", "url", "src"):
+            if k in obj:
+                r = _primera_imagen(obj[k], profundidad + 1)
+                if r:
+                    return r
+        for k, v in obj.items():
+            if not _CLAVES_NO_CARTEL.search(str(k)):
+                r = _primera_imagen(v, profundidad + 1)
+                if r:
+                    return r
+    if isinstance(obj, list):
+        for v in obj:
+            r = _primera_imagen(v, profundidad + 1)
+            if r:
+                return r
     return None
+
+
+def imagen_del_post(post: dict) -> str | None:
+    """Busca el cartel del post. La estructura de Apify cambia según el post (foto, álbum,
+    vídeo con miniatura, publicación compartida...): primero 'media' y luego el resto."""
+    for clave in ("media", "attachments", "images", "photos", "sharedPost", "shared_post",
+                  "image", "imageUrl", "full_picture", "fullPicture", "thumbnail", "previewImage"):
+        r = _primera_imagen(post.get(clave))
+        if r:
+            return r
+    return None
+
+
+def _atascada(fila: dict | None) -> bool:
+    """Ingesta del agente que se leyó bien pero nunca llegó a ser evento (la pasada se cortó,
+    o antes la IA no guardaba la fecha si faltaba la hora). Se vuelve a intentar."""
+    return bool(fila and fila.get("estado") in ("extraida", "esperando_confirmacion", "nueva")
+                and not fila.get("event_id") and not fila.get("user_id"))
 
 
 def fuente_del_post(post: dict, paginas: list[dict]) -> dict | None:
@@ -582,9 +618,21 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
         return "evento?" if ext.get("es_evento") else "no_evento"
 
     fila, nueva = ingesta.registrar_post(url, pagina, texto_ia, img, origen=origen)
-    if not nueva and fila.get("estado") != "error":
+    reintento = not nueva and _atascada(fila)
+    if not nueva and fila.get("estado") != "error" and not reintento:
         return "ya_visto"
+    if reintento and not (fila.get("extracted") or {}).get("starts_at"):
+        # Se leyó sin fecha: se vuelve a leer (con el texto de ahora y las reglas nuevas)
+        ingesta._actualizar_ingesta(fila["id"], estado="nueva", raw_text=texto_ia[:5000],
+                                    image_url=fila.get("image_url") or img)
     ingesta.procesar_ingesta(fila["id"])
+    return de_ingesta_a_evento(fila["id"], fuente, origen, post.get("time"), texto)
+
+
+def de_ingesta_a_evento(ingesta_id: str, fuente: dict, origen: str, publicado: str | None,
+                        texto: str) -> str:
+    """Ingesta ya leída por la IA -> evento (publicado o al moderador), duplicado o descarte."""
+    fila = {"id": ingesta_id}
     ing = sb.table("ingestas").select("*").eq("id", fila["id"]).execute().data[0]
     ext0 = ing.get("extracted") or {}
     pasado_oficial = (fuente.get("oficial") and "ya ha pasado" in (ing.get("spam_reason") or ""))
@@ -611,7 +659,7 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
             ingesta._actualizar_ingesta(fila["id"], raw_text=None, image_url=None, extracted=None)
         return ing["estado"]  # spam / descartada / error
     muni_id = municipio_id(ext.get("municipio") or "") or municipio_id(fuente["municipio"])
-    cambiado = corregir_anio(ext, post.get("time"), texto)
+    cambiado = corregir_anio(ext, publicado, texto)
     if not ext.get("municipio"):  # el post es de una página del pueblo: ese es el pueblo
         ext["municipio"] = fuente["municipio"]
         cambiado = True
@@ -622,8 +670,12 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
         ingesta._actualizar_ingesta(fila["id"], estado="confirmada", event_id=repe["id"])
         return "duplicado"
 
+    try:  # plan ya celebrado (noticia, historial): su hora exacta ya no importa
+        ya_paso = datetime.fromisoformat(str(ext.get("starts_at"))) < datetime.now(timezone.utc)
+    except ValueError:
+        ya_paso = False
     segura = (float(ext.get("confidence") or 0) >= UMBRAL_CONFIANZA and not ext.get("dudas")
-              and "hora" not in (ext.get("missing") or []))
+              and ("hora" not in (ext.get("missing") or []) or ya_paso))
     # Fuente oficial/verificada y la IA segura -> publicado. Si duda -> moderador.
     publicar = bool(fuente.get("oficial") and segura and not fuente.get("dudoso"))
     if fuente.get("persona"):
@@ -636,6 +688,54 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
     if "error" in ev:
         return f"falta: {','.join(ev.get('missing') or []) or ev['error'][:40]}"
     return f"evento_{ev.get('status')}"
+
+
+def reintentar_atascadas(dry: bool = False, maximo: int = 25) -> dict[str, int]:
+    """Ingestas del agente que se quedaron en 'Datos leídos' sin llegar a evento (antes la IA
+    no guardaba la fecha si faltaba la hora, o la pasada se cortó). Se vuelven a intentar
+    aunque Facebook ya no enseñe esas publicaciones."""
+    filas = (sb.table("ingestas").select("*")
+             .in_("estado", ["extraida", "esperando_confirmacion"]).in_("origen", ["facebook", "web"])
+             .is_("user_id", "null").is_("event_id", "null")
+             .order("created_at", desc=True).limit(maximo).execute().data or [])
+    resumen: dict[str, int] = {}
+    for fila in filas:
+        ext = fila.get("extracted") or {}
+        entidad = None
+        if fila.get("entidad_id"):
+            ents = sb.table("entidades").select("*").eq("id", fila["entidad_id"]).limit(1).execute().data
+            entidad = ents[0] if ents else None
+        pueblo = municipio_nombre((entidad or {}).get("municipio_id")) or ext.get("municipio")
+        if not pueblo:
+            continue
+        if fila["origen"] == "web":  # prensa/agendas y webs de los ayuntamientos
+            fuente = {"municipio": pueblo, "nombre": "web", "oficial": True}
+        else:
+            nombre = (entidad or {}).get("nombre")
+            m_pag = re.search(r"^P[aá]gina de Facebook: (.+?) \(", fila.get("raw_text") or "", re.M)
+            if not entidad and m_pag:  # la página se sabe por el texto guardado
+                nombre = m_pag.group(1).strip()
+                ents = sb.table("entidades").select("*").ilike("nombre", nombre).limit(1).execute().data
+                entidad = ents[0] if ents else None
+            fuente = {"municipio": pueblo, "nombre": nombre or "Facebook",
+                      "oficial": entidad_de_confianza(entidad) or es_ayuntamiento(nombre or "")}
+        m = re.search(r"\[Publicado el (\d\d)/(\d\d)/(\d{4})\]", fila.get("raw_text") or "")
+        publicado = f"{m.group(3)}-{m.group(2)}-{m.group(1)}T12:00:00+00:00" if m else fila["created_at"]
+        if dry:
+            print(f"  [reintento] {pueblo} · {ext.get('title')} · {ext.get('starts_at')}")
+            continue
+        try:
+            if not ext.get("starts_at"):
+                ingesta._actualizar_ingesta(fila["id"], estado="nueva")
+                ingesta.procesar_ingesta(fila["id"])
+            res = de_ingesta_a_evento(fila["id"], fuente, fila["origen"], publicado,
+                                      fila.get("raw_text") or "")
+        except Exception as e:
+            res = f"error: {type(e).__name__}"
+        apuntar(res, (fuente.get("nombre") or pueblo) + " · reintento", publicado, ext.get("title") or "",
+                fila.get("source_url"))
+        resumen[f"reintento_{res}"] = resumen.get(f"reintento_{res}", 0) + 1
+    return resumen
 
 
 def leer_direcciones(urls: list[str], dry: bool = False, semanas: int = 4,
@@ -827,9 +927,11 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
     if solo in (None, "articulos") and articulos:
         print(f"Artículos: {len(articulos)}{' (SIMULACIÓN)' if dry else ''}")
         for art in articulos:
-            if not dry and sb.table("ingestas").select("id").eq("source_url", art["url"]).execute().data:
-                anotar("ya_visto", art["municipio"], "", art["url"])
-                continue
+            if not dry:
+                ya = sb.table("ingestas").select("*").eq("source_url", art["url"]).execute().data
+                if ya and not _atascada(ya[0]):
+                    anotar("ya_visto", art["municipio"], "", art["url"])
+                    continue
             leido = leer_articulo(art["url"])
             if not leido and art.get("resumen"):
                 # La web no deja leerla a programas: se usan los datos de la noticia que se
@@ -847,6 +949,13 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             except Exception as e:
                 res = f"error: {type(e).__name__}"
             anotar(res, art["municipio"], leido.get("time") or "", leido["text"].split("\n")[0])
+
+    if not dry and solo in (None, "rapida"):
+        try:
+            for k, v in reintentar_atascadas().items():
+                resumen[k] = resumen.get(k, 0) + v
+        except Exception as e:
+            print(f"Reintento de atascadas: {e!r}")
 
     for k, v in descubiertas.items():
         resumen[k] = resumen.get(k, 0) + v

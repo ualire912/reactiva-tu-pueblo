@@ -784,6 +784,7 @@ export class PanelPage implements OnInit {
 
   textoResultado(r: string): string {
     if (r.startsWith('evento_abierto') || r.startsWith('evento_completo')) return 'Publicado';
+    if (r.startsWith('evento_finalizado') || r.startsWith('evento_realizado')) return 'Publicado (ya celebrado)';
     if (r.startsWith('evento_')) return 'Para revisar';
     if (r === 'duplicado' || r === 'ya_visto' || r === 'repetido') return 'Ya la conocía';
     if (r === 'pagina_oficial_encontrada') return 'Página oficial encontrada';
@@ -798,7 +799,8 @@ export class PanelPage implements OnInit {
   }
 
   claseResultado(r: string): string {
-    if (r.startsWith('evento_abierto') || r.startsWith('pagina')) return 'ok';
+    if (r.startsWith('evento_abierto') || r.startsWith('evento_completo') || r.startsWith('evento_finalizado')
+        || r.startsWith('evento_realizado') || r.startsWith('pagina')) return 'ok';
     if (r.startsWith('evento_') || r.startsWith('falta')) return 'revisar';
     if (r === 'duplicado' || r === 'ya_visto' || r === 'repetido') return 'neutro';
     return 'fuera';

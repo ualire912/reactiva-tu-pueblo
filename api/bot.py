@@ -976,7 +976,8 @@ def _tarjeta_propuesta(ev: dict[str, Any], para_moderador: bool = False) -> str:
 def _botones_propuesta(ev: dict[str, Any]) -> list[list[tuple[str, str]]] | None:
     if ev.get("status") in ("cancelado", "rechazado", "finalizado") or _ya_empezo(ev):
         return None
-    return [[("✏️ Editar", f"edit:{ev['id']}"), ("❌ Cancelar evento", f"cancelev:{ev['id']}")]]
+    return [[("✏️ Editar", f"edit:{ev['id']}"), ("❌ Cancelar evento", f"cancelev:{ev['id']}")],
+            [("🎨 Nuevo cartel", f"cartel:{ev['id']}")]]
 
 
 async def _cmd_mis_propuestas(chat_id: int, perfil: dict[str, Any] | None,
@@ -997,7 +998,7 @@ async def _cmd_mis_propuestas(chat_id: int, perfil: dict[str, Any] | None,
         return
     await send_message(chat_id, f"🗂️ <b>Tus propuestas</b> ({len(evs) + len(sin_confirmar)})", escape=False)
     for ev in evs:
-        await send_message(chat_id, _tarjeta_propuesta(ev), buttons=_botones_propuesta(ev), escape=False)
+        await _enviar_tarjeta_cartel(chat_id, ev, _tarjeta_propuesta(ev), buttons=_botones_propuesta(ev))
     for ing in sin_confirmar:
         titulo = (ing.get("extracted") or {}).get("title") or "Plan sin título"
         await send_message(chat_id, f"📝 «{titulo}»: aún no lo has confirmado. "
@@ -1106,7 +1107,7 @@ def _moderadores_con_telegram() -> list[dict[str, Any]]:
 
 def _botones_moderar(event_id: str) -> list[list[tuple[str, str]]]:
     return [[("✅ Aprobar", f"mod_ok:{event_id}"), ("🚫 Rechazar", f"mod_no:{event_id}")],
-            [("✏️ Editar antes", f"edit:{event_id}")]]
+            [("✏️ Editar antes", f"edit:{event_id}"), ("🎨 Generar cartel", f"cartel:{event_id}")]]
 
 
 async def avisar_moderadores(event_id: str) -> int:
@@ -1176,10 +1177,18 @@ async def _moderar(chat_id: int, perfil: dict[str, Any] | None, event_id: str,
             pass
         ev = _get_evento(event_id) or ev
         await send_message(chat_id, f"✅ «{ev.get('title')}» aprobado y publicado.")
-        await _avisar_a(ev.get("created_by"), f"🎉 ¡Tu plan «{ev.get('title')}» ya está publicado! "
-                                              "Los vecinos ya pueden verlo y apuntarse.")
-        if ev.get("created_by"):
-            await avisar_cartel(str(ev["created_by"]), event_id, "Así ha quedado tu cartel:")
+        cartel = None
+        ingesta_mod = _get_ingesta_module()
+        if ingesta_mod and hasattr(ingesta_mod, "cartel_de"):
+            try:
+                cartel = ingesta_mod.cartel_de(event_id)
+            except Exception as e:
+                print(f"[bot] no se pudo preparar el cartel: {e!r}")
+        await avisar_con_cartel(
+            ev.get("created_by"),
+            f"🎉 ¡Tu plan «{ev.get('title')}» ya está publicado! Los vecinos ya pueden verlo y "
+            "apuntarse.\n\nAquí tienes su cartel: reenvíalo a tus grupos para que se apunte más gente 📣",
+            cartel)
     else:
         motivo = (motivo or "").strip() or "No cumple las normas de la agenda"
         sb.table("eventos").update({"status": "rechazado", "moderation_note": motivo[:300]}) \
@@ -1516,9 +1525,52 @@ _RE_MIS_EVENTOS = re.compile(
 )
 _RE_MIS_PROPUESTAS = re.compile(
     r"\b(mis propuestas|lo que he propuesto|que he propuesto|planes que he propuesto|"
-    r"eventos que he (creado|propuesto|organizado)|mis eventos (creados|propuestos)|"
+    r"(eventos|planes|actividades) (que )?(he |yo he |yo )?(creado|cree|propuesto|organizado|organice|hecho)|"
+    r"mis (eventos|planes) (creados|propuestos|organizados)|mis carteles|"
     r"(editar|cambiar|modificar|cancelar|anular) (mi|el) (evento|plan))\b"
 )
+_RE_MIS_PUNTOS = re.compile(
+    r"\b(mis puntos|cuantos puntos|puntos tengo|mi reputacion|mi puntuacion|"
+    r"(soy|ser|hacerme) publicador\w*|cuanto me falta|puntos de (creador|creadora|reputacion))\b"
+)
+
+
+async def _cmd_mis_puntos(chat_id: int, perfil: dict[str, Any] | None,
+                          force_audio: bool = False) -> None:
+    """Puntos de reputación como creador/a, evento a evento, y lo que falta para publicador."""
+    if not perfil:
+        await send_message(chat_id, "⚠️ Escribe /start antes.")
+        return
+    try:
+        import reputacion
+        total, detalle = reputacion.calcular(perfil["id"])
+        meta = reputacion.PUNTOS_PARA_PUBLICADOR
+    except Exception as e:
+        print(f"[bot] reputación no disponible: {e!r}")
+        await send_message(chat_id, "⚠️ Ahora mismo no puedo calcular tus puntos. Inténtalo luego.")
+        return
+    rol = perfil.get("rol")
+    lineas = [f"🏅 <b>Tus puntos como organizador/a: {total:g}</b>".replace(".", ",")]
+    if rol in ("publicador", "moderador"):
+        lineas.append(f"✅ Eres <b>{escape_html(rol)}</b>: tus planes se publican sin esperar al moderador.")
+    else:
+        falta = max(0.0, meta - total)
+        lineas.append(f"🎯 Con {meta:g} puntos pasas a <b>publicador/a</b> y tus planes se publican "
+                      f"directamente. Te faltan <b>{str(f'{falta:g}').replace('.', ',')}</b>.")
+    if detalle:
+        lineas.append("\n<b>Tus planes valorados:</b>")
+        for d in detalle:
+            signo = f"+{d['puntos']:g}" if d["puntos"] > 0 else f"{d['puntos']:g}"
+            lineas.append(f"• «{escape_html(d['evento'])}»: media {str(d['media']).replace('.', ',')}★ "
+                          f"→ {d['estrellas']}★ = <b>{signo}</b>".replace(".", ","))
+    else:
+        lineas.append("\nAún no tienes planes valorados. Cuando la gente puntúe tus planes, aquí verás tus puntos.")
+    lineas.append("\n<i>Cómo se cuentan: media de las reseñas de cada plan → 1-2★ resta 1 punto, "
+                  "3★ ni suma ni resta, 4-5★ suma 0,5.</i>")
+    await send_message(chat_id, "\n".join(lineas), escape=False,
+                       buttons=[[("🗂️ Mis propuestas", "cmd:mis_propuestas")]])
+    if force_audio:
+        await _enviar_audio(chat_id, f"Tienes {total:g} puntos como organizador.".replace(".", ","))
 _RE_INTERESAN = re.compile(
     r"(me interes|me gustar|me pueden gustar|me podrian gustar|para mi\b|recomiend|"
     r"recomendac|mis gustos|a mi gusto|que me va)"
@@ -1630,7 +1682,9 @@ TEXTO_EJEMPLOS = (
     "🎟️ «Quiero apuntarme a las migas solidarias»\n"
     "📋 «¿A qué planes estoy apuntado?»\n"
     "⭐ «Quiero valorar un plan al que fui»\n"
-    "📝 «Propongo una ruta el sábado en Senés»"
+    "📝 «Propongo una ruta el sábado en Senés»\n"
+    "🗂️ «¿Qué eventos he creado?» (con su cartel)\n"
+    "🏅 «¿Cuántos puntos tengo?»"
 )
 TEXTO_PROPONER = ("📝 ¡Genial que quieras organizar algo!\n\n"
                   "Mándame una foto del cartel 📸, o cuéntame el plan por escrito o con una nota "
@@ -1660,7 +1714,8 @@ async def _saludar(chat_id: int, perfil: dict[str, Any] | None, force_audio: boo
 async def _mostrar_ayuda(chat_id: int, force_audio: bool = False) -> None:
     texto = ("ℹ️ <b>Esto es lo que puedo hacer por ti</b>\n\n" + escape_html(TEXTO_EJEMPLOS)
              + "\n\n<b>Comandos</b>\n/agenda · próximos planes\n/mis_planes · tus planes\n"
-             "/proponer · proponer un plan\n/mis_propuestas · lo que has propuesto (editar o cancelar)\n"
+             "/proponer · proponer un plan\n/mis_propuestas · lo que has creado (cartel, editar o cancelar)\n"
+             "/mis_puntos · tus puntos como organizador/a\n"
              "/moderar · propuestas por revisar (moderadores)\n/ayuda · esta ayuda")
     await send_message(chat_id, texto, buttons=MENU_PRINCIPAL, escape=False)
     if force_audio:
@@ -2235,13 +2290,18 @@ async def _procesar_texto_o_voz(
 
     # Preguntas sobre lo suyo: "en los que he participado", "a qué estoy apuntado"
     norm = _norm_txt(texto_reconocido)
-    if _RE_CARTEL.search(norm):
-        await _cmd_cartel(chat_id, perfil, texto_reconocido, force_audio=es_audio)
+    if _RE_MIS_PUNTOS.search(norm):
+        if not perfil:
+            perfil = await _asegurar_perfil_telegram(chat_id)
+        await _cmd_mis_puntos(chat_id, perfil, force_audio=es_audio)
         return
     if _RE_MIS_PROPUESTAS.search(norm):
         if not perfil:
             perfil = await _asegurar_perfil_telegram(chat_id)
         await _cmd_mis_propuestas(chat_id, perfil, force_audio=es_audio)
+        return
+    if _RE_CARTEL.search(norm):
+        await _cmd_cartel(chat_id, perfil, texto_reconocido, force_audio=es_audio)
         return
     if _RE_MIS_EVENTOS.search(norm):
         if not perfil:
@@ -2411,6 +2471,21 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
             await send_message(chat_id_int, "✍️ Escribe la respuesta y se la mando (o «cancelar»).")
     elif data == "cmd:mis_propuestas":
         await _cmd_mis_propuestas(chat_id_int, perfil)
+    elif data.startswith("cartel:"):
+        # Cartel nuevo (diseño actual con la foto del pueblo): moderador o quien lo organiza
+        ev_id = data.split(":", 1)[1]
+        ev = _get_evento(ev_id)
+        if not _puede_gestionar(perfil, ev):
+            await send_message(chat_id_int, "⚠️ Solo quien organiza el plan (o un moderador) puede generar su cartel.")
+        else:
+            await send_message(chat_id_int, "🎨 Generando el cartel… un momento.")
+            ingesta_mod = _get_ingesta_module()
+            url = ingesta_mod.regenerar_cartel(ev_id) if ingesta_mod and hasattr(ingesta_mod, "regenerar_cartel") else None
+            if url:
+                await send_photo(chat_id_int, url, caption=f"🎨 Cartel de «{ev.get('title')}». Ya está "
+                                                           "puesto en el evento (app y Telegram).", escape=True)
+            else:
+                await send_message(chat_id_int, "⚠️ No he podido generar el cartel ahora. Inténtalo luego.")
     elif data == "cmd:mis_valoraciones":
         await _cmd_mis_valoraciones(chat_id_int, perfil)
     elif data.startswith("rev_edit:"):
@@ -2722,6 +2797,8 @@ async def procesar_update(update: dict[str, Any]) -> None:
                 await _mostrar_ayuda(chat_id_int)
             elif cmd in ("/mis_valoraciones", "/valoraciones"):
                 await _cmd_mis_valoraciones(chat_id_int, perfil)
+            elif cmd in ("/mis_puntos", "/puntos", "/reputacion"):
+                await _cmd_mis_puntos(chat_id_int, perfil)
             elif cmd == "/mis_propuestas":
                 await _cmd_mis_propuestas(chat_id_int, perfil)
             elif cmd == "/moderar":
@@ -2754,6 +2831,36 @@ async def avisar_usuario(
         return bool(sent)
     except Exception:
         return False
+
+
+async def avisar_con_cartel(user_id: str, texto: str, poster_url: str | None,
+                            buttons: list[list[tuple[str, str]]] | None = None) -> bool:
+    """Aviso por Telegram CON el cartel del evento (si no se puede, solo el texto)."""
+    perfil = _get_perfil_by_user_id(str(user_id)) if user_id else None
+    chat_id = (perfil or {}).get("telegram_chat_id")
+    if not chat_id or (perfil or {}).get("notificaciones_activas") is False:
+        return False
+    if poster_url:
+        try:
+            ok = await send_photo(int(chat_id), poster_url, caption=texto[:1000], buttons=buttons, escape=True)
+            if ok:
+                return True
+        except Exception:
+            pass
+    return bool(await send_message(int(chat_id), texto, buttons=buttons, escape=True))
+
+
+async def _enviar_tarjeta_cartel(chat_id: int, ev: dict[str, Any], caption_html: str,
+                         buttons: list[list[tuple[str, str]]] | None = None) -> None:
+    """Tarjeta del evento con su cartel encima (o solo la tarjeta si no tiene)."""
+    if ev.get("poster_url"):
+        try:
+            if await send_photo(chat_id, ev["poster_url"], caption=caption_html[:1000],
+                                buttons=buttons, escape=False):
+                return
+        except Exception:
+            pass
+    await send_message(chat_id, caption_html, buttons=buttons, escape=False)
 
 
 async def _enviar_cartel(chat_id: int, ev: dict[str, Any], intro: str = "") -> bool:

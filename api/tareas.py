@@ -128,15 +128,24 @@ def _paso_avisos_moderacion():
         if not revisado and autores.get(ev["created_by"]) != "usuario":
             continue  # lo publicó él mismo (publicador/moderador): no hay nada que avisar
         ya = sb.table("notificaciones").select("id").eq("user_id", ev["created_by"]) \
-            .eq("event_id", ev["id"]).eq("tipo", "moderacion").limit(1).execute().data
+            .eq("event_id", ev["id"]).in_("tipo", ["moderacion", "aprobado", "rechazado"]).limit(1).execute().data
         if ya:
             continue
         if ev["status"] == "rechazado":
             texto = (f"🚫 Tu plan «{ev['title']}» no se ha publicado.\n"
                      f"Motivo: {ev.get('moderation_note') or 'no cumple las normas de la agenda'}")
         else:
-            texto = f"🎉 ¡Tu plan «{ev['title']}» ya está publicado! Los vecinos ya pueden apuntarse."
-        if avisar(ev["created_by"], texto):
+            texto = (f"🎉 ¡Tu plan «{ev['title']}» ya está publicado! Los vecinos ya pueden apuntarse."
+                     "\n\nAquí tienes su cartel: reenvíalo a tus grupos para que se apunte más gente 📣")
+        enviado = False
+        if ev["status"] != "rechazado":
+            try:  # aprobado (también desde el panel web): el aviso lleva el cartel
+                from ingesta import cartel_de
+                from puentes import avisar_con_cartel
+                enviado = avisar_con_cartel(ev["created_by"], texto, cartel_de(ev["id"]))
+            except Exception as e:
+                log.warning("[tareas] cartel no enviado: %r", e)
+        if enviado or avisar(ev["created_by"], texto):
             sb.table("notificaciones").upsert(
                 {"user_id": ev["created_by"], "event_id": ev["id"], "tipo": "moderacion",
                  "canal": "telegram", "motivo": ev["status"]},
