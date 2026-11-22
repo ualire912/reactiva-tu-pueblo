@@ -33,7 +33,9 @@ import {
   heart,
   sparkles,
   settingsOutline,
+  paperPlane,
 } from 'ionicons/icons';
+import { environment } from '../environments/environment';
 import { AjustesService } from './core/ajustes.service';
 import { TraductorService } from './core/traductor.service';
 import { SupabaseService } from './core/supabase.service';
@@ -59,10 +61,46 @@ export class AppComponent {
   /** La ficha de un plan forma parte de la agenda: se marca esa pestaña abajo. */
   enFichaDePlan = signal(false);
 
+  /** Botón del asistente: lleva al bot de Telegram. */
+  enlaceBot = `https://t.me/${environment.telegramBotUsername || 'ReactivaPuebloBot'}`;
+  /** Hueco ocupado abajo por las barras fijas (pestañas, paginación, guardar, Atrás/Siguiente) para no taparlas. */
+  altoPie = signal(70);
+  verAsistente = signal(true);
+  private medirPendiente = false;
+
+  private medirPie() {
+    if (this.medirPendiente) return;
+    this.medirPendiente = true;
+    // setTimeout y no requestAnimationFrame: este último se para si la pestaña no está a la vista
+    setTimeout(() => {
+      this.medirPendiente = false;
+      const pie = document.querySelector<HTMLElement>(
+        'ion-router-outlet > .ion-page:not(.ion-page-hidden) ion-footer, ion-tabs .ion-page:not(.ion-page-hidden) ion-footer',
+      );
+      // Lo que ocupa abajo la barra fija (o, si no hay, la barra de pestañas): el botón va justo encima
+      const tope = pie ?? document.querySelector<HTMLElement>('ion-tab-bar');
+      const alto = tope ? Math.max(0, Math.round(window.innerHeight - tope.getBoundingClientRect().top)) : 70;
+      if (alto !== this.altoPie()) this.altoPie.set(alto);
+    }, 60);
+  }
+
   constructor() {
     document.documentElement.lang = 'es';
+    // Las barras fijas aparecen y desaparecen al cambiar de pantalla o de paso: se vuelve a medir
+    new MutationObserver(() => this.medirPie()).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+    window.addEventListener('resize', () => this.medirPie());
     this.router.events.pipe(filter((e) => e instanceof NavigationEnd)).subscribe((e) => {
-      this.enFichaDePlan.set((e as NavigationEnd).urlAfterRedirects.startsWith('/evento/'));
+      const url = (e as NavigationEnd).urlAfterRedirects;
+      this.enFichaDePlan.set(url.startsWith('/evento/'));
+      // En la pantalla de entrar ya está el botón de Telegram: ahí no hace falta el atajo
+      this.verAsistente.set(!url.startsWith('/login'));
+      // La pantalla nueva tarda un poco en colocar su barra fija
+      [150, 500, 1200].forEach((ms) => setTimeout(() => this.medirPie(), ms));
     });
     addIcons({
       home,
@@ -91,6 +129,7 @@ export class AppComponent {
       heart,
       sparkles,
       settingsOutline,
+      paperPlane,
     });
   }
 }

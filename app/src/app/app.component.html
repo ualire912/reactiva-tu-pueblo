@@ -39,4 +39,20 @@
       }
     </ion-tab-bar>
   </ion-tabs>
+
+  <!-- Acceso rápido al asistente de Telegram, en todas las pantallas -->
+  @if (verAsistente()) {
+  <a
+    class="boton-asistente"
+    [href]="enlaceBot"
+    target="_blank"
+    rel="noopener"
+    [style]="'--rp-pie-pagina: ' + altoPie() + 'px'"
+    aria-label="Abrir el asistente de Reactiva tu pueblo en Telegram"
+    title="Pregunta lo que quieras al asistente en Telegram"
+  >
+    <ion-icon name="paper-plane" aria-hidden="true"></ion-icon>
+    <span>Asistente</span>
+  </a>
+  }
 </ion-app>
