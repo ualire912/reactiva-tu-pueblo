@@ -123,8 +123,8 @@ export class ApiService {
   }
 
   /** Lanza la búsqueda al momento (texto vacío = el nombre de los 5 pueblos). */
-  buscarAhora(texto?: string): Promise<{ lanzado: boolean; consultas: string[] }> {
-    return this.peticion('/moderacion/agente/buscar', { method: 'POST', body: { texto: texto || null } });
+  buscarAhora(texto?: string, guardar = false): Promise<{ lanzado: boolean; consultas: string[] }> {
+    return this.peticion('/moderacion/agente/buscar', { method: 'POST', body: { texto: texto || null, guardar } });
   }
 
   /** Borra la cuenta de quien tiene la sesión abierta. */

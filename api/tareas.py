@@ -287,7 +287,8 @@ def _ahora_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | None = None) -> bool:
+def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | None = None,
+                  urls: list[str] | None = None, guardar: bool = False) -> bool:
     """Arranca una pasada del agente en su propio hilo. False si ya hay una en marcha."""
     if _AGENTE["corriendo"]:
         return False
@@ -299,7 +300,9 @@ def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | No
     def correr():
         try:
             import agente_eventos
-            if consultas is not None:  # "Buscar ahora" del panel: solo esas búsquedas
+            if urls:  # "Buscar ahora" con la dirección de una página o perfil
+                r = agente_eventos.leer_direcciones(urls, guardar=guardar)
+            elif consultas is not None:  # "Buscar ahora" del panel: solo esas búsquedas
                 r = agente_eventos.ejecutar(semanas=2, solo="busqueda", consultas=consultas)
             else:
                 # La pasada diaria lee además las páginas de las organizaciones, las webs de

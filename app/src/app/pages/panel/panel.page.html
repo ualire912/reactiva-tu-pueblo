@@ -207,13 +207,19 @@
           }
           <div class="agente-buscar">
             <label class="sr-only" for="texto-agente">Buscar algo concreto (opcional)</label>
-            <input id="texto-agente" type="text" [(ngModel)]="textoAgente" maxlength="100" placeholder="Opcional: algo concreto, p. ej. «torneo de fútbol Senés»" (keyup.enter)="buscarAhora()" />
+            <input id="texto-agente" type="text" [(ngModel)]="textoAgente" maxlength="300" placeholder="Opcional: algo concreto («torneo de fútbol Senés») o la dirección de una página o perfil de Facebook" (keyup.enter)="buscarAhora()" />
             <ion-button (click)="buscarAhora()" [disabled]="estadoAgente?.corriendo || lanzandoAgente">
               <ion-icon slot="start" name="search" aria-hidden="true"></ion-icon>
               {{ estadoAgente?.corriendo ? 'Buscando…' : 'Buscar ahora' }}
             </ion-button>
           </div>
-          <p class="texto-suave agente-ayuda">Sin texto, busca el nombre de los 5 pueblos. Lo que encuentre aparece aquí o en Pendientes; si es de una organización de confianza, se publica solo.</p>
+          @if (textoAgente.trim().startsWith('http')) {
+            <label class="agente-guardar">
+              <input type="checkbox" [(ngModel)]="guardarPagina" />
+              Leer siempre esta página (es un ayuntamiento u organización de confianza: sus planes se publicarán solos y se mirará cada hora)
+            </label>
+          }
+          <p class="texto-suave agente-ayuda">Sin texto, busca el nombre de los 5 pueblos. Facebook no enseña en su buscador las publicaciones de perfiles nuevos o con poca actividad: en ese caso, pega aquí la dirección del perfil o de la página (por ejemplo, https://www.facebook.com/…) y se leen sus últimas publicaciones. Lo que encuentre aparece aquí o en Pendientes; si es de una organización de confianza, se publica solo.</p>
         </section>
 
         @if (ingestas.length === 0) {

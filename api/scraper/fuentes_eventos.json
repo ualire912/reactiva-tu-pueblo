@@ -26,12 +26,17 @@
     "dias_atras": 14,
     "consultas_cada_hora": [
       "{pueblo}"
+    ],
+    "consultas_diarias": [
+      "Ayuntamiento de {pueblo}"
     ]
   },
   "paginas_facebook": {
-    "_ayuda": "Lectura diaria de las páginas de las organizaciones descubiertas (apify/facebook-posts-scraper).",
+    "_ayuda": "Páginas de Facebook que se leen directamente (apify/facebook-posts-scraper). Las OFICIALES (ayuntamientos y organizaciones de confianza) cada hora, solo lo de los últimos días; todas las descubiertas, una vez al día. Una página llamada 'Ayuntamiento de <pueblo>' se marca oficial sola; el moderador puede añadir más desde el panel (Buscar ahora + 'Leer siempre esta página').",
     "actor": "apify/facebook-posts-scraper",
-    "posts_por_pagina": 10
+    "posts_por_pagina": 10,
+    "posts_por_pagina_cada_hora": 3,
+    "desde_cada_hora": "3 days"
   },
   "webs_ayuntamientos": [
     {
@@ -80,7 +85,14 @@
       ]
     }
   ],
-  "facebook": [],
+  "facebook": [
+    {
+      "municipio": "Senés",
+      "nombre": "Ayuntamiento de Senés",
+      "url": "https://www.facebook.com/profile.php?id=61551352857893",
+      "oficial": true
+    }
+  ],
   "articulos": [
     {
       "municipio": "Lucainena de las Torres",

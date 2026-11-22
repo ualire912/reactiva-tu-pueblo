@@ -939,3 +939,20 @@ html.tema-oscuro {
     font-size: 0.88rem;
   }
 }
+.agente-card .agente-guardar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+
+  input {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    margin-top: 2px;
+    accent-color: var(--rp-principal);
+  }
+}

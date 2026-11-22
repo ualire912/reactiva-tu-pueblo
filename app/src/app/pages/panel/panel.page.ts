@@ -685,6 +685,7 @@ export class PanelPage implements OnInit {
   // ---------- Búsqueda en Facebook (agente) ----------
   estadoAgente: EstadoAgente | null = null;
   textoAgente = '';
+  guardarPagina = false;
   lanzandoAgente = false;
   private sondeoAgente?: ReturnType<typeof setInterval>;
 
@@ -709,7 +710,9 @@ export class PanelPage implements OnInit {
     this.lanzandoAgente = true;
     this.cdr.detectChanges();
     try {
-      const r = await this.api.buscarAhora(this.textoAgente.trim());
+      const texto = this.textoAgente.trim();
+      const r = await this.api.buscarAhora(texto, texto.startsWith('http') && this.guardarPagina);
+      this.guardarPagina = false;
       this.avisos.info(`Buscando en Facebook: ${r.consultas.join(', ')}. Te avisamos al terminar.`);
       this.textoAgente = '';
       await this.cargarEstadoAgente();
@@ -742,6 +745,8 @@ export class PanelPage implements OnInit {
     if (revisar) partes.push(`${revisar} para revisar`);
     if (repetidas) partes.push(`${repetidas} ya conocidas`);
     if (ignoradas) partes.push(`${ignoradas} descartadas (no eran planes de los pueblos)`);
+    if (r['sin_publicaciones_visibles']) partes.push('Facebook no deja ver publicaciones públicas en esa dirección');
+    if (r['pagina_guardada_como_oficial']) partes.push('la página queda guardada como oficial y se leerá cada hora');
     return partes.length ? partes.join(', ') + '.' : 'No ha encontrado publicaciones nuevas.';
   }
 

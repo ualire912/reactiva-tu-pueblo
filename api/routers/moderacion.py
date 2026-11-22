@@ -13,6 +13,7 @@ Endpoints (🛡️ solo moderador):
   POST /moderacion/promociones/revisar   -> revisa YA a todos los candidatos (botón del panel/demo)
   POST /moderacion/promociones/decidir   {user_id, accion: promover|descartar|revocar}
 """
+import re
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -157,6 +158,7 @@ def crear_plan_de_ingesta(ingesta_id: str, _mod=Depends(require_moderador)):
 # ── Búsqueda de eventos en Facebook: estado y "Buscar ahora" ──
 class BuscarAhora(BaseModel):
     texto: str | None = None  # vacío = el nombre de los 5 pueblos
+    guardar: bool = False     # con una dirección: leerla siempre como página oficial
 
 
 @router.get("/moderacion/agente")
@@ -171,8 +173,15 @@ def buscar_ahora(body: BuscarAhora | None = None, _mod=Depends(require_moderador
     import tareas
     if not tareas.estado_agente()["apify_configurado"]:
         raise HTTPException(400, "Falta APIFY_TOKEN en Render: sin él no se puede buscar en Facebook.")
-    texto = ((body.texto if body else None) or "").strip()[:100]
-    consultas = [texto] if texto else list(ia.PUEBLOS)
+    texto = ((body.texto if body else None) or "").strip()[:300]
+    if texto.startswith("http"):
+        if not re.match(r"https?://(www\.|m\.|web\.)?(facebook|fb)\.com/", texto):
+            raise HTTPException(400, "Esa dirección no es de Facebook.")
+        if not tareas.lanzar_agente("dirección pegada en el panel", urls=[texto],
+                                    guardar=bool(body and body.guardar)):
+            raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
+        return {"lanzado": True, "consultas": [texto]}
+    consultas = [texto[:100]] if texto else list(ia.PUEBLOS)
     if not tareas.lanzar_agente("a mano desde el panel", consultas=consultas):
         raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
     return {"lanzado": True, "consultas": consultas}
