@@ -793,6 +793,7 @@ export class PanelPage implements OnInit {
     if (r.startsWith('ignorado_no_parece') || r === 'descartado_reglas') return 'No parece un plan';
     if (r === 'descartada' || r === 'no_evento') return 'Descartada por la IA';
     if (r === 'spam') return 'Spam';
+    if (r === 'esperando_confirmacion') return 'Preguntado a su responsable';
     if (r.startsWith('falta')) return 'Le faltan datos';
     if (r.startsWith('error')) return 'Error';
     return r;
