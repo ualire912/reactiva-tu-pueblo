@@ -843,7 +843,10 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
     solo='paginas' | 'busqueda' | 'webs' | 'articulos' | None (todo).
     rapida=True (cada hora): solo unas pocas búsquedas por turnos; sin páginas ni artículos."""
     DETALLE.clear()
-    descubiertas = descubrir_paginas(dry) if descubrir else {}
+    # Pasadas automáticas (sin consultas): con "automatica": false no se busca por palabras ni
+    # se descubren páginas (son los actores de Apify que más gastan). El panel sí puede.
+    sin_busqueda_auto = consultas is None and cargar_busqueda(fuentes).get("automatica") is False
+    descubiertas = descubrir_paginas(dry) if descubrir and not sin_busqueda_auto else {}
     paginas, articulos = cargar_fuentes(fuentes)
     cfg_paginas = cargar_config(fuentes).get("paginas_facebook") or {}
     if not archivo:
@@ -911,7 +914,9 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
         # Pasada diaria: buscar las páginas de los ayuntamientos ("Ayuntamiento de Tahal"...)
         consultas = [c.replace("{pueblo}", p) for c in busqueda["consultas_diarias"]
                      for p in (busqueda.get("pueblos") or ia.PUEBLOS)]
-    if solo in (None, "busqueda", "rapida") and busqueda.get("consultas") and (
+    if sin_busqueda_auto and solo in (None, "busqueda", "rapida"):
+        print("Facebook (búsqueda): desactivada en las pasadas automáticas (ahorro de Apify)")
+    elif solo in (None, "busqueda", "rapida") and busqueda.get("consultas") and (
             archivo_busqueda or os.getenv("APIFY_TOKEN")):
         if archivo_busqueda:
             with open(archivo_busqueda, encoding="utf-8") as f:
