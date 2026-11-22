@@ -378,8 +378,19 @@ def _paso_agente():
             _AGENTE["descubrir"] = ahora
 
 
+def _paso_carteles():
+    """Todo plan publicado tiene cartel: si alguno no lo tiene (creado desde la web, aprobado
+    en el panel...), se genera con sus datos y se guarda. Pocos por vuelta (son imágenes)."""
+    from db import sb
+    from ingesta import regenerar_cartel
+    sin = sb.table("eventos").select("id,title").is_("poster_url", "null")         .in_("status", ["abierto", "completo", "inscripcion_cerrada", "en_curso"])         .order("starts_at").limit(3).execute().data
+    for ev in sin:
+        if regenerar_cartel(ev["id"]):
+            log.info("[tareas] cartel creado para «%s»", ev["title"])
+
+
 def ciclo():
-    for paso in (_paso_estados, _paso_resenas, _paso_reputacion, _paso_rag,
+    for paso in (_paso_estados, _paso_resenas, _paso_reputacion, _paso_rag, _paso_carteles,
                  _paso_propuestas_atascadas, _paso_avisos_moderacion, _paso_recordatorios, _paso_recomendaciones, _paso_agente):
         try:
             paso()

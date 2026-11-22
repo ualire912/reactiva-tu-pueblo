@@ -97,6 +97,11 @@ export class ApiService {
     return this.peticion('/recomendaciones/enviar', { method: 'POST', body: userId ? { user_id: userId } : {} });
   }
 
+  /** Genera (o regenera) el cartel de un plan con sus datos y lo guarda en el evento. */
+  generarCartel(eventId: string): Promise<{ poster_url: string }> {
+    return this.peticion('/ia/cartel', { method: 'POST', body: { event_id: eventId } });
+  }
+
   /** Cambia la valoración que YA hizo el usuario (estrellas y, si se pasa, el comentario). */
   cambiarResena(eventId: string, estrellas: number, comentario?: string | null): Promise<any> {
     return this.peticion(`/resenas/${eventId}`, { method: 'PUT', body: { estrellas, comentario } });

@@ -94,7 +94,14 @@ def avisar_evento(event_id: str, body: AvisarIn, user=Depends(require_user)):
         except Exception as e:  # si uno falla, siguen los demás
             print(f"[avisar] error con {uid}: {e}")
 
-    # Al publicarse, el autor recibe también su cartel
+    # Al publicarse, el plan tiene SIEMPRE cartel (aunque el autor no tenga Telegram)
+    if body.tipo == "aprobado":
+        try:
+            from ingesta import cartel_de
+            cartel_de(event_id)
+        except Exception as e:
+            print(f"[avisar] no se pudo crear el cartel: {e!r}")
+    # ...y el autor lo recibe por Telegram
     if body.tipo == "aprobado" and ev.get("created_by"):
         from puentes import avisar_cartel
         avisar_cartel(ev["created_by"], event_id, "Así ha quedado tu cartel:")
