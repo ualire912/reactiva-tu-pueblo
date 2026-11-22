@@ -11,6 +11,8 @@
     },
     "por_consulta": 6,
     "por_pasada_rapida": 1,
+    "automatica": false,
+    "_automatica": "false = las pasadas automáticas NO buscan por palabras ni descubren páginas nuevas (ahorra crédito de Apify). El «Buscar ahora» del panel sigue funcionando. Pon true para volver a activarlo.",
     "pueblos": [
       "Senés",
       "Lucainena de las Torres",
@@ -34,8 +36,8 @@
   "paginas_facebook": {
     "_ayuda": "Páginas de Facebook que se leen directamente (apify/facebook-posts-scraper). Las OFICIALES (ayuntamientos y organizaciones de confianza) cada hora, solo lo de los últimos días; todas las descubiertas, una vez al día. Una página llamada 'Ayuntamiento de <pueblo>' se marca oficial sola; el moderador puede añadir más desde el panel (Buscar ahora + 'Leer siempre esta página').",
     "actor": "apify/facebook-posts-scraper",
-    "posts_por_pagina": 10,
-    "posts_por_pagina_cada_hora": 3,
+    "posts_por_pagina": 3,
+    "posts_por_pagina_cada_hora": 1,
     "desde_cada_hora": "3 days"
   },
   "webs_ayuntamientos": [
