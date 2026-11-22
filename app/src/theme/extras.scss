@@ -883,3 +883,59 @@ html.tema-oscuro {
     filter: invert(1) hue-rotate(180deg);
   }
 }
+
+/* ==========================================================================
+   Panel · Búsqueda en Facebook (estado y "Buscar ahora")
+   ========================================================================== */
+.agente-card {
+  margin: 8px 0 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--rp-borde);
+  border-left: 4px solid #4e4386;
+  border-radius: 12px;
+  background: #ffffff;
+
+  .agente-cabecera {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-family: var(--rp-fuente-titulos);
+    font-size: 1.15rem;
+  }
+  .agente-estado {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0 0;
+  }
+  .agente-buscar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+
+    input {
+      flex: 1 1 260px;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: 1.5px solid var(--rp-borde-campo);
+      border-radius: 8px;
+      font: inherit;
+      color: var(--rp-tinta);
+      background: #ffffff;
+    }
+  }
+  .agente-ayuda {
+    margin: 8px 0 0;
+    font-size: 0.88rem;
+  }
+}

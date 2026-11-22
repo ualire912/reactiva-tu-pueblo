@@ -11,6 +11,19 @@ export class ApiError extends Error {
   }
 }
 
+export interface EstadoAgente {
+  apify_configurado: boolean;
+  ia_configurada: boolean;
+  corriendo: boolean;
+  inicio: string | null;
+  fin: string | null;
+  motivo: string | null;
+  resultado: Record<string, number> | null;
+  error: string | null;
+  cada_minutos: number;
+  proxima_en_minutos: number;
+}
+
 // El servidor gratuito de Render puede tardar ~50 s en despertar
 const TIEMPO_MAXIMO_MS = 65000;
 
@@ -102,6 +115,16 @@ export class ApiService {
   /** Detectados por IA → plan pendiente, con su organizador real (no el moderador). */
   crearPlanDeIngesta(ingestaId: string): Promise<{ id: string; status: string }> {
     return this.peticion(`/moderacion/ingestas/${ingestaId}/crear-plan`, { method: 'POST' });
+  }
+
+  /** Búsqueda de eventos en Facebook: qué hizo la última vez y si está configurada. */
+  estadoAgente(): Promise<EstadoAgente> {
+    return this.peticion('/moderacion/agente');
+  }
+
+  /** Lanza la búsqueda al momento (texto vacío = el nombre de los 5 pueblos). */
+  buscarAhora(texto?: string): Promise<{ lanzado: boolean; consultas: string[] }> {
+    return this.peticion('/moderacion/agente/buscar', { method: 'POST', body: { texto: texto || null } });
   }
 
   /** Borra la cuenta de quien tiene la sesión abierta. */

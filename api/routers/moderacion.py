@@ -152,3 +152,27 @@ def crear_plan_de_ingesta(ingesta_id: str, _mod=Depends(require_moderador)):
         raise HTTPException(400, f"Falta {faltan} para crear el plan. Edita la publicación o "
                                  f"créalo a mano." if faltan else ev["error"])
     return ev
+
+
+# ── Búsqueda de eventos en Facebook: estado y "Buscar ahora" ──
+class BuscarAhora(BaseModel):
+    texto: str | None = None  # vacío = el nombre de los 5 pueblos
+
+
+@router.get("/moderacion/agente")
+def estado_del_agente(_mod=Depends(require_moderador)):
+    import tareas
+    return tareas.estado_agente()
+
+
+@router.post("/moderacion/agente/buscar")
+def buscar_ahora(body: BuscarAhora | None = None, _mod=Depends(require_moderador)):
+    import ia
+    import tareas
+    if not tareas.estado_agente()["apify_configurado"]:
+        raise HTTPException(400, "Falta APIFY_TOKEN en Render: sin él no se puede buscar en Facebook.")
+    texto = ((body.texto if body else None) or "").strip()[:100]
+    consultas = [texto] if texto else list(ia.PUEBLOS)
+    if not tareas.lanzar_agente("a mano desde el panel", consultas=consultas):
+        raise HTTPException(409, "Ya hay una búsqueda en marcha. Espera a que termine.")
+    return {"lanzado": True, "consultas": consultas}

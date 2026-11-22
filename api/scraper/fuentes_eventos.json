@@ -1,7 +1,7 @@
 {
   "_ayuda": "Fuentes de eventos REALES. La app NO necesita direcciones de páginas de Facebook: busca sola publicaciones públicas con los nombres de los pueblos ('busqueda_facebook', actor de Apify). Las organizaciones que encuentra se guardan como 'entidades' y sus páginas se leen una vez al día con apify/facebook-posts-scraper ('paginas_facebook'). 'webs_ayuntamientos': webs municipales que se leen con ScrapeGraphAI + Gemini una vez al día. 'facebook': páginas extra opcionales. 'articulos': noticias sueltas. Gasto en Apify ajustado al plan gratuito (5 $/mes): AGENTE_CADA_MIN=180 por defecto.",
   "busqueda_facebook": {
-    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Cada hora se lanzan 'por_pasada_rapida' búsquedas (por turnos) y una vez al día todas. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> se publican solas si son de confianza (marcadas por el moderador o con responsable Publicador) y la IA está segura; si no, al moderador. Personas -> al moderador, solo si la IA ve claro que proponen un evento. Spam y contenido inapropiado se descartan. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
+    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook ({pueblo} se cambia por cada pueblo). Cada hora se busca el nombre de un pueblo, por turnos ('consultas_cada_hora'); el moderador puede lanzar la búsqueda al momento desde el panel (Detectados por IA -> Buscar ahora), con los 5 pueblos o un texto concreto. 'consultas' son las búsquedas más amplias. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones de confianza -> publicadas; resto -> moderador. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' mirando su pestaña Input.",
     "actor": "scraper_one/facebook-posts-search",
     "entrada": {
       "query": "{q}",
@@ -9,7 +9,7 @@
       "searchType": "latest",
       "startDate": "{desde}"
     },
-    "por_consulta": 8,
+    "por_consulta": 6,
     "por_pasada_rapida": 1,
     "pueblos": [
       "Senés",
@@ -23,7 +23,10 @@
       "{pueblo} fiesta",
       "{pueblo} evento"
     ],
-    "dias_atras": 14
+    "dias_atras": 14,
+    "consultas_cada_hora": [
+      "{pueblo}"
+    ]
   },
   "paginas_facebook": {
     "_ayuda": "Lectura diaria de las páginas de las organizaciones descubiertas (apify/facebook-posts-scraper).",

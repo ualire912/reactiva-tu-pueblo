@@ -209,8 +209,9 @@ def consultas_de_la_pasada(cfg: dict, rapida: bool, hora: int | None = None) -> 
     """Todas las búsquedas (pueblo x palabra). En la pasada rápida (cada hora) solo unas
     pocas, por turnos: a lo largo del día se cubren todas sin gastar de más en Apify."""
     pueblos = cfg.get("pueblos") or ia.PUEBLOS
-    todas = [c.replace("{pueblo}", p) for c in cfg.get("consultas", []) for p in pueblos] \
-        if "{pueblo}" in "".join(cfg.get("consultas", [])) else list(cfg.get("consultas", []))
+    plantillas = (cfg.get("consultas_cada_hora") if rapida else None) or cfg.get("consultas", [])
+    todas = [c.replace("{pueblo}", p) for c in plantillas for p in pueblos] \
+        if "{pueblo}" in "".join(plantillas) else list(plantillas)
     k = int(cfg.get("por_pasada_rapida", 6))
     if not rapida or k <= 0 or k >= len(todas):
         return todas
@@ -219,14 +220,18 @@ def consultas_de_la_pasada(cfg: dict, rapida: bool, hora: int | None = None) -> 
     return todas[turno * k:(turno + 1) * k]
 
 
-def buscar_en_facebook(cfg: dict, semanas: int, rapida: bool = False) -> list[dict]:
+def buscar_en_facebook(cfg: dict, semanas: int, rapida: bool = False,
+                       consultas: list[str] | None = None) -> list[dict]:
     """Lanza el actor de búsqueda de Apify con cada consulta. La forma de la entrada se
     configura en fuentes_eventos.json ('entrada'), porque cada actor la pide distinta."""
     token = os.getenv("APIFY_TOKEN", "").strip()
     actor = cfg.get("actor", "scraper_one/facebook-posts-search").replace("/", "~")
     plantilla = cfg.get("entrada") or {"query": "{q}", "maxResults": "{n}"}
     n = int(cfg.get("por_consulta", 15))
-    consultas = consultas_de_la_pasada(cfg, rapida)
+    if not token:
+        print("Facebook (búsqueda): falta APIFY_TOKEN -> no se busca")
+        raise RuntimeError("Falta APIFY_TOKEN en el servidor: no se puede buscar en Facebook")
+    consultas = consultas if consultas is not None else consultas_de_la_pasada(cfg, rapida)
     print(f"Facebook (búsqueda): {len(consultas)} consultas{' (pasada rápida)' if rapida else ''}")
     resultados: list[dict] = []
     for q in consultas:
@@ -531,7 +536,7 @@ def cargar_busqueda(ruta: str = FUENTES) -> dict:
 def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
              fuentes: str = FUENTES, solo: str | None = None,
              archivo_busqueda: str | None = None, rapida: bool = False,
-             busqueda_completa: bool = True) -> dict[str, int]:
+             busqueda_completa: bool = True, consultas: list[str] | None = None) -> dict[str, int]:
     """Una pasada. La usa también la tarea programada de Render (tareas.py).
     solo='paginas' | 'busqueda' | 'webs' | 'articulos' | None (todo).
     rapida=True (cada hora): solo unas pocas búsquedas por turnos; sin páginas ni artículos."""
@@ -588,7 +593,7 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             with open(archivo_busqueda, encoding="utf-8") as f:
                 crudos = json.load(f)
         else:
-            crudos = buscar_en_facebook(busqueda, semanas, rapida or not busqueda_completa)
+            crudos = buscar_en_facebook(busqueda, semanas, rapida or not busqueda_completa, consultas)
         vistos: set[str] = set()
         for crudo in crudos:
             res = normalizar_resultado(crudo)

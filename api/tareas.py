@@ -273,45 +273,82 @@ def _paso_recomendaciones():
             log.info("[tareas] recomendación enviada a %s (%s planes)", u["id"][:8], len(recs))
 
 
-_AGENTE = {"ultimo": 0.0, "completo": 0.0}
-# Facebook se mira cada 3 horas (1 búsqueda por turnos, 8 publicaciones recientes) y una
-# vez al día se leen las páginas de las organizaciones y las webs de los ayuntamientos.
-# Así cabe en el plan gratuito de Apify (5 $/mes). Más a menudo: AGENTE_CADA_MIN en Render.
-CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "180")) * 60
+_AGENTE = {"ultimo": 0.0, "completo": 0.0, "corriendo": False, "inicio": None, "fin": None,
+           "motivo": None, "resultado": None, "error": None}
+# Facebook: cada hora se busca el nombre de un pueblo (por turnos: Senés, Lucainena...),
+# y una vez al día se leen las páginas de las organizaciones y las webs de los ayuntamientos.
+# El moderador puede lanzar la búsqueda al momento desde el panel ("Buscar ahora").
+# Más a menudo: AGENTE_CADA_MIN en Render (minutos). Cada búsqueda gasta crédito de Apify.
+CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "60")) * 60
 CADA_AGENTE_COMPLETO = 24 * 3600
 
 
-def _paso_agente():
-    """Facebook (si hay APIFY_TOKEN) + noticias -> eventos reales."""
-    ahora = time.time()
-    if _AGENTE.get("corriendo") or ahora - _AGENTE["ultimo"] < CADA_AGENTE:
-        return
-    _AGENTE["ultimo"] = ahora
-    completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
-    if completo:
-        _AGENTE["completo"] = ahora
-    import os
+def _ahora_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def lanzar_agente(motivo: str, completo: bool = False, consultas: list[str] | None = None) -> bool:
+    """Arranca una pasada del agente en su propio hilo. False si ya hay una en marcha."""
+    if _AGENTE["corriendo"]:
+        return False
     import sys
     carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scraper")
     if carpeta not in sys.path:
         sys.path.insert(0, carpeta)
-    import agente_eventos
 
     def correr():
         try:
-            # La pasada diaria lee además las páginas de las organizaciones y las noticias;
-            # las búsquedas siguen por turnos (la rotación horaria ya las cubre cada ~10 h)
-            r = agente_eventos.ejecutar(semanas=6 if completo else 1, rapida=not completo,
-                                        busqueda_completa=False)
-            log.info("[tareas] agente de eventos (%s): %s", "completo" if completo else "rápido", r)
+            import agente_eventos
+            if consultas is not None:  # "Buscar ahora" del panel: solo esas búsquedas
+                r = agente_eventos.ejecutar(semanas=2, solo="busqueda", consultas=consultas)
+            else:
+                # La pasada diaria lee además las páginas de las organizaciones, las webs de
+                # los ayuntamientos y las noticias
+                r = agente_eventos.ejecutar(semanas=6 if completo else 1, rapida=not completo,
+                                            busqueda_completa=False)
+            _AGENTE["resultado"] = r
+            log.info("[tareas] agente de eventos (%s): %s", motivo, r)
         except BaseException as e:  # nada de lo que pase aquí para las demás tareas
+            _AGENTE["error"] = f"{type(e).__name__}: {str(e)[:200]}"
             log.error("[tareas] agente de eventos falló: %r", e)
         finally:
+            _AGENTE["fin"] = _ahora_iso()
             _AGENTE["corriendo"] = False
 
+    _AGENTE.update(corriendo=True, inicio=_ahora_iso(), fin=None, motivo=motivo,
+                   resultado=None, error=None)
     # En su propio hilo: Apify puede tardar minutos y los recordatorios no deben esperar
-    _AGENTE["corriendo"] = True
     threading.Thread(target=correr, name="agente-eventos", daemon=True).start()
+    return True
+
+
+def estado_agente() -> dict:
+    """Para el panel del moderador: qué hizo la última búsqueda y cuándo toca la siguiente."""
+    falta = CADA_AGENTE - (time.time() - _AGENTE["ultimo"]) if _AGENTE["ultimo"] else 0
+    return {
+        "apify_configurado": bool(os.environ.get("APIFY_TOKEN", "").strip()),
+        "ia_configurada": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "corriendo": _AGENTE["corriendo"],
+        "inicio": _AGENTE["inicio"],
+        "fin": _AGENTE["fin"],
+        "motivo": _AGENTE["motivo"],
+        "resultado": _AGENTE["resultado"],
+        "error": _AGENTE["error"],
+        "cada_minutos": CADA_AGENTE // 60,
+        "proxima_en_minutos": max(0, int(falta // 60)),
+    }
+
+
+def _paso_agente():
+    """Facebook (si hay APIFY_TOKEN) + webs + noticias -> eventos reales."""
+    ahora = time.time()
+    if _AGENTE["corriendo"] or ahora - _AGENTE["ultimo"] < CADA_AGENTE:
+        return
+    completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
+    if lanzar_agente("diaria" if completo else "cada hora", completo=completo):
+        _AGENTE["ultimo"] = ahora
+        if completo:
+            _AGENTE["completo"] = ahora
 
 
 def ciclo():

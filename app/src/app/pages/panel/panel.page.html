@@ -179,6 +179,43 @@
       <!-- 2. DETECTADOS POR IA -->
       @if (pestana === 'ia') {
         <h1 class="panel-titulo">Publicaciones detectadas en Facebook y Telegram</h1>
+
+        <!-- Búsqueda automática en Facebook: estado y "Buscar ahora" -->
+        <section class="agente-card" aria-labelledby="titulo-agente">
+          <div class="agente-cabecera">
+            <h2 id="titulo-agente"><ion-icon name="search" aria-hidden="true"></ion-icon> Búsqueda en Facebook</h2>
+            @if (estadoAgente; as e) {
+              <span class="chip-mini" [class.rojo]="!e.apify_configurado">{{ e.apify_configurado ? 'Activa · cada ' + textoMinutos(e.cada_minutos) : 'Sin configurar' }}</span>
+            }
+          </div>
+          @if (estadoAgente; as e) {
+            @if (!e.apify_configurado) {
+              <p class="aviso-faltan"><ion-icon name="warning-outline" aria-hidden="true"></ion-icon> Falta <strong>APIFY_TOKEN</strong> en Render: sin él la app no puede buscar en Facebook.</p>
+            }
+            @if (e.corriendo) {
+              <p class="agente-estado"><ion-spinner name="dots"></ion-spinner> Buscando ahora ({{ e.motivo }})… puede tardar unos minutos.</p>
+            } @else if (e.fin) {
+              <p class="agente-estado">Última búsqueda: <strong>{{ fechaCorta(e.fin) }}</strong> ({{ e.motivo }}). {{ resumenAgente(e) }}</p>
+            } @else {
+              <p class="agente-estado">Aún no se ha buscado desde que arrancó el servidor.@if (e.apify_configurado) { La próxima, en {{ textoMinutos(e.proxima_en_minutos) }}.}</p>
+            }
+            @if (e.error) {
+              <p class="aviso-faltan"><ion-icon name="warning-outline" aria-hidden="true"></ion-icon> La última búsqueda falló: {{ e.error }}</p>
+            }
+          } @else {
+            <p class="texto-suave">Consultando el estado…</p>
+          }
+          <div class="agente-buscar">
+            <label class="sr-only" for="texto-agente">Buscar algo concreto (opcional)</label>
+            <input id="texto-agente" type="text" [(ngModel)]="textoAgente" maxlength="100" placeholder="Opcional: algo concreto, p. ej. «torneo de fútbol Senés»" (keyup.enter)="buscarAhora()" />
+            <ion-button (click)="buscarAhora()" [disabled]="estadoAgente?.corriendo || lanzandoAgente">
+              <ion-icon slot="start" name="search" aria-hidden="true"></ion-icon>
+              {{ estadoAgente?.corriendo ? 'Buscando…' : 'Buscar ahora' }}
+            </ion-button>
+          </div>
+          <p class="texto-suave agente-ayuda">Sin texto, busca el nombre de los 5 pueblos. Lo que encuentre aparece aquí o en Pendientes; si es de una organización de confianza, se publica solo.</p>
+        </section>
+
         @if (ingestas.length === 0) {
           <p class="texto-suave">Aún no hay publicaciones. Prueba a lanzar una desde la sección Demo.</p>
         }

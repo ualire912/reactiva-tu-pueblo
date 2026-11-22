@@ -37,7 +37,7 @@ import {
   personRemoveOutline
 } from 'ionicons/icons';
 import { SupabaseService } from '../../core/supabase.service';
-import { ApiService } from '../../core/api.service';
+import { ApiService, EstadoAgente } from '../../core/api.service';
 import { AvisosService } from '../../core/avisos.service';
 import { GeocodingService } from '../../core/geocoding.service';
 import {
@@ -170,6 +170,18 @@ export class PanelPage implements OnInit {
     this.pestana = id;
     this.busqueda = '';
     this.cdr.detectChanges();
+    if (id === 'ia') this.vigilarAgente();
+  }
+
+  /** Estado de la búsqueda en Facebook; si hay una en marcha, se sigue cada pocos segundos. */
+  private async vigilarAgente() {
+    await this.cargarEstadoAgente();
+    clearInterval(this.sondeoAgente);
+    if (this.estadoAgente?.corriendo) this.sondeoAgente = setInterval(() => this.cargarEstadoAgente(), 8000);
+  }
+
+  ionViewWillLeave() {
+    clearInterval(this.sondeoAgente);
   }
 
   estiloCategoria = estiloCategoria;
@@ -670,6 +682,69 @@ export class PanelPage implements OnInit {
   }
 
   // --- PESTAÑA 2: DETECTADOS POR IA (INGESTAS) ---
+  // ---------- Búsqueda en Facebook (agente) ----------
+  estadoAgente: EstadoAgente | null = null;
+  textoAgente = '';
+  lanzandoAgente = false;
+  private sondeoAgente?: ReturnType<typeof setInterval>;
+
+  async cargarEstadoAgente() {
+    try {
+      const antes = this.estadoAgente?.corriendo;
+      this.estadoAgente = await this.api.estadoAgente();
+      // Al terminar una búsqueda, se recargan las publicaciones y los pendientes
+      if (antes && !this.estadoAgente.corriendo) {
+        clearInterval(this.sondeoAgente);
+        await Promise.all([this.cargarIngestas(), this.cargarPendientesYActivos()]);
+        this.avisos.ok('Búsqueda terminada. ' + this.resumenAgente(this.estadoAgente));
+      }
+    } catch {
+      this.estadoAgente = null;
+    }
+    this.cdr.detectChanges();
+  }
+
+  async buscarAhora() {
+    if (this.lanzandoAgente || this.estadoAgente?.corriendo) return;
+    this.lanzandoAgente = true;
+    this.cdr.detectChanges();
+    try {
+      const r = await this.api.buscarAhora(this.textoAgente.trim());
+      this.avisos.info(`Buscando en Facebook: ${r.consultas.join(', ')}. Te avisamos al terminar.`);
+      this.textoAgente = '';
+      await this.cargarEstadoAgente();
+      clearInterval(this.sondeoAgente);
+      this.sondeoAgente = setInterval(() => this.cargarEstadoAgente(), 8000);
+    } catch (err) {
+      this.avisos.error(err, 'No se ha podido lanzar la búsqueda.');
+    } finally {
+      this.lanzandoAgente = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  textoMinutos(min: number): string {
+    if (min < 60) return `${min} min`;
+    const h = Math.round(min / 6) / 10;
+    return `${h.toLocaleString('es-ES')} ${h === 1 ? 'hora' : 'horas'}`;
+  }
+
+  /** "2 planes nuevos, 1 para revisar, 5 publicaciones que no eran de los pueblos…" */
+  resumenAgente(e: EstadoAgente): string {
+    const r = e.resultado || {};
+    const suma = (f: (k: string) => boolean) => Object.entries(r).filter(([k]) => f(k)).reduce((n, [, v]) => n + v, 0);
+    const publicados = suma((k) => k.includes('evento_abierto') || k.includes('evento_completo'));
+    const revisar = suma((k) => k.includes('pendiente') || k.includes('borrador'));
+    const ignoradas = suma((k) => k.startsWith('ignorado') || k.includes('descart') || k.includes('no_evento') || k.includes('spam'));
+    const repetidas = suma((k) => k.includes('duplicado') || k.includes('ya_visto') || k.includes('repetido'));
+    const partes: string[] = [];
+    if (publicados) partes.push(`${publicados} ${publicados === 1 ? 'plan publicado' : 'planes publicados'}`);
+    if (revisar) partes.push(`${revisar} para revisar`);
+    if (repetidas) partes.push(`${repetidas} ya conocidas`);
+    if (ignoradas) partes.push(`${ignoradas} descartadas (no eran planes de los pueblos)`);
+    return partes.length ? partes.join(', ') + '.' : 'No ha encontrado publicaciones nuevas.';
+  }
+
   async cargarIngestas() {
     // Solo posibles EVENTOS pendientes de revisar: el spam, lo descartado (no es un evento,
     // fuera de la Mancomunidad...) y lo ya convertido en evento no le llegan al moderador
