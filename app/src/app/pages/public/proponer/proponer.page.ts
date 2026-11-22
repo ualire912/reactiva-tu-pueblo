@@ -684,6 +684,14 @@ export class ProponerPage implements OnInit, OnDestroy {
         this.avisos.info('¡Gracias! Tu plan está pendiente de revisión. Te avisaremos cuando se publique.');
         this.router.navigateByUrl('/agenda');
       } else {
+        // Publicado al momento (moderador/publicador): si no trae cartel, se crea uno con
+        // sus datos. Se espera un poco para que la ficha ya lo enseñe; si tarda, sigue solo.
+        if (!data.poster_url) {
+          await Promise.race([
+            this.api.generarCartel(data.id).catch(() => null),
+            new Promise((r) => setTimeout(r, 8000)),
+          ]);
+        }
         this.avisos.ok('¡Publicado! Ya aparece en la agenda.');
         this.router.navigate(['/evento', data.id]);
       }
