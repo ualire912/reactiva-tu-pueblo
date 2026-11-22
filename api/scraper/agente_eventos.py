@@ -576,6 +576,12 @@ def corregir_anio(ext: dict, publicado: str | None, texto: str) -> bool:
 def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook") -> str:
     """Un post de Facebook o un artículo (origen='web') -> ingesta -> evento."""
     texto = (post.get("text") or "").strip()
+    compartido = post.get("sharedPost") if isinstance(post.get("sharedPost"), dict) else {}
+    if not texto and (compartido.get("text") or "").strip():
+        # La página comparte una publicación de otra (Diputación, prensa...): sin texto propio,
+        # el contenido está en la original
+        autor = (compartido.get("user") or {}).get("name") or compartido.get("pageName") or "otra página"
+        texto = f"(Comparte una publicación de {autor}) {compartido['text'].strip()}"
     url = post.get("url") or post.get("postUrl")
     img = post.get("_imagen") or imagen_del_post(post)
     pagina = fuente.get("url") if origen == "facebook" else None
