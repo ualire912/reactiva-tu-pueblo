@@ -362,6 +362,15 @@ def _fecha(valor) -> str | None:
         return None
     if d.tzinfo is None:
         d = d.replace(tzinfo=TZ)
+    elif d.utcoffset() in (timedelta(hours=1), timedelta(hours=2)):
+        # La hora que da el modelo es la del cartel (hora de España), pero a menudo se
+        # equivoca de horario de verano/invierno (+01:00 en septiembre): las 18:00 acabarían
+        # siendo las 19:00. Se respeta la hora y se pone el desfase correcto de esa fecha.
+        d = d.replace(tzinfo=TZ)
+    elif d.utcoffset() == timedelta(0) and (d.hour, d.minute) in ((0, 0), (23, 59)):
+        # "00:00Z" casi siempre es "solo el día" (o "23:59" el final): es medianoche en
+        # Madrid, no la 1 o las 2 de la madrugada
+        d = d.replace(tzinfo=TZ)
     return d.astimezone(TZ).isoformat()
 
 
@@ -466,6 +475,18 @@ _RE_DIA = re.compile(
     r"navidad|nochebuena|nochevieja|reyes|dia \d{1,2}|el \d{1,2})\b|\b\d{1,2}[/-]\d{1,2}\b")
 
 
+# Anuncio de un ayuntamiento/organización o noticia (lo prepara el agente): nadie va a
+# contestar preguntas, así que si dice el DÍA pero no la hora se guarda el día igualmente
+_RE_ANUNCIO = re.compile(r"\[Publicado el|Noticia/agenda publicada|Resumen de la noticia|^P[aá]gina de Facebook:",
+                         re.M)
+
+
+def _es_anuncio(text: str | None) -> bool:
+    t = text or ""
+    return bool(_RE_ANUNCIO.search(t)) and "PROPUESTA DE UN VECINO" not in t \
+        and "Publicación de un vecino" not in t
+
+
 def _dice_el_dia(text: str | None) -> bool:
     """¿El texto dice qué día? (sin contar la cabecera "[Publicado el ...]" que añade el agente)."""
     lineas = [l for l in (text or "").splitlines() if not l.strip().startswith("[Publicado el")]
@@ -517,10 +538,42 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
     ayer = datetime.now(TZ) - timedelta(days=1)
     hace_6m = ayer - timedelta(days=180)
 
+    anuncio = _es_anuncio(text)
+    if anuncio and ev["starts_at"] and str(datetime.fromisoformat(ev["starts_at"]).year) not in (text or ""):
+        # El texto no dice el año (ni la fecha de publicación): el modelo lo adivina, a veces
+        # mal (2027 para unas fiestas de hace dos meses). Se toma el más cercano a hoy.
+        def _en(iso, anios):  # mismo día y hora (de pared) N años antes/después
+            d_ = datetime.fromisoformat(iso).astimezone(TZ)
+            return d_.replace(tzinfo=None, year=d_.year + anios).replace(tzinfo=TZ)
+        ini = datetime.fromisoformat(ev["starts_at"])
+        hoy_ = datetime.now(TZ)
+        mejor = 0
+        for anios in range(hoy_.year - 1 - ini.year, hoy_.year + 2 - ini.year):
+            try:
+                if abs((_en(ev["starts_at"], anios) - hoy_).days) < abs((_en(ev["starts_at"], mejor) - hoy_).days):
+                    mejor = anios
+            except ValueError:  # 29 de febrero
+                continue
+        if mejor:
+            try:
+                for campo in ("starts_at", "ends_at", "inscripcion_hasta"):
+                    if ev[campo]:
+                        ev[campo] = _en(ev[campo], mejor).isoformat()
+            except ValueError:
+                pass
+    if anuncio and not ev["starts_at"] and ev["ends_at"]:
+        # "Se celebra hasta el domingo 13": al menos ese día (sin hora)
+        ev["starts_at"] = datetime.fromisoformat(ev["ends_at"]).replace(hour=0, minute=0, second=0).isoformat()
+        ev["ends_at"] = None
+
     def _ajustar(iso):
         d_ = datetime.fromisoformat(iso)
         if d_ >= ayer:
             return d_, False
+        if anuncio:
+            # Noticia de algo ya celebrado: se queda con SU año (antes se pasaba al año
+            # siguiente y aparecía como plan futuro con una fecha inventada)
+            return d_, True
         try:
             while d_ < hace_6m:
                 d_ = d_.replace(year=d_.year + 1)
@@ -569,6 +622,8 @@ def _validar_evento(d: dict, text: str | None, hay_imagen: bool = False) -> dict
 
     # missing se recalcula siempre en Python (el modelo a veces se olvida)
     ev["missing"] = [c for c in CAMPOS_CLAVE if ev[c] is None]
+    if anuncio and ev["starts_at"] and ev["starts_at"][11:16] == "00:00":
+        ev["missing"].append("hora")  # se sabe el día, no la hora: lo revisa el moderador
     # "Sin límite de plazas" ya es una respuesta: no se vuelve a preguntar
     if "max_capacity" in ev["missing"] and re.search(
             r"sin limite|ilimitad|no hay limite|todas las que|las que quieran|no hay maximo",
@@ -585,6 +640,12 @@ def extraer_evento(text: str | None, image_bytes: bytes | None = None) -> dict:
         prompt = _PROMPT_EXTRAER.format(
             hoy=_hoy_texto(), categorias=", ".join(CATEGORIAS),
             pueblos=", ".join(PUEBLOS), texto=(text or "(sin texto, mira el cartel)")[:4000])
+        if _es_anuncio(text):
+            prompt += ("\nESTO ES UN ANUNCIO O UNA NOTICIA (nadie va a contestar preguntas). Si dice el "
+                       "DÍA pero no la hora exacta, NO dejes starts_at a null: pon ese día a las "
+                       "00:00:00 (offset de Madrid) y añade \"hora\" a missing. Si dura varios días "
+                       "(\"del 18 al 20\"), starts_at es el primero y ends_at el último a las 23:59. "
+                       "El año es el que diga el texto; si no lo dice, el de la fecha de publicación.\n")
         if image_bytes:
             prompt += ("\nSE ADJUNTA LA IMAGEN DEL CARTEL/POST: los datos principales (título, fecha, "
                        "hora, lugar, precio) suelen estar EN LA IMAGEN. Léela con atención y "
