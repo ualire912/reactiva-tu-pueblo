@@ -274,10 +274,10 @@ def _paso_recomendaciones():
 
 
 _AGENTE = {"ultimo": 0.0, "completo": 0.0}
-# Facebook se mira a menudo (por defecto cada hora, solo la última semana) y una vez
-# al día se repasan 6 semanas. Cada lectura gasta crédito de Apify: se puede cambiar
-# con AGENTE_CADA_MIN en las variables de Render.
-CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "60")) * 60
+# Facebook se mira cada 3 horas (1 búsqueda por turnos, 8 publicaciones recientes) y una
+# vez al día se leen las páginas de las organizaciones y las webs de los ayuntamientos.
+# Así cabe en el plan gratuito de Apify (5 $/mes). Más a menudo: AGENTE_CADA_MIN en Render.
+CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "180")) * 60
 CADA_AGENTE_COMPLETO = 24 * 3600
 
 

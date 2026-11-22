@@ -125,13 +125,13 @@ def asegurar_entidad(fuente: dict) -> dict:
 
 
 # ── 1. Leer Facebook con Apify ────────────────────────────────
-def leer_facebook(paginas: list[dict], semanas: int) -> list[dict]:
+def leer_facebook(paginas: list[dict], semanas: int, por_pagina: int = POSTS_POR_PAGINA) -> list[dict]:
     token = os.getenv("APIFY_TOKEN", "").strip()
     if not token or not paginas:
         return []
     entrada = {
         "startUrls": [{"url": p["url"]} for p in paginas],
-        "resultsLimit": POSTS_POR_PAGINA,
+        "resultsLimit": por_pagina,
         "onlyPostsNewerThan": f"{semanas} weeks",
     }
     print(f"Apify: leyendo {len(paginas)} páginas (puede tardar 1-3 minutos)...")
@@ -230,8 +230,11 @@ def buscar_en_facebook(cfg: dict, semanas: int, rapida: bool = False) -> list[di
     print(f"Facebook (búsqueda): {len(consultas)} consultas{' (pasada rápida)' if rapida else ''}")
     resultados: list[dict] = []
     for q in consultas:
+        desde = (datetime.now(timezone.utc) - timedelta(days=int(cfg.get("dias_atras", 7 * semanas)))) \
+            .strftime("%Y-%m-%d")
         entrada = json.loads(json.dumps(plantilla).replace("{q}", q).replace('"{n}"', str(n))
-                             .replace("{n}", str(n)).replace("{semanas}", str(semanas)))
+                             .replace("{n}", str(n)).replace("{semanas}", str(semanas))
+                             .replace("{desde}", desde))
         try:
             r = httpx.post(f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
                            headers={"Authorization": f"Bearer {token}"}, json=entrada, timeout=360)
@@ -516,9 +519,13 @@ def procesar_post(post: dict, fuente: dict, dry: bool, origen: str = "facebook")
     return f"evento_{ev.get('status')}"
 
 
-def cargar_busqueda(ruta: str = FUENTES) -> dict:
+def cargar_config(ruta: str = FUENTES) -> dict:
     with open(ruta, encoding="utf-8") as f:
-        return json.load(f).get("busqueda_facebook") or {}
+        return json.load(f)
+
+
+def cargar_busqueda(ruta: str = FUENTES) -> dict:
+    return cargar_config(ruta).get("busqueda_facebook") or {}
 
 
 def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
@@ -526,7 +533,7 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
              archivo_busqueda: str | None = None, rapida: bool = False,
              busqueda_completa: bool = True) -> dict[str, int]:
     """Una pasada. La usa también la tarea programada de Render (tareas.py).
-    solo='paginas' | 'busqueda' | 'articulos' | None (todo).
+    solo='paginas' | 'busqueda' | 'webs' | 'articulos' | None (todo).
     rapida=True (cada hora): solo unas pocas búsquedas por turnos; sin páginas ni artículos."""
     paginas, articulos = cargar_fuentes(fuentes)
     if rapida:
@@ -551,7 +558,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
             with open(archivo, encoding="utf-8") as f:
                 posts = json.load(f)
         else:
-            posts = leer_facebook(paginas, semanas)
+            cfg_paginas = cargar_config(fuentes).get("paginas_facebook") or {}
+            posts = leer_facebook(paginas, semanas, int(cfg_paginas.get("posts_por_pagina", POSTS_POR_PAGINA)))
             try:  # copia para repetir con --archivo sin gastar crédito
                 os.makedirs(os.path.join(API_DIR, "pruebas"), exist_ok=True)
                 copia = os.path.join(API_DIR, "pruebas", f"apify_{datetime.now():%Y%m%d_%H%M}.json")
@@ -593,6 +601,14 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
                 anotar(r, quien, res["post"].get("time") or "", res["post"]["text"] or "(solo foto)")
     elif solo in (None, "busqueda"):
         print("Facebook (búsqueda): sin APIFY_TOKEN o sin consultas -> se salta")
+
+    # ── Webs de los ayuntamientos: scraping dirigido con IA (ScrapeGraphAI + Gemini)
+    webs = cargar_config(fuentes).get("webs_ayuntamientos") or []
+    if solo in (None, "webs") and webs:
+        import webs_aytos
+        print(f"Webs de ayuntamientos: {len(webs)}{' (SIMULACIÓN)' if dry else ''}")
+        for res, n in webs_aytos.leer_webs(webs, dry, procesar_post).items():
+            resumen[f"web_{res}"] = resumen.get(f"web_{res}", 0) + n
 
     # ── Artículos de prensa / agendas públicas
     if solo in (None, "articulos") and articulos:

@@ -1,5 +1,82 @@
 {
-  "_ayuda": "Fuentes de eventos REALES. La app NO necesita direcciones de páginas: busca sola en Facebook publicaciones públicas con los nombres de los pueblos ('busqueda_facebook'). Las organizaciones que encuentra (ayuntamientos, asociaciones, clubes...) se guardan como 'entidades' y sus páginas se leen también una vez al día. 'facebook': páginas extra opcionales (se pueden dejar vacías). 'articulos': noticias y agendas públicas con eventos de los pueblos; cada una pasa por la IA.",
+  "_ayuda": "Fuentes de eventos REALES. La app NO necesita direcciones de páginas de Facebook: busca sola publicaciones públicas con los nombres de los pueblos ('busqueda_facebook', actor de Apify). Las organizaciones que encuentra se guardan como 'entidades' y sus páginas se leen una vez al día con apify/facebook-posts-scraper ('paginas_facebook'). 'webs_ayuntamientos': webs municipales que se leen con ScrapeGraphAI + Gemini una vez al día. 'facebook': páginas extra opcionales. 'articulos': noticias sueltas. Gasto en Apify ajustado al plan gratuito (5 $/mes): AGENTE_CADA_MIN=180 por defecto.",
+  "busqueda_facebook": {
+    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Cada hora se lanzan 'por_pasada_rapida' búsquedas (por turnos) y una vez al día todas. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> se publican solas si son de confianza (marcadas por el moderador o con responsable Publicador) y la IA está segura; si no, al moderador. Personas -> al moderador, solo si la IA ve claro que proponen un evento. Spam y contenido inapropiado se descartan. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
+    "actor": "scraper_one/facebook-posts-search",
+    "entrada": {
+      "query": "{q}",
+      "resultsCount": "{n}",
+      "searchType": "latest",
+      "startDate": "{desde}"
+    },
+    "por_consulta": 8,
+    "por_pasada_rapida": 1,
+    "pueblos": [
+      "Senés",
+      "Lucainena de las Torres",
+      "Tahal",
+      "Uleila del Campo",
+      "Velefique"
+    ],
+    "consultas": [
+      "{pueblo}",
+      "{pueblo} fiesta",
+      "{pueblo} evento"
+    ],
+    "dias_atras": 14
+  },
+  "paginas_facebook": {
+    "_ayuda": "Lectura diaria de las páginas de las organizaciones descubiertas (apify/facebook-posts-scraper).",
+    "actor": "apify/facebook-posts-scraper",
+    "posts_por_pagina": 10
+  },
+  "webs_ayuntamientos": [
+    {
+      "municipio": "Senés",
+      "nombre": "Ayuntamiento de Senés",
+      "paginas": [
+        "https://www.senes.es",
+        "https://www.senes.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Senes",
+        "https://www.senes.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Senes"
+      ]
+    },
+    {
+      "municipio": "Lucainena de las Torres",
+      "nombre": "Ayuntamiento de Lucainena de las Torres",
+      "paginas": [
+        "https://www.lucainenadelastorres.es",
+        "https://www.lucainenadelastorres.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Lucainena",
+        "https://www.lucainenadelastorres.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Lucainena"
+      ]
+    },
+    {
+      "municipio": "Tahal",
+      "nombre": "Ayuntamiento de Tahal",
+      "paginas": [
+        "https://www.tahal.es",
+        "https://www.tahal.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=tahal",
+        "https://www.tahal.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=tahal"
+      ]
+    },
+    {
+      "municipio": "Uleila del Campo",
+      "nombre": "Ayuntamiento de Uleila del Campo",
+      "paginas": [
+        "https://www.uleiladelcampo.es",
+        "https://www.uleiladelcampo.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Uleila",
+        "https://www.uleiladelcampo.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Uleila"
+      ]
+    },
+    {
+      "municipio": "Velefique",
+      "nombre": "Ayuntamiento de Velefique",
+      "paginas": [
+        "https://www.velefique.es",
+        "https://www.velefique.es/Servicios/cmsdipro/index.nsf/noticias_view_entidad_rol.xsp?p=Velefique",
+        "https://www.velefique.es/Servicios/cmsdipro/index.nsf/fiestas_view_entidad_rol.xsp?p=Velefique"
+      ]
+    }
+  ],
   "facebook": [],
   "articulos": [
     {
@@ -67,36 +144,5 @@
       "municipio": "Uleila del Campo",
       "url": "https://www.lavozdealmeria.com/vivir/turismo/turismo-rural/615274/pueblo-almeria-celebra-semana-fiesta-emigrante-reencuentros-gran-verbena.html"
     }
-  ],
-  "busqueda_facebook": {
-    "_ayuda": "Busca publicaciones PÚBLICAS en Facebook con estas palabras ({pueblo} se cambia por cada pueblo). Cada hora se lanzan 'por_pasada_rapida' búsquedas (por turnos) y una vez al día todas. Solo sigue lo que nombra uno de los pueblos y parece un evento; lo demás se ignora sin guardarse. Organizaciones -> se publican solas si son de confianza (marcadas por el moderador o con responsable Publicador) y la IA está segura; si no, al moderador. Personas -> al moderador, solo si la IA ve claro que proponen un evento. Spam y contenido inapropiado se descartan. Cada actor de Apify pide la entrada distinta: ajusta 'actor' y 'entrada' ({q} = la búsqueda, {n} = cuántas) mirando su pestaña Input.",
-    "actor": "scraper_one/facebook-posts-search",
-    "entrada": {
-      "query": "{q}",
-      "maxResults": "{n}"
-    },
-    "por_consulta": 15,
-    "por_pasada_rapida": 6,
-    "pueblos": [
-      "Senés",
-      "Lucainena de las Torres",
-      "Tahal",
-      "Uleila del Campo",
-      "Velefique"
-    ],
-    "consultas": [
-      "{pueblo}",
-      "{pueblo} Almería",
-      "{pueblo} fiesta",
-      "{pueblo} fiestas patronales",
-      "{pueblo} feria",
-      "{pueblo} ruta senderismo",
-      "{pueblo} taller",
-      "{pueblo} concierto",
-      "{pueblo} mercadillo",
-      "{pueblo} jornada",
-      "{pueblo} ayuntamiento",
-      "{pueblo} asociación"
-    ]
-  }
+  ]
 }

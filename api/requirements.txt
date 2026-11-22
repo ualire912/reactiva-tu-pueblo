@@ -9,3 +9,4 @@ python-multipart>=0.0.9
 tzdata>=2024.1
 pillow
 freellmpool
+scrapegraphai>=2.3,<3   # webs de los ayuntamientos (scraping dirigido con IA)
