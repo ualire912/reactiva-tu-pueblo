@@ -147,9 +147,9 @@
                   <ion-icon slot="start" name="time-outline" aria-hidden="true"></ion-icon> Cambiar hora o lugar
                 </ion-button>
                 @if (ev.status === 'pospuesto') {
-                  <ion-button size="small" color="success" fill="outline" (click)="cambiarEstadoManual(ev, 'abierto')">Reabrir</ion-button>
+                  <ion-button size="small" color="success" fill="outline" (click)="aplazarEvento(ev)">Poner nueva fecha</ion-button>
                 } @else if (ev.status !== 'finalizado') {
-                  <ion-button size="small" color="warning" fill="outline" (click)="cambiarEstadoManual(ev, 'pospuesto')">Aplazar</ion-button>
+                  <ion-button size="small" color="warning" fill="outline" (click)="aplazarEvento(ev)">Aplazar</ion-button>
                 }
                 @if (ev.status !== 'finalizado') {
                   <ion-button size="small" color="danger" fill="outline" (click)="cambiarEstadoManual(ev, 'cancelado')">Cancelar</ion-button>

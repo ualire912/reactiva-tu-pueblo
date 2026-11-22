@@ -14,6 +14,7 @@ Render gratuito se duerme sin visitas: cron-job.org a /health cada 10 min lo man
 """
 import logging
 import threading
+import os
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -272,23 +273,31 @@ def _paso_recomendaciones():
             log.info("[tareas] recomendación enviada a %s (%s planes)", u["id"][:8], len(recs))
 
 
-_AGENTE = {"ultimo": 0.0}
-CADA_AGENTE = 6 * 3600  # el agente de eventos reales, cada 6 horas
+_AGENTE = {"ultimo": 0.0, "completo": 0.0}
+# Facebook se mira a menudo (por defecto cada hora, solo la última semana) y una vez
+# al día se repasan 6 semanas. Cada lectura gasta crédito de Apify: se puede cambiar
+# con AGENTE_CADA_MIN en las variables de Render.
+CADA_AGENTE = int(os.environ.get("AGENTE_CADA_MIN", "60")) * 60
+CADA_AGENTE_COMPLETO = 24 * 3600
 
 
 def _paso_agente():
-    """Facebook (si hay APIFY_TOKEN y páginas) + noticias -> eventos reales. Cada 6 h."""
-    if time.time() - _AGENTE["ultimo"] < CADA_AGENTE:
+    """Facebook (si hay APIFY_TOKEN) + noticias -> eventos reales."""
+    ahora = time.time()
+    if ahora - _AGENTE["ultimo"] < CADA_AGENTE:
         return
-    _AGENTE["ultimo"] = time.time()
+    _AGENTE["ultimo"] = ahora
+    completo = ahora - _AGENTE["completo"] >= CADA_AGENTE_COMPLETO
+    if completo:
+        _AGENTE["completo"] = ahora
     import os
     import sys
     carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scraper")
     if carpeta not in sys.path:
         sys.path.insert(0, carpeta)
     import agente_eventos
-    r = agente_eventos.ejecutar()
-    log.info("[tareas] agente de eventos: %s", r)
+    r = agente_eventos.ejecutar(semanas=6 if completo else 1)
+    log.info("[tareas] agente de eventos (%s): %s", "completo" if completo else "rápido", r)
 
 
 def ciclo():

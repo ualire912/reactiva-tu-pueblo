@@ -61,7 +61,7 @@ export class ApiService {
     return this.peticion('/ia/extraer', { method: 'POST', body: payload });
   }
 
-  avisarEvento(eventId: string, tipo: 'aprobado' | 'rechazado' | 'cambio_hora' | 'cancelacion'): Promise<{ enviados: number }> {
+  avisarEvento(eventId: string, tipo: 'aprobado' | 'rechazado' | 'cambio_hora' | 'cancelacion' | 'aplazado'): Promise<{ enviados: number }> {
     return this.peticion(`/eventos/${eventId}/avisar`, { method: 'POST', body: { tipo } });
   }
 
@@ -97,6 +97,16 @@ export class ApiService {
 
   decidirPromocion(userId: string, accion: 'promover' | 'descartar' | 'revocar'): Promise<{ ok: boolean; rol: string }> {
     return this.peticion('/moderacion/promociones/decidir', { method: 'POST', body: { user_id: userId, accion } });
+  }
+
+  /** Detectados por IA → plan pendiente, con su organizador real (no el moderador). */
+  crearPlanDeIngesta(ingestaId: string): Promise<{ id: string; status: string }> {
+    return this.peticion(`/moderacion/ingestas/${ingestaId}/crear-plan`, { method: 'POST' });
+  }
+
+  /** Borra la cuenta de quien tiene la sesión abierta. */
+  borrarCuenta(): Promise<{ ok: boolean }> {
+    return this.peticion('/auth/cuenta', { method: 'DELETE' });
   }
 
   // Acceso: crear cuenta con teléfono y entrar con Telegram (sin sesión)

@@ -19,7 +19,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from db import sb
+from fastapi import Depends
+
+from db import require_user, sb
 
 router = APIRouter(prefix="/auth", tags=["acceso"])
 
@@ -142,3 +144,15 @@ def preparar_login_telegram(codigo: str, user_id: str) -> bool:
     sb.table("logins_telegram").update({"token_hash": token_hash, "user_id": user_id}) \
         .eq("codigo", filas[0]["codigo"]).execute()
     return True
+
+
+# ── Borrar mi cuenta ──────────────────────────────────────────
+@router.delete("/cuenta")
+def borrar_cuenta(user=Depends(require_user)):
+    """Borra la cuenta y sus datos personales (perfil, inscripciones, opiniones, avisos).
+    Los planes que organizó se quedan publicados, pero sin su nombre."""
+    try:
+        sb.auth.admin.delete_user(user.id)
+    except Exception:
+        raise HTTPException(500, "No hemos podido borrar la cuenta. Inténtalo de nuevo.")
+    return {"ok": True}

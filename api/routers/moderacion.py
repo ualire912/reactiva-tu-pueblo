@@ -135,3 +135,20 @@ def decidir_promocion(body: DecidirIn, _mod=Depends(require_moderador)):
         }).eq("id", body.user_id).execute()
         avisar(body.user_id, MSG_REVOCADO)
     return {"ok": True, "rol": "usuario"}
+
+
+# ── Detectados por IA: crear el plan conservando a su organizador ──
+@router.post("/moderacion/ingestas/{ingesta_id}/crear-plan")
+def crear_plan_de_ingesta(ingesta_id: str, _mod=Depends(require_moderador)):
+    """El moderador rescata una publicación detectada. Se crea con la misma función que usa
+    el bot, así el organizador es quien la publicó (asociación o vecino), no el moderador.
+    Queda pendiente de revisión para que el moderador la repase antes de publicarla."""
+    import ingesta
+    ev = ingesta.crear_evento_desde_ingesta(ingesta_id, publicar=False,
+                                            motivo="lo ha rescatado un moderador de Detectados por IA")
+    if "error" in ev:
+        nombres = {"title": "el título", "starts_at": "el día y la hora", "municipio": "el pueblo"}
+        faltan = ", ".join(nombres.get(c, c) for c in ev.get("missing") or [])
+        raise HTTPException(400, f"Falta {faltan} para crear el plan. Edita la publicación o "
+                                 f"créalo a mano." if faltan else ev["error"])
+    return ev

@@ -189,8 +189,10 @@ def _get_municipio_nombre(municipio_id: int | None) -> str:
 
 
 def _wants_audio(perfil: dict[str, Any] | None, force_audio: bool = False) -> bool:
-    # Solo manda audio si el usuario envió una nota de voz o pidió audio expresamente
-    return bool(force_audio)
+    """Nota de voz si habló por voz o si eligió "escuchar los avisos" (web o bot)."""
+    if force_audio:
+        return True
+    return bool(((perfil or {}).get("preferencias") or {}).get("audio"))
 
 
 def _parse_dt(raw: Any) -> datetime | None:
@@ -409,6 +411,40 @@ async def _entrar_en_la_web(chat_id: int, codigo: str, first_name: str | None) -
     else:
         await send_message(chat_id, "⚠️ Ese enlace para entrar ha caducado. Vuelve a la web y pulsa "
                                     "otra vez «Entrar con Telegram».")
+
+
+_RE_CARTEL = re.compile(r"\b(cartel|carteles|poster|posters|afiche|flyer)\b")
+_PALABRAS_VACIAS = {"el", "la", "los", "las", "de", "del", "un", "una", "me", "mi", "y", "a", "en",
+                    "para", "por", "que", "quiero", "ver", "ensename", "muestrame", "pasame", "dame",
+                    "manda", "mandame", "cartel", "carteles", "poster", "posters", "afiche", "flyer",
+                    "plan", "evento", "esto", "eso", "porfa", "favor", "puedes", "podrias"}
+
+
+async def _cmd_cartel(chat_id: int, perfil: dict[str, Any] | None, texto: str,
+                      force_audio: bool = False) -> None:
+    """'Enséñame el cartel de las migas' -> manda el cartel de ese plan."""
+    palabras = [p for p in re.findall(r"[a-z0-9ñ]+", _norm_txt(texto))
+                if p not in _PALABRAS_VACIAS and len(p) > 2]
+    evs = sb.table("eventos").select("*").in_(
+        "status", ["abierto", "completo", "inscripcion_cerrada", "en_curso", "pospuesto", "finalizado"]
+    ).order("starts_at", desc=True).limit(200).execute().data or []
+    if not palabras:
+        await _enviar_respuesta(chat_id, "🖼️ ¿De qué plan quieres el cartel? Dime su nombre, por "
+                                         "ejemplo: «cartel del taller de esparto».",
+                                perfil=perfil, force_audio=force_audio)
+        return
+
+    def puntos(ev: dict[str, Any]) -> int:
+        titulo = _norm_txt(ev.get("title") or "")
+        return sum(1 for p in palabras if p in titulo)
+
+    candidatos = sorted((e for e in evs if puntos(e) > 0), key=lambda e: -puntos(e))
+    if not candidatos:
+        await _enviar_respuesta(chat_id, "🤔 No encuentro ningún plan con ese nombre. Prueba con "
+                                         "otra palabra del título.", perfil=perfil, force_audio=force_audio)
+        return
+    if not await _enviar_cartel(chat_id, candidatos[0]):
+        await send_message(chat_id, "⚠️ Ese plan aún no tiene cartel y no he podido crearlo ahora.")
 
 
 async def _cmd_start(chat_id: int, args: str, first_name: str | None) -> None:
@@ -980,6 +1016,8 @@ async def _moderar(chat_id: int, perfil: dict[str, Any] | None, event_id: str,
         await send_message(chat_id, f"✅ «{ev.get('title')}» aprobado y publicado.")
         await _avisar_a(ev.get("created_by"), f"🎉 ¡Tu plan «{ev.get('title')}» ya está publicado! "
                                               "Los vecinos ya pueden verlo y apuntarse.")
+        if ev.get("created_by"):
+            await avisar_cartel(str(ev["created_by"]), event_id, "Así ha quedado tu cartel:")
     else:
         motivo = (motivo or "").strip() or "No cumple las normas de la agenda"
         sb.table("eventos").update({"status": "rechazado", "moderation_note": motivo[:300]}) \
@@ -994,9 +1032,22 @@ async def _moderar(chat_id: int, perfil: dict[str, Any] | None, event_id: str,
 async def _toggle_audio(
     chat_id: int, perfil: dict[str, Any] | None, enabled: bool | None = None
 ) -> None:
+    """Activa o desactiva los mensajes también en audio (la misma opción que en la web)."""
+    if enabled is not None and perfil and perfil.get("id"):
+        prefs = dict(perfil.get("preferencias") or {})
+        prefs["audio"] = bool(enabled)
+        try:
+            sb.table("profiles").update({"preferencias": prefs}).eq("id", perfil["id"]).execute()
+        except Exception:
+            pass
+        await send_message(chat_id, "🔊 Hecho: a partir de ahora te mandaré también una nota de voz."
+                           if enabled else "🔇 Hecho: ya no te mandaré notas de voz.")
+        return
     await send_message(
         chat_id,
-        "🔊 Cuando me mandes una nota de voz te responderé por texto y con audio. Si me escribes, te responderé solo por texto.",
+        "🔊 Si me mandas una nota de voz, te contesto también con audio. ¿Quieres recibir "
+        "siempre los mensajes y avisos también en audio?",
+        buttons=[[("🔊 Sí, en audio", "audio:on"), ("🔇 Solo texto", "audio:off")]],
     )
 
 
@@ -1999,6 +2050,9 @@ async def _procesar_texto_o_voz(
 
     # Preguntas sobre lo suyo: "en los que he participado", "a qué estoy apuntado"
     norm = _norm_txt(texto_reconocido)
+    if _RE_CARTEL.search(norm):
+        await _cmd_cartel(chat_id, perfil, texto_reconocido, force_audio=es_audio)
+        return
     if _RE_MIS_PROPUESTAS.search(norm):
         if not perfil:
             perfil = await _asegurar_perfil_telegram(chat_id)
@@ -2307,6 +2361,8 @@ async def _manejar_callback(cb: dict[str, Any]) -> None:
                 await send_message(chat_id_int, f"🎉 ¡«{titulo}» ya está publicado! Los vecinos ya "
                                                 "pueden verlo y apuntarse. Puedes cambiarlo o "
                                                 "cancelarlo desde /mis_propuestas.")
+                if ev_creado and ev_creado.get("id"):
+                    await _enviar_cartel(chat_id_int, ev_creado, "Así ha quedado tu cartel:")
             else:
                 await send_message(chat_id_int,
                                    f"✅ ¡Gracias! He enviado «{titulo}» al moderador para que lo "
@@ -2492,9 +2548,41 @@ async def avisar_usuario(
 
         chat_id_int = int(chat_id)
         sent = await send_message(chat_id_int, texto, buttons=buttons, escape=True)
+        if sent and _wants_audio(perfil):
+            await _enviar_audio(chat_id_int, texto)
         return bool(sent)
     except Exception:
         return False
+
+
+async def _enviar_cartel(chat_id: int, ev: dict[str, Any], intro: str = "") -> bool:
+    """Manda el cartel del plan. Si aún no tiene, se crea uno automático y se guarda."""
+    url = ev.get("poster_url")
+    if not url:
+        try:
+            ingesta_mod = _get_ingesta_module()
+            datos = {**ev, "municipio": _get_municipio_nombre(ev.get("municipio_id"))}
+            url = ingesta_mod.subir_cartel(datos) if ingesta_mod else None
+            if url:
+                sb.table("eventos").update({"poster_url": url}).eq("id", ev["id"]).execute()
+        except Exception as e:
+            print(f"[bot] no se pudo crear el cartel: {e!r}")
+    if not url:
+        return False
+    pie = (intro + "\n\n" if intro else "") + f"🖼️ Cartel de «{ev.get('title')}»"
+    return bool(await send_photo(chat_id, url, caption=pie,
+                                 buttons=[[("📅 Añadir al calendario", f"ics:{ev['id']}")]]))
+
+
+async def avisar_cartel(user_id: str, event_id: str, intro: str = "") -> bool:
+    """Para puentes.py: manda el cartel de un plan a una persona (si tiene Telegram)."""
+    perfil = _get_perfil_by_user_id(user_id)
+    ev = _get_evento(event_id)
+    if not perfil or not ev or not perfil.get("telegram_chat_id"):
+        return False
+    if perfil.get("notificaciones_activas") is False:
+        return False
+    return await _enviar_cartel(int(perfil["telegram_chat_id"]), ev, intro)
 
 
 async def pedir_confirmacion_ingesta(ingesta_id: str) -> bool:

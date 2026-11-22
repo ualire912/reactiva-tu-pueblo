@@ -13,12 +13,15 @@ import {
   paperPlane,
   refreshOutline,
   textOutline,
+  trashOutline,
   volumeHighOutline,
 } from 'ionicons/icons';
 import { AjustesService, Ajustes } from '../../../core/ajustes.service';
 import { SupabaseService } from '../../../core/supabase.service';
 import { AvisosService } from '../../../core/avisos.service';
 import { AlertController } from '@ionic/angular';
+import { Router } from '@angular/router';
+import { ApiService } from '../../../core/api.service';
 
 type TipoAviso = 'recordatorio' | 'recomendacion' | 'cambio' | 'resena';
 
@@ -34,6 +37,9 @@ export class AjustesPage implements OnInit {
   private avisos = inject(AvisosService);
   private alertCtrl = inject(AlertController);
   private cdr = inject(ChangeDetectorRef);
+  private api = inject(ApiService);
+  private router = inject(Router);
+  borrando = false;
 
   a = this.ajustesSvc.ajustes;
   perfil = toSignal(this.sb.profile$, { initialValue: this.sb.currentProfile });
@@ -75,6 +81,7 @@ export class AjustesPage implements OnInit {
       paperPlane,
       refreshOutline,
       textOutline,
+      trashOutline,
       volumeHighOutline,
     });
   }
@@ -125,6 +132,40 @@ export class AjustesPage implements OnInit {
     if (role !== 'confirm') return;
     this.ajustesSvc.restablecer();
     this.avisos.ok('Ajustes restablecidos.');
+  }
+
+  /** Borra la cuenta para siempre (se pide escribir BORRAR para evitar sustos). */
+  async borrarCuenta() {
+    const alerta = await this.alertCtrl.create({
+      header: '¿Borrar tu cuenta?',
+      message:
+        'Se borran tu perfil, tus inscripciones, tus opiniones y la conexión con Telegram. Los planes que organizaste siguen publicados, pero sin tu nombre. No se puede deshacer. Para confirmarlo, escribe BORRAR.',
+      inputs: [{ name: 'confirmacion', type: 'text', placeholder: 'BORRAR', attributes: { 'aria-label': 'Escribe BORRAR para confirmar' } }],
+      buttons: [
+        { text: 'No, mantenerla', role: 'cancel' },
+        { text: 'Borrar mi cuenta', role: 'destructive' },
+      ],
+    });
+    await alerta.present();
+    const { role, data } = await alerta.onDidDismiss();
+    if (role !== 'destructive') return;
+    if (String(data?.values?.confirmacion || '').trim().toUpperCase() !== 'BORRAR') {
+      this.avisos.aviso('No se ha borrado nada: tenías que escribir BORRAR.');
+      return;
+    }
+    this.borrando = true;
+    this.cdr.markForCheck();
+    try {
+      await this.api.borrarCuenta();
+      await this.sb.client.auth.signOut();
+      this.avisos.ok('Tu cuenta se ha borrado. ¡Gracias por haber participado!');
+      this.router.navigateByUrl('/inicio');
+    } catch (err) {
+      this.avisos.error(err, 'No hemos podido borrar tu cuenta. Inténtalo de nuevo.');
+    } finally {
+      this.borrando = false;
+      this.cdr.markForCheck();
+    }
   }
 
   async guardarAvisos() {

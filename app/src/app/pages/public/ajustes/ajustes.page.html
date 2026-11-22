@@ -171,6 +171,12 @@
       <ion-button fill="clear" color="danger" (click)="restablecer()">
         <ion-icon slot="start" name="refresh-outline" aria-hidden="true"></ion-icon> Restablecer valores por defecto
       </ion-button>
+      @if (perfil()) {
+        <ion-button fill="clear" color="medium" size="small" (click)="borrarCuenta()" [disabled]="borrando">
+          <ion-icon slot="start" name="trash-outline" aria-hidden="true"></ion-icon>
+          {{ borrando ? 'Borrando…' : 'Borrar mi cuenta' }}
+        </ion-button>
+      }
     </div>
   </div>
 </ion-content>

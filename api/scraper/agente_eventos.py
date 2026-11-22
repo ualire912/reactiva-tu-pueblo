@@ -82,6 +82,20 @@ def municipio_id(nombre: str) -> int | None:
     return None
 
 
+def entidad_de_confianza(entidad: dict | None) -> bool:
+    """Una organización publica sola si el moderador la marcó (auto_approve) o si su
+    responsable es Publicador/a o moderador/a."""
+    if not entidad:
+        return False
+    if entidad.get("auto_approve"):
+        return True
+    dueno = entidad.get("owner_user_id")
+    if not dueno:
+        return False
+    filas = sb.table("profiles").select("rol").eq("id", dueno).limit(1).execute().data
+    return bool(filas and filas[0].get("rol") in ("publicador", "moderador"))
+
+
 def asegurar_entidad(fuente: dict) -> dict:
     """La página de Facebook como 'entidad' organizadora. Las oficiales publican solas
     (auto_approve) -> así 'las organizaciones son publicadoras'."""
@@ -222,11 +236,11 @@ def procesar_resultado_busqueda(res: dict, dry: bool, vistos: set[str]) -> str:
     if res["es_organizacion"]:
         entidad = None
         if res.get("autor_url"):
-            filas = sb.table("entidades").select("auto_approve").eq(
+            filas = sb.table("entidades").select("auto_approve,owner_user_id").eq(
                 "facebook_page_url", str(res["autor_url"]).rstrip("/")).execute().data
             entidad = filas[0] if filas else None
         fuente = {"municipio": pueblo, "nombre": "organización en Facebook",
-                  "oficial": bool(entidad and entidad.get("auto_approve")),
+                  "oficial": entidad_de_confianza(entidad),
                   "url": res.get("autor_url")}
     else:
         fuente = {"municipio": pueblo, "nombre": "publicación de una persona en Facebook",
@@ -486,7 +500,8 @@ def ejecutar(dry: bool = False, semanas: int = 6, archivo: str | None = None,
     if solo in (None, "paginas") and (archivo or (paginas and os.getenv("APIFY_TOKEN"))):
         if not dry:
             for p in paginas:
-                asegurar_entidad(p)
+                ent = asegurar_entidad(p)
+                p["oficial"] = bool(p.get("oficial")) or entidad_de_confianza(ent)
         if archivo:
             with open(archivo, encoding="utf-8") as f:
                 posts = json.load(f)

@@ -89,6 +89,18 @@ def avisar(user_id: str, texto: str, buttons=None, tipo: str | None = None) -> b
         return False
 
 
+def avisar_cartel(user_id: str, event_id: str, intro: str = "") -> bool:
+    """Manda por Telegram el cartel del plan (si no tiene, se crea). True si llegó."""
+    if not quiere_aviso(user_id, "cambio"):
+        return False
+    try:
+        from bot import avisar_cartel as _avisar_cartel
+        return bool(_con_limite(LIMITE_TELEGRAM * 3, _avisar_cartel, user_id, event_id, intro))
+    except Exception as e:
+        log.error("avisar_cartel falló para %s: %r", event_id, e)
+        return False
+
+
 def redactar_recomendacion(nombre: str, eventos: list[dict]) -> str:
     """Texto amable con el porqué. Si la IA falla o tarda: motivos de la BD tal cual."""
     if _ia is not None and hasattr(_ia, "redactar_recomendacion"):

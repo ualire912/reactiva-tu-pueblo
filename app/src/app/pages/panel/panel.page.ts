@@ -579,6 +579,70 @@ export class PanelPage implements OnInit {
     }
   }
 
+  /**
+   * Aplazar: se elige el nuevo día y hora (o "sin fecha todavía"). Se mueve también la hora
+   * de fin y el plazo de inscripción, y a los apuntados les llega "se ha aplazado al…".
+   */
+  async aplazarEvento(ev: Evento) {
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const inicio = new Date(ev.starts_at);
+    const hora = `${String(inicio.getHours()).padStart(2, '0')}:${String(inicio.getMinutes()).padStart(2, '0')}`;
+    const manana = new Date(Date.now() + 86400000);
+    const alerta = await this.alertCtrl.create({
+      header: ev.status === 'pospuesto' ? 'Nueva fecha del plan' : 'Aplazar el plan',
+      subHeader: ev.title,
+      message: 'Elige el nuevo día y la hora. Las personas apuntadas conservan su plaza y reciben el aviso con la nueva fecha.',
+      inputs: [
+        { name: 'dia', type: 'date', value: ymd(inicio > manana ? inicio : manana), min: ymd(new Date()), attributes: { 'aria-label': 'Nuevo día' } },
+        { name: 'hora', type: 'time', value: hora, attributes: { 'aria-label': 'Nueva hora' } },
+      ],
+      buttons: [
+        { text: 'Volver', role: 'cancel' },
+        ...(ev.status === 'pospuesto' ? [] : [{ text: 'Aplazar sin fecha todavía', role: 'sin-fecha' }]),
+        { text: 'Aplazar a esta fecha', role: 'confirm' },
+      ],
+    });
+    await alerta.present();
+    const { role, data } = await alerta.onDidDismiss();
+    if (role !== 'confirm' && role !== 'sin-fecha') return;
+
+    let cambios: Record<string, unknown>;
+    if (role === 'sin-fecha') {
+      cambios = { status: 'pospuesto' };
+    } else {
+      const valores = (data?.values || {}) as { dia?: string; hora?: string };
+      const nuevoInicio = new Date(`${valores.dia}T${valores.hora || hora}`);
+      if (!valores.dia || isNaN(nuevoInicio.getTime()) || nuevoInicio.getTime() <= Date.now()) {
+        this.avisos.aviso('Elige un día y una hora que aún no hayan pasado.');
+        return;
+      }
+      const salto = nuevoInicio.getTime() - inicio.getTime();
+      const duracionMs = ev.ends_at
+        ? new Date(ev.ends_at).getTime() - inicio.getTime()
+        : (ev.duration_minutes || 120) * 60000;
+      cambios = {
+        starts_at: nuevoInicio.toISOString(),
+        ends_at: new Date(nuevoInicio.getTime() + Math.max(60000, duracionMs)).toISOString(),
+        // El plazo para apuntarse se mueve lo mismo que el plan
+        inscripcion_hasta: ev.inscripcion_hasta ? new Date(new Date(ev.inscripcion_hasta).getTime() + salto).toISOString() : null,
+        status: 'abierto', // la base de datos lo recalcula (completo, inscripción cerrada…)
+      };
+    }
+
+    const { error } = await this.sb.client.from('eventos').update(cambios).eq('id', ev.id);
+    if (error) {
+      this.avisos.error(error, 'No se ha podido aplazar el plan.');
+      return;
+    }
+    try {
+      const res = await this.api.avisarEvento(ev.id, 'aplazado');
+      this.avisos.ok(`Plan aplazado. Hemos avisado a ${res?.enviados ?? 0} personas apuntadas.`);
+    } catch {
+      this.avisos.aviso('Plan aplazado, pero no hemos podido avisar a los apuntados. Inténtalo más tarde.');
+    }
+    await Promise.all([this.cargarPendientesYActivos(), this.cargarEstadisticas()]);
+  }
+
   async cambiarEstadoManual(ev: Evento, nuevoEstado: 'abierto' | 'pospuesto' | 'cancelado') {
     const { error } = await this.sb.client
       .from('eventos')
@@ -630,52 +694,17 @@ export class PanelPage implements OnInit {
     return 'medium';
   }
 
+  /** Crea el plan en el servidor: el organizador es quien lo publicó (no el moderador). */
   async rescatarIngesta(ing: Ingesta) {
-    const ext = ing.extracted;
-    if (!ext) {
-      this.avisos.aviso('No hay datos suficientes en esta publicación para crear un plan.');
-      return;
+    try {
+      await this.api.crearPlanDeIngesta(ing.id);
+      this.avisos.ok('Plan creado a partir de la publicación. Revísalo en Pendientes.');
+    } catch (err) {
+      this.avisos.error(err, 'No se ha podido crear el plan.');
     }
-
-    const mun = this.sb.municipios.find(
-      (m) => ext.municipio && m.nombre.toLowerCase().includes(ext.municipio.toLowerCase())
-    );
-
-    const { data: nuevoEv, error } = await this.sb.client
-      .from('eventos')
-      .insert({
-        title: ext.title || 'Evento detectado',
-        category: ext.category || 'otro',
-        municipio_id: mun?.id || this.sb.municipios[0]?.id || 1,
-        starts_at: ext.starts_at || new Date(Date.now() + 86400000).toISOString(),
-        inscripcion_hasta: ext.inscripcion_hasta || null,
-        duration_minutes: ext.duration_minutes || 120,
-        location_name: ext.location_name || 'Por confirmar',
-        price: ext.price ?? 0,
-        max_capacity: ext.max_capacity ?? null,
-        description: ext.description || ing.raw_text || null,
-        is_accessible: ext.is_accessible ?? false,
-        poster_url: ing.image_url || null,
-        origen: (ing.origen as any) || 'facebook',
-        source_url: ing.source_url || null,
-        ai_confidence: ext.confidence ?? null
-      })
-      .select()
-      .single();
-
-    if (error) {
-      this.avisos.error(error, 'No se ha podido crear el plan.');
-      return;
-    }
-
-    await this.sb.client
-      .from('ingestas')
-      .update({ estado: 'confirmada', event_id: nuevoEv.id })
-      .eq('id', ing.id);
-
-    this.avisos.ok('Plan creado a partir de la publicación. Revísalo en Pendientes.');
     await Promise.all([this.cargarIngestas(), this.cargarPendientesYActivos()]);
   }
+
 
   async descartarIngesta(ing: Ingesta) {
     await this.sb.client
