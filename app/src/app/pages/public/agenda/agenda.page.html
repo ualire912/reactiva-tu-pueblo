@@ -3,7 +3,7 @@
     <ion-title>
       <a routerLink="/inicio" class="marca" aria-label="Reactiva tu pueblo, ir al inicio">
         <span class="marca-logo" aria-hidden="true">R</span>
-        <span class="marca-texto">Agenda de la comarca</span>
+        <span class="marca-texto"><span class="solo-escritorio">Agenda de la comarca</span><span class="solo-movil">Agenda</span></span>
       </a>
     </ion-title>
     <ion-buttons slot="end">
@@ -12,7 +12,7 @@
         Proponer plan
       </ion-button>
       @if (!haySesion()) {
-        <ion-button class="boton-cabecera" routerLink="/login">
+        <ion-button class="boton-cabecera solo-escritorio" routerLink="/login">
           <ion-icon slot="start" name="log-in-outline" aria-hidden="true"></ion-icon>
           Iniciar sesión
         </ion-button>

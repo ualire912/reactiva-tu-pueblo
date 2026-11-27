@@ -4360,3 +4360,78 @@ ion-modal.modal-foto {
   }
 }
 @import 'extras';
+
+/* ==========================================================================
+   Arreglos de móvil
+   ========================================================================== */
+.solo-movil {
+  display: none !important;
+}
+@media (max-width: 600px) {
+  .solo-escritorio {
+    display: none !important;
+  }
+  .solo-movil {
+    display: inline !important;
+  }
+  .marca-texto {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Barra inferior: con 6 o 7 pestañas todas caben en el móvil */
+@media (max-width: 600px) {
+  ion-tab-bar.rp-tabbar {
+    height: 66px;
+    padding-left: 2px;
+    padding-right: 2px;
+
+    ion-tab-button {
+      flex: 1 1 0;
+      min-width: 0;
+      max-width: none;
+      margin: 5px 1px;
+      --padding-start: 0;
+      --padding-end: 0;
+      border-radius: 10px;
+
+      ion-icon {
+        font-size: 23px;
+      }
+      ion-label {
+        margin-top: 3px;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+      }
+    }
+  }
+}
+
+/* Portada de Inicio: en el móvil el pueblo de la foto va debajo del texto, sin taparlo */
+@media (max-width: 700px) {
+  .portada.con-fotos {
+    display: flex;
+    flex-direction: column;
+
+    .portada-contenido {
+      order: 1;
+      padding-bottom: 16px;
+    }
+    .portada-pie {
+      order: 2;
+      position: relative;
+      right: auto;
+      bottom: auto;
+      z-index: 1;
+      margin: 0 18px 92px;
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+    }
+  }
+}
